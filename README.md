@@ -1,0 +1,86 @@
+<div align="center">
+
+# Current
+
+**A torrent client that behaves.**
+
+Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · macOS 26+
+
+</div>
+
+---
+
+Current is a native macOS BitTorrent client built around one insight:
+**torrenting is mostly a background activity.** The most useful interface is
+not a permanently-open dashboard — it's excellent background automation,
+glanceable activity, and fast intervention when something needs you.
+
+So Current is quiet when nothing is happening, informative when something is
+happening, and delightful when you interact with it.
+
+## Highlights
+
+- **The magnet flow** — click a magnet link and the notch acknowledges it
+  ("Resolving magnet…"), expands smoothly when metadata arrives, shows the
+  file list, and collapses into live progress the moment you press
+  **Download 8.3 GB**. One continuous interaction instead of three dialogs.
+- **Notch experience** — optional, restrained. Idle means *nothing* on screen.
+  Activity appears as a subtle strip around the camera housing; hover expands;
+  click gives pause/reveal controls. Drag a `.torrent` or magnet onto it.
+- **Smart Seed** — five plain-language policies (Balanced, Helpful, Archive,
+  Temporary, Custom). Helpful mode keeps rare torrents alive even after their
+  goal is met. Every automated decision is explained in the Rules tab:
+  *why did this happen?*
+- **Smart Cleanup** — set a storage budget; Current ranks completed downloads
+  by how safely they can go. Eligibility is a strict safety gate (complete +
+  seed goals met + not pinned + not active + healthy swarm); ranking then puts
+  old, large, inactive content first. Cleanup moves files to the **Trash** —
+  always reversible, never destructive by default.
+- **Swarm health in plain words** — "Only a few complete sources are available.
+  Keeping this torrent seeded helps preserve it." Never shame, never nag.
+- **Keyboard-first** — `⌘N` add magnet · `␣` pause/resume · `⌘⌫` remove ·
+  `⌘F` search · `⌘K` command palette · arrows/⇧/⌘ for selection.
+- **Menu bar** — aggregate speeds, pause/resume all, recent completions.
+  A quick-control surface, never a duplicate app.
+- **Private by construction** — no accounts, no analytics, no tracking.
+  Torrent history stays local.
+
+## Building
+
+Requirements: macOS 26+, Xcode 26+, Homebrew.
+
+```sh
+brew install libtorrent-rasterbar
+swift build            # debug build
+Scripts/make-app.sh    # produces .build/Current.app
+open .build/Current.app
+```
+
+Run without touching real networks:
+
+```sh
+.build/debug/Current -simulate     # deterministic demo library
+```
+
+Tests:
+
+```sh
+swift test
+```
+
+## Project layout
+
+| Path | What lives there |
+| --- | --- |
+| `Sources/CurrentCore` | Domain models, engine protocol, seeding policies, cleanup planner, file-tree logic — pure Swift, fully tested |
+| `Sources/LTShim` | Thin C API over libtorrent 2.x |
+| `Sources/CurrentEngine` | Swift actor wrapping the shim |
+| `Sources/CurrentSim` | Deterministic simulation engine behind the same protocol |
+| `Sources/CurrentApp` | SwiftUI/AppKit application |
+| `docs/ARCHITECTURE.md` | How it all fits together |
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening pull requests.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

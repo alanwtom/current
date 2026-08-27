@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libtorrent
+        run: brew install libtorrent-rasterbar
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build release bundle
+        run: Scripts/make-app.sh --release
+
+      - name: Smoke launch (simulate mode)
+        run: |
+          .build/arm64-apple-macosx/release/Current -simulate &
+          APP_PID=$!
+          sleep 6
+          kill -0 $APP_PID
+          kill $APP_PID
