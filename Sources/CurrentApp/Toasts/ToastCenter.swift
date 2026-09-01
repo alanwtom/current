@@ -32,6 +32,29 @@ final class ToastCenter: ObservableObject {
     private var hoverPaused = Set<UUID>()
     private let displayDuration: TimeInterval = 5
 
+    /// Poll interval for the auto-dismiss countdown. Coarse on purpose — this
+    /// is a 5 second timer, not an animation.
+    private static let dismissPollInterval: TimeInterval = 0.25
+
+    private func scheduleDismissal(of id: UUID) -> Task<Void, Never> {
+        Task { [weak self] in
+            var remaining = self?.displayDuration ?? 5
+            while remaining > 0 {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(Self.dismissPollInterval * 1_000_000_000)
+                )
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                // Hovering holds the toast open instead of just delaying the start.
+                if !self.hoverPaused.contains(id) {
+                    remaining -= Self.dismissPollInterval
+                }
+            }
+            guard !Task.isCancelled else { return }
+            self?.dismiss(id)
+        }
+    }
+
     func show(
         _ kind: Toast.Kind,
         title: String,
@@ -51,32 +74,19 @@ final class ToastCenter: ObservableObject {
             actionTitle: actionTitle,
             coalesceKey: coalesceKey
         )
-        let task = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(self?.displayDuration ?? 5 * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.dismiss(toast.id)
-        }
-        withAnimation(Self.animation()) {
-            toasts.append(PresentedToast(toast: toast, dismissTask: task))
-        }
+        let task = scheduleDismissal(of: toast.id)
+        toasts.append(PresentedToast(toast: toast, dismissTask: task))
         if toasts.count > 3 {
             dismiss(toasts[0].id)
         }
         _ = action
     }
 
-    private static func animation(exit: Bool = false) -> Animation {
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        return Motion.adaptive(exit ? 0.16 : 0.26, reduceMotion: reduceMotion)
-    }
-
     func dismiss(_ id: UUID) {
         guard let index = toasts.firstIndex(where: { $0.id == id }) else { return }
         let presented = toasts[index]
         presented.dismissTask.cancel()
-        withAnimation(Self.animation(exit: true)) {
-            _ = toasts.remove(at: index)
-        }
+        _ = toasts.remove(at: index)
     }
 
     func pauseHover(_ id: UUID) {
