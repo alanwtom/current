@@ -7,7 +7,15 @@ import CurrentCore
 struct TorrentListView: View {
     @EnvironmentObject private var app: AppEnvironment
     @EnvironmentObject private var store: LibraryStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let torrents: [TorrentSnapshot]
+
+    /// Identity only. The snapshots themselves change every engine tick
+    /// (rates, progress, ETA); keying the animation on the whole array would
+    /// animate the list once a second forever, which is both pointless and
+    /// the exact per-tick layout churn that crashed this app before. Rows
+    /// should only move when the *set* of rows changes.
+    private var membership: [TorrentID] { torrents.map(\.id) }
 
     var body: some View {
         List(selection: $store.selection) {
@@ -22,6 +30,7 @@ struct TorrentListView: View {
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: true))
+        .animation(Motion.spring(reduceMotion: reduceMotion), value: membership)
         .overlay {
             if torrents.isEmpty {
                 SectionEmptyState(section: store.activeSection)

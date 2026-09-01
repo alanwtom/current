@@ -23,7 +23,7 @@ struct NotchSurfaceView: View {
                 ? Color.clear
                 : Color.black
         )
-        .animation(reduceMotion ? Motion.adaptive(0.2, reduceMotion: true) : Motion.spring(0.32), value: animationToken)
+        .animation(Motion.spring(reduceMotion: reduceMotion), value: animationToken)
         .clipped()
     }
 
@@ -88,7 +88,7 @@ struct NotchSurfaceView: View {
                     onReveal: { controller.onRevealFeatured() }
                 )
                 .onTapGesture {
-                    withAnimation(Motion.spring(0.3)) {
+                    withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
                         controller.isDetailExpanded.toggle()
                     }
                 }
@@ -121,7 +121,6 @@ struct ResolvingCard: View {
     let hint: String?
     let startedAt: Date
     var onCancel: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -205,8 +204,6 @@ struct SelectionSummaryCard: View {
 }
 
 struct StartingIndicator: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "arrow.down.circle.fill")
