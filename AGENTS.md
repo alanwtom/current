@@ -17,7 +17,7 @@ Apple Silicon paths (`/opt/homebrew/{include,lib}`), so an Intel Mac needs
 ```bash
 brew install libtorrent-rasterbar
 swift build                 # debug
-swift test                  # 35 tests, all in CurrentCore + CurrentSim
+swift test                  # 38 tests, all in CurrentCore + CurrentSim
 Scripts/make-app.sh         # bundles .build/Current.app (add --release for release)
 open .build/Current.app
 ```
@@ -113,14 +113,45 @@ When idle it shrinks to exactly the notch rectangle and draws nothing. **No notc
 means no panel** — the magnet flow presents in-window instead, so never assume the
 panel exists.
 
-## Repo state — read before committing
+## The layout-churn hazard — read before touching any view
 
-This repo has **no commits yet**, no `.gitignore`, and no git remote. The initial
-commit is currently staged with **~4,900 `.build/` artifacts** in it, including the
-compiled binary and vendored libtorrent dylibs.
+This app has been killed twice by the same failure, and it is not obvious from
+the code. **Any view whose content changes on every engine tick can crash the
+app outright**, ten to thirty seconds after launch.
 
-Add a `.gitignore` covering `.build/` and `git rm -r --cached .build` before making
-that first commit. Do not `git add -A` here until that is fixed.
+The mechanism: macOS re-measures a window a bounded number of times per layout
+pass. Engine batches arrive at ~1 Hz, so a view that redraws differently on
+every batch makes the window renegotiate its layout every second, forever. That
+never converges, AppKit exceeds its own pass limit, and the process traps with:
+
+> The window has been marked as needing another Update Constraints in Window
+> pass, but it has already had more Update Constraints in Window passes than
+> there are views in the window.
+
+Two real instances, both fixed:
+
+- **Sidebar section counts.** Several are derived from jittery per-tick data
+  (`Rare Torrents` tracks connected seeds), so a count badge blinked in and out
+  once a second. Fixed by `SidebarCounts`, which coalesces to a 2 s tick and
+  publishes only on real change.
+- **The menu bar item.** SwiftUI's `MenuBarExtra` flushes its updates from
+  inside the main window's layout pass. Nothing in our own view code could
+  avoid it — a completely static label still crashed. Fixed by owning an
+  `NSStatusItem` directly (`StatusItemController`).
+
+Rules that follow from this:
+
+- Animate on **identity, not values**. `TorrentListView` keys its animation on
+  `[TorrentID]`, never on `[TorrentSnapshot]`. Getting this wrong reintroduces
+  the crash.
+- A view that needs live engine data should read it through a coalesced model,
+  not by observing `LibraryStore` directly.
+- **Any change to window frames, split-view columns, or list content must be
+  soak-tested for 3 minutes** against `-simulate`, checking
+  `~/Library/Logs/DiagnosticReports/` for new `Current-*.ips` files. A build
+  that passes tests and looks fine for ten seconds tells you nothing here.
+
+`plans/README.md` has the full audit these came out of.
 
 ## Conventions
 
