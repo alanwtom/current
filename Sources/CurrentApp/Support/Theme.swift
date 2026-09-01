@@ -13,12 +13,14 @@ enum Motion {
     static let expressive: TimeInterval = 0.38
 
     /// Critically damped — the default. No overshoot anywhere in the app.
-    static func spring(_ response: TimeInterval = 0.3) -> Animation {
+    /// Response defaults to `standard` so springs sit on the same scale as
+    /// durations rather than drifting into hand-typed values.
+    static func spring(_ response: TimeInterval = Self.standard) -> Animation {
         .spring(response: response, dampingFraction: 1)
     }
 
     /// Slight bounce, reserved for physical gestures (drag releases).
-    static func gestureSpring(_ response: TimeInterval = 0.34) -> Animation {
+    static func gestureSpring(_ response: TimeInterval = Self.expressive) -> Animation {
         .spring(response: response, dampingFraction: 0.82)
     }
 
@@ -30,7 +32,7 @@ enum Motion {
     }
 
     /// Reduced Motion variant of the shared springs.
-    static func spring(_ response: TimeInterval = 0.3, reduceMotion: Bool) -> Animation {
+    static func spring(_ response: TimeInterval = Self.standard, reduceMotion: Bool) -> Animation {
         reduceMotion ? .easeOut(duration: min(response, 0.2)) : Self.spring(response)
     }
 }

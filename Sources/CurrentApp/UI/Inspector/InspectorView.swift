@@ -437,7 +437,7 @@ struct PolicyCard: View {
             )
         }
         .buttonStyle(.plain)
-        .animation(reduceMotion ? nil : Motion.spring(0.22), value: isSelected)
+        .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: isSelected)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }

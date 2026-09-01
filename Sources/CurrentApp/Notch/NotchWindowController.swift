@@ -288,11 +288,17 @@ final class NotchWindowController: ObservableObject {
         return library.aggregateDownloadRate > 1 || library.aggregateUploadRate > 1
     }
 
+    /// Read from the workspace rather than the SwiftUI environment: this is a
+    /// controller, not a view, so there is no environment to read from.
+    private var prefersReducedMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
     func refreshVisibility() {
         installIfNeeded()
         let newState = evaluateState()
         if newState != surfaceState {
-            withAnimation(Motion.spring(0.32)) {
+            withAnimation(Motion.spring(reduceMotion: prefersReducedMotion)) {
                 surfaceState = newState
             }
         } else {
@@ -335,15 +341,19 @@ final class NotchWindowController: ObservableObject {
             return
         }
         currentFrame = target
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !prefersReducedMotion else {
             panel.setFrame(target, display: false)
             return
         }
+        // `animator()` is load-bearing: NSWindow.setFrame(display:animate:) ignores
+        // this context's duration and timing entirely, blocks the main thread until
+        // it finishes, and can't retarget if the state changes again mid-resize.
+        // The animator proxy honours all three.
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Motion.standard
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             context.allowsImplicitAnimation = true
-            panel.setFrame(target, display: true, animate: true)
+            panel.animator().setFrame(target, display: true)
         })
     }
 

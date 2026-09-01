@@ -22,7 +22,7 @@ struct ProgressTrack: View {
                     .frame(width: max(clamped * proxy.size.width, clamped > 0 ? 3 : 0))
             }
         }
-        .animation(reduceMotion ? nil : Motion.spring(0.35), value: fraction)
+        .animation(Motion.spring(reduceMotion: reduceMotion), value: fraction)
     }
 }
 

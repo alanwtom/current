@@ -33,7 +33,7 @@ struct ToastsOverlay: View {
         .padding(.trailing, 20)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .animation(reduceMotion ? Motion.adaptive(0.2, reduceMotion: true) : Motion.spring(0.3), value: toasts.toasts)
+        .animation(Motion.spring(reduceMotion: reduceMotion), value: toasts.toasts)
         .allowsHitTesting(true)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notifications")
