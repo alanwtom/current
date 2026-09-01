@@ -1,18 +1,84 @@
 import SwiftUI
+import Combine
 import CurrentCore
+
+/// The sidebar's section counts, deliberately updated at human speed rather
+/// than at the engine's tick.
+///
+/// Recomputing these straight from the library every tick is what crashed the
+/// app: several of the counts depend on jittery per-tick data (the "Rare" count
+/// tracks connected seeds, which wobbles every second), so a badge would appear
+/// and disappear continuously. Each of those changes makes the split view
+/// re-measure its sidebar column, and re-measuring on every single tick never
+/// settles — AppKit kept running constraint passes on the window until it hit
+/// its own limit and trapped, killing the app about half a minute in.
+///
+/// Coalescing here fixes that at the source and is worth having anyway: nobody
+/// reads a section count that flickers once a second.
+@MainActor
+final class SidebarCounts: ObservableObject {
+
+    /// Slow enough that the counts read as stable, fast enough to feel live.
+    private static let tick: TimeInterval = 2
+
+    @Published private(set) var counts: [SidebarSection: Int] = [:]
+
+    private var cancellables = Set<AnyCancellable>()
+
+    init(library: LibraryStore, cleanup: CleanupCenter) {
+        recompute(library: library, cleanup: cleanup)
+
+        for publisher in [library.objectWillChange, cleanup.objectWillChange] {
+            publisher
+                .throttle(for: .seconds(Self.tick), scheduler: RunLoop.main, latest: true)
+                .sink { [weak self, weak library, weak cleanup] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let library, let cleanup else { return }
+                        self.recompute(library: library, cleanup: cleanup)
+                    }
+                }
+                .store(in: &cancellables)
+        }
+    }
+
+    func count(for section: SidebarSection) -> Int { counts[section] ?? 0 }
+
+    private func recompute(library: LibraryStore, cleanup: CleanupCenter) {
+        var next: [SidebarSection: Int] = [:]
+        for section in SidebarSection.library + SidebarSection.smart {
+            next[section] = section == .readyToClean
+                ? cleanup.plan.candidates.count
+                : library.count(for: section)
+        }
+        // Publishing only on a real change keeps the sidebar — and the column
+        // width negotiation it drives — completely still between changes.
+        if next != counts { counts = next }
+    }
+}
 
 struct Sidebar: View {
     @EnvironmentObject private var app: AppEnvironment
-    @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var settings: SettingsStore
+    @EnvironmentObject private var counts: SidebarCounts
+
+    /// Plain reference, not an @EnvironmentObject: the sidebar must not
+    /// re-render on every engine tick. See `SidebarCounts`.
+    let store: LibraryStore
+
+    private var section: Binding<SidebarSection?> {
+        Binding(
+            get: { store.activeSection },
+            set: { if let value = $0 { store.activeSection = value } }
+        )
+    }
 
     var body: some View {
-        List(selection: $store.activeSection) {
+        List(selection: section) {
             Section("Library") {
                 ForEach(SidebarSection.library, id: \.self) { section in
                     SidebarRow(
                         section: section,
-                        count: store.count(for: section)
+                        count: counts.count(for: section)
                     )
                     .tag(section)
                 }
@@ -22,7 +88,7 @@ struct Sidebar: View {
                 ForEach(SidebarSection.smart, id: \.self) { section in
                     SidebarRow(
                         section: section,
-                        count: store.count(for: section),
+                        count: counts.count(for: section),
                         emphasized: section == .attention || section == .readyToClean
                     )
                     .tag(section)
@@ -40,18 +106,20 @@ struct Sidebar: View {
 }
 
 private struct SidebarRow: View {
-    @EnvironmentObject private var app: AppEnvironment
     let section: SidebarSection
     let count: Int
     var emphasized = false
 
-    /// Ready-to-clean is driven by the cleanup plan, not raw snapshots.
-    private var displayCount: Int? {
-        if section == .readyToClean {
-            let n = app.cleanup.plan.candidates.count
-            return n > 0 ? n : nil
-        }
-        return count > 0 ? count : nil
+    /// Width of the count badge. Fixed on purpose — see `body`.
+    private static let badgeWidth: CGFloat = 30
+
+    private var displayCount: Int? { count > 0 ? count : nil }
+
+    /// Capped so a big library can't widen the badge. Counts this high are
+    /// "a lot" to a reader anyway.
+    private var badgeText: String {
+        guard let displayCount else { return "" }
+        return displayCount > 999 ? "999+" : "\(displayCount)"
     }
 
     var body: some View {
@@ -59,11 +127,18 @@ private struct SidebarRow: View {
             Label(section.title, systemImage: section.symbol)
                 .foregroundStyle(emphasized && (displayCount ?? 0) > 0 ? Color.accentColor : .primary)
             Spacer()
-            if let displayCount {
-                Text("\(displayCount)")
-                    .font(.caption.tabularNumerics().weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
+            // Always present, always the same width. This badge used to be
+            // inserted and removed as counts crossed zero, and to grow with the
+            // number — which changes how wide the sidebar wants to be. The
+            // split view then renegotiated its column width on every engine
+            // tick, and that renegotiation never settled: AppKit kept running
+            // constraint passes until it gave up and killed the app about half
+            // a minute after launch. Keeping the row's width constant is what
+            // stops that, so don't make this badge size to its content.
+            Text(badgeText)
+                .font(.caption.tabularNumerics().weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: Self.badgeWidth, alignment: .trailing)
         }
     }
 }

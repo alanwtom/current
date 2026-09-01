@@ -36,13 +36,9 @@ struct CurrentApp: App {
             .environmentObject(app.library)
         }
 
-        MenuBarExtra {
-            StatusBarMenuContent()
-                .environmentObject(app)
-                .environmentObject(app.library)
-        } label: {
-            StatusBarLabel(store: app.library)
-        }
+        // The menu bar item is owned by AppEnvironment's StatusItemController,
+        // not declared here — see the note in StatusBarExtra.swift for why
+        // MenuBarExtra could not be used.
     }
 
     private func handleIncoming(_ url: URL) {
@@ -53,28 +49,6 @@ struct CurrentApp: App {
         } else if url.scheme == "magnet" {
             Task { await app.addMagnet(url.absoluteString) }
         }
-    }
-}
-
-/// Menu bar label that observes the library so speeds update live.
-struct StatusBarLabel: View {
-    @ObservedObject var store: LibraryStore
-
-    var body: some View {
-        let down = store.aggregateDownloadRate
-        let up = store.aggregateUploadRate
-        if down > 1 || up > 1 {
-            Text("\(compact(down)) \(compact(up))")
-                .tabularNumerics()
-        } else {
-            Image(systemName: "arrow.down.circle")
-        }
-    }
-
-    private func compact(_ rate: Double) -> String {
-        guard rate > 1 else { return "—" }
-        let text = ByteFormatting.rate(rate)
-        return text.hasSuffix("/s") ? String(text.dropLast(2)) : text
     }
 }
 

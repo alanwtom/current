@@ -17,9 +17,12 @@ final class AppEnvironment: ObservableObject {
     let power: PowerMonitor
     let automation: AutomationCoordinator
     let cleanup: CleanupCenter
+    let sidebarCounts: SidebarCounts
     let magnetFlow: MagnetFlowCenter
     let toasts: ToastCenter
     let notch: NotchWindowController
+    /// Menu bar item. Created after init because it needs `self` for actions.
+    private(set) var statusItem: StatusItemController?
 
     private let engine: any TorrentEngine
 
@@ -51,10 +54,13 @@ final class AppEnvironment: ObservableObject {
         let database = AppDatabase(url: appSupport.appendingPathComponent("library.sqlite"))
         self.database = database
         self.settings = SettingsStore(database: database)
-        self.library = LibraryStore(engine: engine, database: database)
+        let library = LibraryStore(engine: engine, database: database)
+        self.library = library
         self.power = PowerMonitor()
 
-        self.cleanup = CleanupCenter(library: library, database: database)
+        let cleanup = CleanupCenter(library: library, database: database)
+        self.cleanup = cleanup
+        self.sidebarCounts = SidebarCounts(library: library, cleanup: cleanup)
         let settingsRef = settings
         self.notch = NotchWindowController(enabled: { [weak settingsRef] in
             settingsRef?.isNotchEnabled ?? false
@@ -83,6 +89,8 @@ final class AppEnvironment: ObservableObject {
            ProcessInfo.processInfo.environment["CURRENT_NO_NOTIFICATIONS"] == nil {
             UNUserNotificationCenter.current().delegate = NotificationRouter.shared
         }
+
+        statusItem = StatusItemController(app: self, library: library)
 
         eventTask = Task.detached(priority: .utility) { [engine] in
             let stream = await engine.events
@@ -357,6 +365,10 @@ final class AppEnvironment: ObservableObject {
     }
 
     func prepareForTermination() async {
+        // Drop the menu bar icon first so it doesn't sit there looking alive
+        // while resume data is still being written.
+        statusItem?.tearDown()
+        statusItem = nil
         await library.saveAllResumeData()
         eventTask?.cancel()
     }

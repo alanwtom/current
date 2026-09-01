@@ -22,7 +22,8 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView {
-            Sidebar()
+            Sidebar(store: store)
+                .environmentObject(app.sidebarCounts)
         } detail: {
             detailContent
                 .frame(minWidth: 460)
