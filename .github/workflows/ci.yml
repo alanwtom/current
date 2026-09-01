@@ -23,10 +23,32 @@ jobs:
       - name: Build release bundle
         run: Scripts/make-app.sh --release
 
-      - name: Smoke launch (simulate mode)
+      # 90 s, not 6 s. The layout-churn crash class described in AGENTS.md
+      # takes 10-35 s to show up, so a six second launch proved nothing about
+      # the exact failure that has killed this app twice.
+      #
+      # Caveat worth knowing: that crash needs the main window to actually lay
+      # out, and a CI runner may not give the app a window server. So a pass
+      # here is weaker evidence than a soak on a real Mac — it catches crashes
+      # and hangs, it does not prove the window is healthy. Soak locally too.
+      - name: Soak launch (simulate mode)
         run: |
+          BEFORE=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || echo 0)
           .build/arm64-apple-macosx/release/Current -simulate &
           APP_PID=$!
-          sleep 6
-          kill -0 $APP_PID
+          for i in $(seq 1 18); do
+            sleep 5
+            if ! kill -0 $APP_PID 2>/dev/null; then
+              echo "::error::App exited after ~$((i * 5))s — expected it to stay up for 90s"
+              exit 1
+            fi
+          done
           kill $APP_PID
+          sleep 2
+          AFTER=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || echo 0)
+          if [ "$AFTER" -ne "$BEFORE" ]; then
+            echo "::error::New crash report(s) written during the soak ($BEFORE -> $AFTER)"
+            ls -t ~/Library/Logs/DiagnosticReports/ | grep -i current | head -3
+            exit 1
+          fi
+          echo "Survived 90s with no new crash reports."
