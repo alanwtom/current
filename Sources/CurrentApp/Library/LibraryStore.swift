@@ -15,6 +15,9 @@ struct TorrentRecord: Codable {
     var lastActivityAt: Date?
     /// Set when a magnet was added but metadata hasn't arrived yet, enabling retry.
     var sourceMagnet: String?
+    /// Where this torrent's content lives. The engine also reports it, but the
+    /// app-owned copy survives relaunch (needed before snapshots arrive).
+    var saveDirectory: URL?
 }
 
 enum SidebarSection: Hashable {
@@ -91,9 +94,9 @@ final class LibraryStore: ObservableObject {
                 policy: policy,
                 addedAt: addedAt,
                 lastActivityAt: nil,
-                sourceMagnet: nil
+                sourceMagnet: nil,
+                saveDirectory: directory
             )
-            _ = directory
             orderedIDs.append(id)
         }
     }
@@ -289,7 +292,9 @@ final class LibraryStore: ObservableObject {
 
     func retry(_ id: TorrentID) async {
         guard let magnet = records[id]?.sourceMagnet else { return }
-        let directory = snapshots[id]?.saveDirectory ?? downloadsDirectory
+        let directory = snapshots[id]?.saveDirectory
+            ?? records[id]?.saveDirectory
+            ?? downloadsDirectory
         await engine.remove(id, deleteFiles: false)
         _ = try? await engine.addMagnet(magnet, saveDirectory: directory)
     }
@@ -310,7 +315,8 @@ final class LibraryStore: ObservableObject {
             policy: defaultPolicy(),
             addedAt: Date(),
             lastActivityAt: nil,
-            sourceMagnet: magnet
+            sourceMagnet: magnet,
+            saveDirectory: saveDirectory
         )
         orderedIDs.insert(id, at: 0)
         persistRecord(id: id)
@@ -359,7 +365,7 @@ final class LibraryStore: ObservableObject {
             totalBytes: 0,
             downloadedBytes: 0,
             addedAt: record.addedAt,
-            saveDirectory: downloadsDirectory
+            saveDirectory: record.saveDirectory ?? downloadsDirectory
         )
     }
 
@@ -384,16 +390,25 @@ final class LibraryStore: ObservableObject {
     // MARK: - Resume restoration
 
     func restoreResumeData() async {
-        for (_, data) in database.allResumeData() {
+        for (id, data) in database.allResumeData() {
+            // Re-add where the torrent lived before, not wherever the default
+            // downloads folder points today.
+            let directory = records[id]?.saveDirectory ?? downloadsDirectory
             _ = try? await engine.add(
                 .resumeData(data),
-                saveDirectory: downloadsDirectory
+                saveDirectory: directory
             )
         }
     }
 
-    func saveAllResumeData() async {
+    /// Saves resume data for every torrent. Budgeted in wall-clock time so a
+    /// wedged engine can never stall app termination; each individual fetch
+    /// still runs to completion once started.
+    func saveAllResumeData(budget: Duration = .seconds(3)) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: budget)
         for id in orderedIDs {
+            guard clock.now < deadline else { break }
             if let data = await engine.resumeData(for: id) {
                 try? database.storeResumeData(data, for: id)
             }

@@ -43,8 +43,9 @@ final class AppDatabase: Sendable {
         """
 
     init(url: URL) {
+        // sqlite3_open creates the file when missing; never truncate an
+        // existing library — it holds settings, records and resume data.
         let path = url.path
-        FileManager.default.createFile(atPath: path, contents: nil)
         var db: OpaquePointer?
         guard sqlite3_open(path, &db) == SQLITE_OK else {
             sqlite3_close(db)

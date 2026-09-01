@@ -71,6 +71,13 @@ public actor LibtorrentEngine: TorrentEngine {
         // Wired after creation on the same thread; the engine worker waits
         // ≥250 ms between polls, so no event can observe a nil target.
         box.target = self
+
+        if session == nil {
+            // Session creation is near-infallible (only catastrophic
+            // allocation/native failures); degrade to a no-op engine
+            // instead of crashing the app.
+            NSLog("Current: libtorrent session failed to start")
+        }
     }
 
     deinit {
@@ -78,6 +85,10 @@ public actor LibtorrentEngine: TorrentEngine {
             lt_session_destroy(session)
         }
         Unmanaged<Bridge>.fromOpaque(contextPtr).release()
+        // Never leave a pending request's continuation suspended.
+        for waiter in resumePending.values {
+            waiter.resume(returning: nil)
+        }
         continuation.finish()
     }
 
@@ -153,6 +164,15 @@ public actor LibtorrentEngine: TorrentEngine {
         case LT_EVENT_REMOVED:
             let id = TorrentID(String(cString: payload.assumingMemoryBound(to: CChar.self)))
             Task { await self.forgot(id) }
+
+        case LT_EVENT_RESUME_DATA:
+            let info = payload.assumingMemoryBound(to: lt_resume_data_info.self).pointee
+            let id = TorrentID(String(cString: info.id))
+            let size = Int(info.size)
+            let data: Data? = (size > 0 && info.data != nil)
+                ? Data(bytes: info.data!, count: size)
+                : nil
+            Task { await self.resumeDataArrived(id, data) }
 
         default:
             break
@@ -235,15 +255,18 @@ public actor LibtorrentEngine: TorrentEngine {
 
         var idBuffer = [CChar](repeating: 0, count: 41)
         var errorBuffer = [CChar](repeating: 0, count: 256)
+        var errorKind = Int32(LT_ERROR_UNKNOWN)
 
         switch source {
         case .magnet(let uri):
             let result = uri.withCString { uriC in
                 saveDirectory.path.withCString { pathC in
-                    lt_add_magnet(session, uriC, pathC, &idBuffer, &errorBuffer)
+                    withUnsafeMutablePointer(to: &errorKind) { kindPtr in
+                        lt_add_magnet(session, uriC, pathC, &idBuffer, &errorBuffer, kindPtr)
+                    }
                 }
             }
-            try Self.throwIfFailed(result, errorBuffer)
+            try Self.throwIfFailed(result, errorBuffer, kind: errorKind)
             let torrentID = TorrentID(Self.cString(idBuffer))
             register(torrentID, saveDirectory: saveDirectory)
             return torrentID
@@ -252,10 +275,12 @@ public actor LibtorrentEngine: TorrentEngine {
             let result = data.withUnsafeBytes { raw -> Int32 in
                 guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
                 return saveDirectory.path.withCString { pathC in
-                    lt_add_torrent_data(session, base, raw.count, pathC, &idBuffer, &errorBuffer)
+                    withUnsafeMutablePointer(to: &errorKind) { kindPtr in
+                        lt_add_torrent_data(session, base, raw.count, pathC, &idBuffer, &errorBuffer, kindPtr)
+                    }
                 }
             }
-            try Self.throwIfFailed(result, errorBuffer)
+            try Self.throwIfFailed(result, errorBuffer, kind: errorKind)
             let torrentID = TorrentID(Self.cString(idBuffer))
             register(torrentID, saveDirectory: saveDirectory)
             return torrentID
@@ -272,63 +297,91 @@ public actor LibtorrentEngine: TorrentEngine {
     }
 
     public func pause(_ id: TorrentID) {
-        _ = id.raw.withCString { lt_pause(session, $0) }
+        guard let session else { return }
+        let result = id.raw.withCString { lt_pause(session, $0) }
+        logEngineFailure(result, "pause", id)
     }
 
     public func resume(_ id: TorrentID) {
-        id.raw.withCString { lt_resume(session, $0) }
+        guard let session else { return }
+        let result = id.raw.withCString { lt_resume(session, $0) }
+        logEngineFailure(result, "resume", id)
     }
 
     public func remove(_ id: TorrentID, deleteFiles: Bool) {
-        id.raw.withCString { lt_remove(session, $0, deleteFiles ? 1 : 0) }
+        guard let session else { return }
+        let result = id.raw.withCString { lt_remove(session, $0, deleteFiles ? 1 : 0) }
+        logEngineFailure(result, "remove", id)
     }
 
     public func forceRecheck(_ id: TorrentID) {
-        id.raw.withCString { lt_force_recheck(session, $0) }
+        guard let session else { return }
+        let result = id.raw.withCString { lt_force_recheck(session, $0) }
+        logEngineFailure(result, "recheck", id)
     }
 
     public func setFilePriorities(_ id: TorrentID, _ priorities: [FilePriority]) {
+        guard let session else { return }
         let values = priorities.map { Int32($0.rawValue) }
         guard !values.isEmpty else { return }
-        values.withUnsafeBufferPointer { buffer in
-            guard let base = buffer.baseAddress else { return }
-            id.raw.withCString { id in
+        let result = values.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return Int32(0) }
+            return id.raw.withCString { id in
                 lt_set_file_priorities(session, id, base, Int32(values.count))
+            }
+        }
+        logEngineFailure(result, "set priorities", id)
+    }
+
+    /// Most failures here just mean "torrent already gone", which is benign;
+    /// anything else is worth a console line during manual testing.
+    private func logEngineFailure(_ result: Int32, _ action: String, _ id: TorrentID) {
+        guard result != 0 else { return }
+        NSLog("Current: engine \(action) failed for torrent \(id.raw.prefix(12))…")
+    }
+
+    // MARK: - Resume data
+
+    /// Pending resume-data requests, keyed by torrent. One in flight per
+    /// torrent: the shim delivers exactly one event per request, so a second
+    /// concurrent caller would orphan the first continuation.
+    private var resumePending: [TorrentID: CheckedContinuation<Data?, Never>] = [:]
+
+    /// How long to wait for the shim's resume-data event before giving up.
+    private static let resumeDataTimeoutNanos: UInt64 = 3_000_000_000
+
+    public func resumeData(for id: TorrentID) async -> Data? {
+        guard let session, resumePending[id] == nil else { return nil }
+        let accepted = id.raw.withCString { lt_request_resume_data(session, $0) } == 0
+        guard accepted else { return nil }
+
+        return await withCheckedContinuation { continuation in
+            resumePending[id] = continuation
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: Self.resumeDataTimeoutNanos)
+                await self?.resumeRequestTimedOut(id)
             }
         }
     }
 
-    private struct SessionRef: @unchecked Sendable {
-        let ptr: OpaquePointer?
+    private func resumeRequestTimedOut(_ id: TorrentID) {
+        guard let continuation = resumePending.removeValue(forKey: id) else { return }
+        continuation.resume(returning: nil)
     }
 
-    public func resumeData(for id: TorrentID) async -> Data? {
-        let ref = SessionRef(ptr: session)
-        return await Task.detached(priority: .utility) {
-            Self.fetchResumeData(session: ref.ptr, id: id.raw)
-        }.value
+    /// Called on the actor when the shim's worker thread delivers a
+    /// serialized resume blob (or a failure with `nil` data).
+    private func resumeDataArrived(_ id: TorrentID, _ data: Data?) {
+        guard let continuation = resumePending.removeValue(forKey: id) else { return }
+        continuation.resume(returning: data)
     }
 
-    private nonisolated static func fetchResumeData(
-        session: OpaquePointer?, id: String
-    ) -> Data? {
-        let required = id.withCString { lt_resume_data(session, $0, nil, 0) }
-        guard required > 0 else { return nil }
-
-        let buffer = UnsafeMutableRawPointer.allocate(
-            byteCount: Int(required),
-            alignment: MemoryLayout<UInt8>.alignment
-        )
-        defer { buffer.deallocate() }
-        let status = id.withCString { id in
-            lt_resume_data(
-                session, id,
-                buffer.assumingMemoryBound(to: UInt8.self),
-                size_t(required)
-            )
+    private func flushResumeWaiters() {
+        let waiters = resumePending
+        resumePending.removeAll()
+        for waiter in waiters.values {
+            waiter.resume(returning: nil)
         }
-        guard status == 0 else { return nil }
-        return Data(bytes: buffer, count: Int(required))
     }
 
     public func shutdown() {
@@ -336,6 +389,7 @@ public actor LibtorrentEngine: TorrentEngine {
             lt_session_destroy(session)
             self.session = nil
         }
+        flushResumeWaiters()
     }
 
     // MARK: - Mapping helpers
@@ -373,10 +427,13 @@ public actor LibtorrentEngine: TorrentEngine {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    private static func throwIfFailed(_ result: Int32, _ error: [CChar]) throws {
+    private static func throwIfFailed(_ result: Int32, _ error: [CChar], kind: Int32) throws {
         guard result != 0 else { return }
         let message = cString(error)
-        throw EngineFailure(kind: classify(message), technicalMessage: message)
+        let failureKind = kind != LT_ERROR_UNKNOWN
+            ? failureKind(for: Int(kind))
+            : classify(message)
+        throw EngineFailure(kind: failureKind, technicalMessage: message)
     }
 
     private static func classify(_ message: String) -> EngineFailure.Kind {

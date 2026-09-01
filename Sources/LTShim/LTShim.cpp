@@ -19,6 +19,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -26,18 +27,7 @@ using namespace lt;
 
 namespace {
 
-constexpr int kErrorKindUnknown = 9;
-
-struct PendingResume {
-    std::mutex gate;
-    std::condition_variable cv;
-    bool done = false;
-    bool ok = false;
-    std::vector<char> data;
-
-    void notify() { cv.notify_one(); }
-    std::mutex& cv_mutex() { return gate; }
-};
+// kErrorKind* values must stay aligned with LT_ERROR_* in LTShim.h.
 
 struct SessionContext {
     lt_event_callback callback = nullptr;
@@ -46,8 +36,6 @@ struct SessionContext {
     std::thread worker;
     std::atomic<bool> running{false};
     std::chrono::steady_clock::time_point next_stats_tick{std::chrono::steady_clock::now()};
-    std::mutex resume_mutex;
-    std::map<std::string, std::shared_ptr<PendingResume>> pending_resume;
 };
 
 inline void copy_string(char* dst, size_t cap, char const* src) {
@@ -56,8 +44,13 @@ inline void copy_string(char* dst, size_t cap, char const* src) {
 
 std::string hex_id(torrent_handle const& h) {
     static char const* digits = "0123456789abcdef";
-    sha1_hash v1 = h.info_hashes().v1;
-    unsigned char const* bytes = reinterpret_cast<unsigned char const*>(v1.data());
+    // v1 is all-zero for v2-only torrents; fall back to the first 20 bytes of
+    // the v2 hash (the standard truncated-v2 identity) so every torrent gets
+    // a unique, stable id.
+    info_hash_t const& hashes = h.info_hashes();
+    unsigned char const* bytes = hashes.has_v1()
+        ? reinterpret_cast<unsigned char const*>(hashes.v1.data())
+        : reinterpret_cast<unsigned char const*>(hashes.v2.data());
     std::string out;
     out.reserve(40);
     for (int i = 0; i < 20; ++i) {
@@ -65,6 +58,15 @@ std::string hex_id(torrent_handle const& h) {
         out.push_back(digits[bytes[i] & 0xF]);
     }
     return out;
+}
+
+int classify_error(error_code const& ec) {
+    if (ec == errors::duplicate_torrent) return LT_ERROR_DUPLICATE;
+    if (ec == errors::file_collision) return LT_ERROR_FILE_CONFLICT;
+    if (ec == errors::no_metadata) return LT_ERROR_METADATA_TIMEOUT;
+    if (ec.category() == boost::system::generic_category()
+        && ec.value() == int(std::errc::no_space_on_device)) return LT_ERROR_DISK_FULL;
+    return LT_ERROR_UNKNOWN;
 }
 
 int map_state(torrent_status const& st) {
@@ -80,11 +82,12 @@ int map_state(torrent_status const& st) {
     }
 }
 
-void dispatch_error(SessionContext* ctx, torrent_handle const& h, std::string const& message) {
+void dispatch_error(SessionContext* ctx, torrent_handle const& h,
+                    std::string const& message, error_code const& ec) {
     std::string id = hex_id(h);
     lt_error_info info{};
     info.id = id.c_str();
-    info.error_kind = kErrorKindUnknown;
+    info.error_kind = classify_error(ec);
     info.message = message.c_str();
     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_ERROR, &info, 1);
 }
@@ -119,9 +122,14 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
     pack.set_int(settings_pack::alert_queue_size, 5000);
     pack.set_str(settings_pack::user_agent, "Current/1.0");
 
-    session_params params;
-    params.settings = pack;
-    ctx->ses = std::make_unique<session>(params);
+    try {
+        session_params params;
+        params.settings = pack;
+        ctx->ses = std::make_unique<session>(params);
+    } catch (...) {
+        delete ctx;
+        return nullptr;
+    }
 
     ctx->running = true;
     ctx->worker = std::thread([ctx]() {
@@ -166,43 +174,22 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
                     std::string id = hex_id(done->handle);
                     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_COMPLETED, id.c_str(), 1);
                 } else if (auto const* err = alert_cast<torrent_error_alert>(a)) {
-                    dispatch_error(ctx, err->handle, err->message());
+                    dispatch_error(ctx, err->handle, err->message(), err->error);
                 } else if (auto const* srd = alert_cast<save_resume_data_alert>(a)) {
                     std::string id = hex_id(srd->handle);
                     auto buf = write_resume_data_buf(srd->params);
-                    std::shared_ptr<PendingResume> waiter;
-                    {
-                        std::lock_guard<std::mutex> lk(ctx->resume_mutex);
-                        auto it = ctx->pending_resume.find(id);
-                        if (it != ctx->pending_resume.end()) {
-                            waiter = it->second;
-                            ctx->pending_resume.erase(it);
-                        }
-                    }
-                    if (waiter) {
-                        std::lock_guard<std::mutex> lk(waiter->gate);
-                        waiter->data = std::move(buf);
-                        waiter->ok = true;
-                        waiter->done = true;
-                        waiter->cv.notify_one();
-                    }
+                    lt_resume_data_info info{};
+                    info.id = id.c_str();
+                    info.size = static_cast<int64_t>(buf.size());
+                    info.data = reinterpret_cast<uint8_t const*>(buf.data());
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_RESUME_DATA, &info, 1);
                 } else if (auto const* srdf = alert_cast<save_resume_data_failed_alert>(a)) {
                     std::string id = hex_id(srdf->handle);
-                    std::shared_ptr<PendingResume> waiter;
-                    {
-                        std::lock_guard<std::mutex> lk(ctx->resume_mutex);
-                        auto it = ctx->pending_resume.find(id);
-                        if (it != ctx->pending_resume.end()) {
-                            waiter = it->second;
-                            ctx->pending_resume.erase(it);
-                        }
-                    }
-                    if (waiter) {
-                        std::lock_guard<std::mutex> lk(waiter->gate);
-                        waiter->ok = false;
-                        waiter->done = true;
-                        waiter->cv.notify_one();
-                    }
+                    lt_resume_data_info info{};
+                    info.id = id.c_str();
+                    info.size = 0;
+                    info.data = nullptr;
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_RESUME_DATA, &info, 1);
                 } else if (auto const* removed = alert_cast<torrent_removed_alert>(a)) {
                     std::string id = hex_id(removed->handle);
                     if (ctx->callback)
@@ -262,14 +249,16 @@ void lt_session_destroy(lt_session* opaque) {
 }
 
 int lt_add_magnet(lt_session* opaque, const char* uri, const char* save_path,
-                  char out_id[41], char out_error[256]) {
+                  char out_id[41], char out_error[256], int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     try {
         error_code ec;
         add_torrent_params atp;
         parse_magnet_uri(uri, atp, ec);
         if (ec) {
             copy_string(out_error, 256, ec.message().c_str());
+            if (out_error_kind) *out_error_kind = classify_error(ec);
             return -1;
         }
         atp.save_path = save_path;
@@ -278,16 +267,20 @@ int lt_add_magnet(lt_session* opaque, const char* uri, const char* save_path,
         return 0;
     } catch (system_error const& e) {
         copy_string(out_error, 256, e.code().message().c_str());
+        if (out_error_kind) *out_error_kind = classify_error(e.code());
         return -1;
     } catch (...) {
         copy_string(out_error, 256, "Unknown engine error");
+        if (out_error_kind) *out_error_kind = LT_ERROR_UNKNOWN;
         return -1;
     }
 }
 
 int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
-                        const char* save_path, char out_id[41], char out_error[256]) {
+                        const char* save_path, char out_id[41], char out_error[256],
+                        int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     try {
         add_torrent_params atp = load_torrent_buffer(
             std::span<char const>(reinterpret_cast<char const*>(data),
@@ -298,15 +291,18 @@ int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
         return 0;
     } catch (system_error const& e) {
         copy_string(out_error, 256, e.code().message().c_str());
+        if (out_error_kind) *out_error_kind = classify_error(e.code());
         return -1;
     } catch (...) {
         copy_string(out_error, 256, "Unknown engine error");
+        if (out_error_kind) *out_error_kind = LT_ERROR_UNKNOWN;
         return -1;
     }
 }
 
 int lt_pause(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
     h.unset_flags(torrent_flags::auto_managed);
@@ -316,6 +312,7 @@ int lt_pause(lt_session* opaque, const char* id) {
 
 int lt_resume(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
     h.set_flags(torrent_flags::auto_managed);
@@ -325,6 +322,7 @@ int lt_resume(lt_session* opaque, const char* id) {
 
 int lt_remove(lt_session* opaque, const char* id, int delete_files) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
     remove_flags_t flags = {};
@@ -335,6 +333,7 @@ int lt_remove(lt_session* opaque, const char* id, int delete_files) {
 
 int lt_force_recheck(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
     h.force_recheck();
@@ -344,6 +343,7 @@ int lt_force_recheck(lt_session* opaque, const char* id) {
 int lt_set_file_priorities(lt_session* opaque, const char* id,
                            const int* priorities, int32_t count) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
     std::vector<download_priority_t> prio;
@@ -355,38 +355,13 @@ int lt_set_file_priorities(lt_session* opaque, const char* id,
     return 0;
 }
 
-int64_t lt_resume_data(lt_session* opaque, const char* id,
-                       uint8_t* buffer, size_t cap) {
+int lt_request_resume_data(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
     torrent_handle h;
     if (!find_handle(ctx, id, &h)) return -1;
-
-    auto pending = std::make_shared<PendingResume>();
-    {
-        std::lock_guard<std::mutex> lk(ctx->resume_mutex);
-        ctx->pending_resume[id] = pending;
-    }
-
     h.save_resume_data();
-
-    {
-        std::unique_lock<std::mutex> lk(pending->gate);
-        bool ready = pending->cv.wait_for(lk, std::chrono::seconds(3),
-                                          [&] { return pending->done; });
-        if (!ready) {
-            std::lock_guard<std::mutex> g(ctx->resume_mutex);
-            ctx->pending_resume.erase(id);
-            return -1;
-        }
-        if (!pending->ok) return -1;
-
-        if (pending->data.size() <= cap) {
-            if (!pending->data.empty())
-                std::memcpy(buffer, pending->data.data(), pending->data.size());
-            return 0;
-        }
-        return static_cast<int64_t>(pending->data.size());
-    }
+    return 0;
 }
 
 } // extern "C"

@@ -16,6 +16,9 @@ final class AutomationCoordinator {
     private var batteryPaused = Set<TorrentID>()
     private var seedingStoppedLogged = Set<TorrentID>()
     private var cleanupProposedLogged = Set<TorrentID>()
+    /// Magnets whose resolve timeout has already been handled, so a stale
+    /// row can't re-trigger removal + logging on every tick.
+    private var resolveTimeoutsHandled = Set<TorrentID>()
 
     private var timer: Timer?
     static let tickInterval: TimeInterval = 15
@@ -120,12 +123,15 @@ final class AutomationCoordinator {
         for (id, snapshot) in library.snapshots {
             guard case .resolving = snapshot.state else { continue }
             guard -snapshot.addedAt.timeIntervalSinceNow > Self.resolveTimeout else { continue }
+            guard resolveTimeoutsHandled.insert(id).inserted else { continue }
 
+            // Remove from the library (which also removes from the engine and
+            // drops the row) so the dead magnet can't linger in the UI.
             Task {
-                await self.library.engine.remove(id, deleteFiles: false)
+                await self.library.remove([id], deleteFiles: false)
             }
             log(
-                .seedingKept,
+                .magnetTimedOut,
                 torrentID: id,
                 name: snapshot.name,
                 reasons: [

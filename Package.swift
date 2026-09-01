@@ -56,7 +56,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CurrentCoreTests",
-            dependencies: ["CurrentCore", "CurrentSim"],
+            dependencies: ["CurrentCore", "CurrentSim", "CurrentApp"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ],

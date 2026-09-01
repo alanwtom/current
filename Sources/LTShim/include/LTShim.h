@@ -16,7 +16,21 @@ typedef enum {
     LT_EVENT_COMPLETED = 2,
     LT_EVENT_ERROR = 3,
     LT_EVENT_REMOVED = 4,
+    LT_EVENT_RESUME_DATA = 5,
 } lt_event_kind;
+
+/* Values for lt_error_info.error_kind, matching EngineFailure.Kind in Swift. */
+enum {
+    LT_ERROR_SAVE_PATH = 1,
+    LT_ERROR_DISK_FULL = 2,
+    LT_ERROR_NETWORK = 3,
+    LT_ERROR_METADATA_TIMEOUT = 4,
+    LT_ERROR_DUPLICATE = 5,
+    LT_ERROR_CORRUPTED = 6,
+    LT_ERROR_FILE_CONFLICT = 7,
+    LT_ERROR_SHUTDOWN = 8,
+    LT_ERROR_UNKNOWN = 9,
+};
 
 /// State codes mirrored from torrent_status::state_t plus pause/error overlays.
 enum {
@@ -66,9 +80,18 @@ typedef struct {
 
 typedef struct {
     const char* id;
-    int error_kind;               /* matches EngineFailure kinds in Swift */
+    int error_kind;               /* LT_ERROR_* constant */
     const char* message;          /* technical detail, UTF-8 */
 } lt_error_info;
+
+/* Payload for LT_EVENT_RESUME_DATA: the serialised fastresume blob for one
+ * torrent, delivered on the worker thread after lt_request_resume_data.
+ * size == 0 means the request failed. */
+typedef struct {
+    const char* id;
+    const uint8_t* data;          /* valid during callback */
+    int64_t size;
+} lt_resume_data_info;
 
 /*
  * Called on an engine-owned background thread whenever something notable
@@ -80,11 +103,13 @@ typedef void (*lt_event_callback)(void* context, lt_event_kind kind, const void*
 lt_session* lt_session_create(lt_event_callback callback, void* context);
 void lt_session_destroy(lt_session* session);
 
-/* Returns 0 on success. On failure returns -1 and writes out_error. */
+/* Returns 0 on success. On failure returns -1, writes out_error and sets
+ * *out_error_kind to an LT_ERROR_* constant. */
 int lt_add_magnet(lt_session* session, const char* uri, const char* save_path,
-                  char out_id[41], char out_error[256]);
+                  char out_id[41], char out_error[256], int* out_error_kind);
 int lt_add_torrent_data(lt_session* session, const uint8_t* data, size_t len,
-                        const char* save_path, char out_id[41], char out_error[256]);
+                        const char* save_path, char out_id[41], char out_error[256],
+                        int* out_error_kind);
 
 int lt_pause(lt_session* session, const char* id);
 int lt_resume(lt_session* session, const char* id);
@@ -93,10 +118,10 @@ int lt_force_recheck(lt_session* session, const char* id);
 int lt_set_file_priorities(lt_session* session, const char* id,
                            const int* priorities, int32_t count);
 
-/* Serialised fastresume blob. Returns required size; if `cap` >= that size the
- * data is written to `buffer` and 0 is returned. */
-int64_t lt_resume_data(lt_session* session, const char* id,
-                       uint8_t* buffer, size_t cap);
+/* Non-blocking: asks the torrent to generate resume data. The result is
+ * delivered later as an LT_EVENT_RESUME_DATA callback on the worker thread.
+ * Returns 0 if the request was made, -1 if the torrent is unknown. */
+int lt_request_resume_data(lt_session* session, const char* id);
 
 #ifdef __cplusplus
 }

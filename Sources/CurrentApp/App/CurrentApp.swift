@@ -91,14 +91,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Persist engine resume data so relaunch restores everything exactly.
+        // The save itself is MainActor-isolated, so the main thread must stay
+        // free to run it — blocking here (semaphore, sleep) would deadlock.
         guard let environment = Self.environment else { return .terminateNow }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        Task.detached(priority: .utility) {
+        Task { @MainActor in
             await environment.prepareForTermination()
-            semaphore.signal()
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
-        _ = semaphore.wait(timeout: .now() + 3)
-        return .terminateNow
+        return .terminateLater
     }
 }
