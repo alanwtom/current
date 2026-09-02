@@ -286,8 +286,17 @@ final class NotchWindowController: ObservableObject {
             break
         }
 
-        if hasActivity {
-            return center.isHovered ? .card : .pill
+        // Transfer activity on its own is NOT a reason to show anything. The
+        // whole premise of this app is that torrenting is background work, and
+        // a permanent black bar hanging off the camera housing is the opposite
+        // of that — it was on screen the entire time anything was downloading.
+        //
+        // Collapsed, the panel is exactly the notch footprint and draws nothing,
+        // so it disappears into the hardware. Hovering the notch is what asks
+        // for detail. Hover still reaches us while collapsed because
+        // `isInteractive` only gates hitTest (clicks), not the tracking areas.
+        if hasActivity, center.isHovered {
+            return .card
         }
 
         return .hidden
