@@ -114,11 +114,19 @@ final class LibraryStore: ObservableObject {
     }
 
     func matches(_ snapshot: TorrentSnapshot) -> Bool {
+        matches(snapshot, in: activeSection)
+    }
+
+    /// Section is a parameter so callers can ask about a section they are not
+    /// currently showing. `count(for:)` used to do that by assigning
+    /// `activeSection`, counting, then assigning it back — mutating published
+    /// state twice from inside a read, on every sidebar recount.
+    func matches(_ snapshot: TorrentSnapshot, in section: SidebarSection) -> Bool {
         if !searchText.isEmpty,
            !snapshot.name.localizedCaseInsensitiveContains(searchText) {
             return false
         }
-        switch activeSection {
+        switch section {
         case .all:
             return true
         case .downloading:
@@ -181,12 +189,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func count(for section: SidebarSection) -> Int {
-        var matchesCount = 0
-        let savedSection = activeSection
-        activeSection = section
-        matchesCount = snapshots.values.filter(matches).count
-        activeSection = savedSection
-        return matchesCount
+        snapshots.values.filter { matches($0, in: section) }.count
     }
 
     // MARK: - Event ingestion
@@ -214,7 +217,13 @@ final class LibraryStore: ObservableObject {
             let previousState = existing?.state
             snapshots[snapshot.id] = snapshot
 
-            if existing == nil {
+            // Guard on the list, not on whether a snapshot existed. `existing`
+            // is nil for a torrent that was just added by hand — `registerAdded`
+            // puts the id in the list but cannot produce a snapshot, that comes
+            // from the engine a moment later. Checking `existing` therefore
+            // inserted the id a second time on the first stats batch after
+            // every add, which duplicated the row and broke ForEach identity.
+            if !orderedIDs.contains(snapshot.id) {
                 orderedIDs.insert(snapshot.id, at: 0)
             }
 
@@ -318,7 +327,14 @@ final class LibraryStore: ObservableObject {
             sourceMagnet: magnet,
             saveDirectory: saveDirectory
         )
-        orderedIDs.insert(id, at: 0)
+        // Adding a torrent that is already here must not list it twice. The
+        // engine returns the same id for a duplicate add, so without this the
+        // id appears twice in `orderedIDs` — which crashed the notch's mirror
+        // (it builds a dictionary keyed by id) and quietly breaks SwiftUI's
+        // ForEach identity, since that requires ids to be unique.
+        if !orderedIDs.contains(id) {
+            orderedIDs.insert(id, at: 0)
+        }
         persistRecord(id: id)
         objectWillChange.send()
     }

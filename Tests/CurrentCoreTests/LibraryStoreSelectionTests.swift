@@ -49,4 +49,63 @@ final class LibraryStoreSelectionTests: XCTestCase {
         }
         XCTAssertTrue(store.selection.isEmpty)
     }
+
+    /// Regression for a crash found by running the real libtorrent engine and
+    /// handing it a torrent twice: the engine returns the same id, and
+    /// `registerAdded` used to insert it again. A duplicated id then trapped
+    /// the notch's id-keyed mirror, and duplicate ids also break SwiftUI's
+    /// ForEach identity, which requires them to be unique.
+    /// Regression for the bug that made every added torrent appear twice.
+    ///
+    /// `registerAdded` puts the id in the list but cannot produce a snapshot —
+    /// that arrives from the engine a moment later. `applySnapshots` guarded on
+    /// "did a snapshot already exist?", which is false in exactly that window,
+    /// so the first stats batch after any add inserted the id a second time.
+    /// Duplicate ids also break SwiftUI's ForEach, which requires them unique.
+    func testFirstSnapshotAfterAddDoesNotDuplicateTheRow() {
+        let store = makeStore()
+        let id = TorrentID("added-then-reported")
+
+        store.registerAdded(
+            id, name: "Something", magnet: nil,
+            saveDirectory: URL(fileURLWithPath: "/tmp/current-dupe")
+        )
+        XCTAssertEqual(store.orderedIDs.count, 1)
+
+        // The engine reports it for the first time.
+        store.applySnapshots([
+            TorrentSnapshot(
+                id: id,
+                name: "Something",
+                state: .downloading,
+                progress: 0.1,
+                totalBytes: 1_000,
+                downloadedBytes: 100,
+                addedAt: Date(),
+                saveDirectory: URL(fileURLWithPath: "/tmp/current-dupe")
+            )
+        ])
+
+        XCTAssertEqual(
+            store.orderedIDs.filter { $0 == id }.count, 1,
+            "the first stats batch after an add must not list the torrent twice"
+        )
+        XCTAssertEqual(store.visibleTorrents.count, 1)
+    }
+
+    func testAddingTheSameTorrentTwiceDoesNotDuplicateIt() {
+        let store = makeStore()
+        let id = TorrentID("same-torrent")
+        let directory = URL(fileURLWithPath: "/tmp/current-dupe")
+
+        store.registerAdded(id, name: "First", magnet: nil, saveDirectory: directory)
+        store.registerAdded(id, name: "Second", magnet: nil, saveDirectory: directory)
+
+        XCTAssertEqual(
+            store.orderedIDs.filter { $0 == id }.count, 1,
+            "re-adding a known torrent must not list it twice"
+        )
+        XCTAssertEqual(store.record(for: id)?.name, "Second",
+                       "the record should still take the newer details")
+    }
 }
