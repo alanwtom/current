@@ -33,23 +33,10 @@ final class NotchWindowController: ObservableObject {
         let totalBytes: Int64
     }
 
-    /// The at-a-glance state the collapsed notch shows: how much of the queue
-    /// is finished, how fast, and which single state dominates right now.
-    struct LibrarySummary: Equatable {
-        enum Dominant { case downloading, seeding, complete, failed }
-
-        let done: Int
-        let total: Int
-        let downloadRate: Double
-        let uploadRate: Double
-        let dominant: Dominant
-
-        /// True when there is anything worth telling the user about. Drives
-        /// whether the notch shows its ambient strip at all.
-        var isNoteworthy: Bool { total > 0 }
-    }
-
-    @Published private(set) var summary: LibrarySummary?
+    /// Whether there is a library worth opening the detail card for. The
+    /// arithmetic lives in `LibraryActivity` (Core) because the menu bar needs
+    /// the same numbers and exists on Macs that have no notch.
+    @Published private(set) var summary: LibraryActivity?
     @Published private(set) var featured: FeaturedTorrent?
     @Published private(set) var selectionSummary: SelectionSummary?
     @Published private(set) var flowStage: StageMirror = .idle
@@ -159,36 +146,9 @@ final class NotchWindowController: ObservableObject {
             featured = nil
         }
 
-        // Queue summary for the ambient strip. Recomputed on the controller's
-        // 2 Hz tick like every other mirror, never per engine batch.
-        if candidates.isEmpty {
-            summary = nil
-        } else {
-            let finished = candidates.filter {
-                $0.state == .completed || $0.state == .seeding
-            }.count
-            let anyFailed = candidates.contains {
-                if case .failed = $0.state { return true }
-                return false
-            }
-            let anyDownloading = !downloading.isEmpty
-            let anySeeding = candidates.contains { $0.state == .seeding }
-
-            // One state wins, in order of what the user most needs to know.
-            let dominant: LibrarySummary.Dominant =
-                anyFailed ? .failed
-                : anyDownloading ? .downloading
-                : anySeeding ? .seeding
-                : .complete
-
-            summary = LibrarySummary(
-                done: finished,
-                total: candidates.count,
-                downloadRate: candidates.reduce(0) { $0 + $1.downloadRate },
-                uploadRate: candidates.reduce(0) { $0 + $1.uploadRate },
-                dominant: dominant
-            )
-        }
+        // Recomputed on the controller's 2 Hz tick like every other mirror,
+        // never per engine batch.
+        summary = LibraryActivity.summarize(candidates)
 
         // Selection summary while a magnet resolves into a picker.
         if case .selecting(let id) = center?.stage,
@@ -334,16 +294,25 @@ final class NotchWindowController: ObservableObject {
             break
         }
 
-        // Ambient presence, not a billboard. While there is a library to report
-        // on, the notch carries a compact strip — the app mark, how much of the
-        // queue is done, and the current speed — tinted by whichever state
-        // dominates. It should be obvious that something is happening without
-        // a full card parked on screen.
+        // Idle transfer activity shows NOTHING here. Collapsed, the panel is
+        // exactly the notch footprint and draws nothing, so it is
+        // indistinguishable from the bare camera housing — no strip, no bar,
+        // nothing built on top of the hardware.
         //
-        // Hovering opens the detail. Hover reaches us in either state because
-        // `isInteractive` only gates hitTest (clicks), not the tracking areas.
-        if let summary, summary.isNoteworthy {
-            return center.isHovered ? .card : .pill
+        // The at-a-glance status lives in the menu bar item instead
+        // (`StatusItemController`), which sits beside the notch in the real
+        // menu bar and is visible on every Mac, notch or not. Note that content
+        // cannot be drawn *inside* the notch: that strip is behind the housing,
+        // so it is invisible on the display even though it appears in
+        // screenshots.
+        //
+        // Hovering the notch opens the detail card. Hover still reaches us
+        // while collapsed because `isInteractive` only gates hitTest (clicks),
+        // not the tracking areas.
+        // `summarize` returns nil for an empty library, so a non-nil summary
+        // already means there is something to show.
+        if summary != nil, center.isHovered {
+            return .card
         }
 
         return .hidden

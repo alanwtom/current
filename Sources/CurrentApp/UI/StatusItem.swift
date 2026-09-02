@@ -42,6 +42,7 @@ final class StatusItemController {
 
     private var lastActivity: Date?
     private var shownTitle: String = ""
+    private var shownTint: NSColor?
     private var cancellable: AnyCancellable?
     private let menuDelegate = MenuDelegate()
 
@@ -52,12 +53,6 @@ final class StatusItemController {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = item.button {
-            // Set once and never replaced — see the note above about images.
-            button.image = NSImage(
-                systemSymbolName: "arrow.down.circle",
-                accessibilityDescription: "Current"
-            )
-            button.image?.isTemplate = true
             button.imagePosition = .imageLeading
             // Tabular figures so the width doesn't jitter as speeds change.
             button.font = NSFont.monospacedDigitSystemFont(
@@ -92,32 +87,87 @@ final class StatusItemController {
 
     // MARK: - Readout
 
+    /// This is the app's ambient presence. The notch deliberately shows nothing
+    /// when it isn't hovered — it collapses into the camera housing — so this
+    /// is where "something is happening" has to be legible, and it works on
+    /// Macs with no notch at all.
     private func refreshTitle() {
         guard let library, let button = item.button else { return }
-        let down = library.aggregateDownloadRate
-        let up = library.aggregateUploadRate
-        let moving = down > 1 || up > 1
-        if moving { lastActivity = Date() }
+        let snapshots = library.orderedIDs.compactMap { library.snapshot(for: $0) }
+        let activity = LibraryActivity.summarize(snapshots)
 
+        let rate = activity?.headlineRate ?? 0
+        if rate > 1 { lastActivity = Date() }
         let withinGrace = lastActivity.map {
             -$0.timeIntervalSinceNow < Self.idleGrace
         } ?? false
 
-        let title = (moving || withinGrace)
-            ? " \(Self.compact(down)) \(Self.compact(up))"
-            : ""
+        // Progress through the queue, then the rate that matters for whatever
+        // state we're in. The count alone is the useful part at a glance; the
+        // rate drops away once things settle so the menu bar goes quiet.
+        var title = ""
+        if let activity {
+            title = " \(activity.done)/\(activity.total)"
+            if rate > 1 || withinGrace {
+                title += "  \(ByteFormatting.rate(rate))"
+            }
+        }
 
-        // Assigning the same title still dirties layout, so only write on a
+        let tint = Self.tint(for: activity)
+
+        // Assigning the same values still dirties layout, so only write on a
         // real change. Most ticks are no-ops.
-        guard title != shownTitle else { return }
-        shownTitle = title
-        button.title = title
+        if title != shownTitle {
+            shownTitle = title
+            button.title = title
+        }
+        if tint != shownTint {
+            shownTint = tint
+            button.image = Self.markImage(tint: tint)
+        }
     }
 
-    private static func compact(_ rate: Double) -> String {
-        guard rate > 1 else { return "—" }
-        let text = ByteFormatting.rate(rate)
-        return text.hasSuffix("/s") ? String(text.dropLast(2)) : text
+    /// State colours come from the app's own palette so a torrent is the same
+    /// colour here as it is in the list. Red is reserved for failure — a
+    /// healthy seeding torrent glowing red would read as a problem.
+    private static func tint(for activity: LibraryActivity?) -> NSColor {
+        guard let activity else { return .secondaryLabelColor }
+        switch activity.dominant {
+        case .downloading: return .controlAccentColor
+        case .seeding: return .systemTeal
+        case .complete: return .systemGreen
+        case .failed: return .systemRed
+        }
+    }
+
+    /// The app mark, drawn to match the app icon so the menu bar is
+    /// recognisably this app. Bars rather than the icon's waves: at 14pt the
+    /// wave crests are under a pixel and only make the shape look furry, which
+    /// is why the icon's own 16pt artwork flattens too.
+    ///
+    /// Not a template image — the whole point is the state colour.
+    private static func markImage(tint: NSColor) -> NSImage {
+        let size = NSSize(width: 15, height: 14)
+        let image = NSImage(size: size, flipped: false) { _ in
+            tint.setFill()
+            // Narrowing bars, then the drop they arrive at.
+            let bars: [(width: CGFloat, y: CGFloat)] = [
+                (15, 11), (10, 7.5), (5.5, 4),
+            ]
+            for bar in bars {
+                NSBezierPath(
+                    roundedRect: NSRect(
+                        x: (size.width - bar.width) / 2, y: bar.y,
+                        width: bar.width, height: 2.2
+                    ),
+                    xRadius: 1.1, yRadius: 1.1
+                ).fill()
+            }
+            NSBezierPath(ovalIn: NSRect(x: size.width / 2 - 1.3, y: 0.4, width: 2.6, height: 2.6)).fill()
+            return true
+        }
+        image.accessibilityDescription = "Current"
+        return image
     }
 
     // MARK: - Menu
@@ -171,9 +221,9 @@ final class StatusItemController {
     private func summary(for library: LibraryStore) -> String {
         let down = library.aggregateDownloadRate
         let up = library.aggregateUploadRate
-        let downText = down > 1 ? Self.compact(down) : "0"
-        let upText = up > 1 ? Self.compact(up) : "0"
-        return "\u{2193} \(downText)/s  \u{2191} \(upText)/s"
+        let downText = down > 1 ? ByteFormatting.rate(down) : "0/s"
+        let upText = up > 1 ? ByteFormatting.rate(up) : "0/s"
+        return "\u{2193} \(downText)  \u{2191} \(upText)"
     }
 
     private func disabled(_ title: String) -> NSMenuItem {
