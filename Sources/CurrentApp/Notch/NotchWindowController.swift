@@ -205,8 +205,14 @@ final class NotchWindowController: ObservableObject {
             featured = nil
         }
 
+        // `Dictionary(uniqueKeysWithValues:)` *traps* on a duplicate key, and
+        // this is runtime data. It did trap: re-adding a torrent already in the
+        // library used to put its id in the list twice, and the app died the
+        // next time this mirror rebuilt. The duplicate is fixed at the source
+        // in `registerAdded`, but a trapping initialiser has no business
+        // running on live data either way.
         mirrorsByID = Dictionary(
-            uniqueKeysWithValues: candidates.map {
+            candidates.map {
                 ($0.id, FeaturedTorrent(
                     id: $0.id,
                     name: $0.name,
@@ -215,7 +221,8 @@ final class NotchWindowController: ObservableObject {
                     uploadRate: $0.uploadRate,
                     etaSeconds: $0.etaSeconds
                 ))
-            }
+            },
+            uniquingKeysWith: { _, latest in latest }
         )
 
         // Everything the card can list: downloads first (what you're waiting

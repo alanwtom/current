@@ -69,6 +69,47 @@ int classify_error(error_code const& ec) {
     return LT_ERROR_UNKNOWN;
 }
 
+/// Hands a torrent's metadata to Swift.
+///
+/// Called from two places deliberately. `metadata_received_alert` fires only
+/// for torrents that began life *without* metadata — magnet links that fetch
+/// it from peers later. A torrent added from a .torrent file, or restored from
+/// resume data, already carries its metadata and never produces that alert.
+/// Dispatching only from there meant the app never learned such a torrent's
+/// name, size or file list: it downloaded correctly, at full speed, while the
+/// UI sat on "Waiting for details…" and a placeholder name forever.
+void dispatch_metadata(SessionContext* ctx, torrent_handle const& h) {
+    std::shared_ptr<const torrent_info> ti = h.torrent_file();
+    if (!ti) return;
+
+    file_storage const& fs = ti->files();
+    int32_t count = static_cast<int32_t>(fs.num_files());
+
+    // Locals below outlive the callback; pointers handed to Swift are valid
+    // only for its duration.
+    std::string id = hex_id(h);
+    std::string name = ti->name();
+    std::string joined_paths;
+    std::vector<uint64_t> sizes;
+    sizes.reserve(static_cast<size_t>(count));
+    for (file_index_t i{0}; i != fs.end_file(); ++i) {
+        if (!joined_paths.empty()) joined_paths.push_back('\n');
+        joined_paths.append(fs.file_path(i));
+        sizes.push_back(static_cast<uint64_t>(fs.file_size(i)));
+    }
+
+    lt_metadata_info info{};
+    info.id = id.c_str();
+    info.name = name.c_str();
+    info.total_size = static_cast<uint64_t>(ti->total_size());
+    info.piece_count = static_cast<int32_t>(ti->num_pieces());
+    info.piece_length = static_cast<int32_t>(ti->piece_length());
+    info.file_count = count;
+    info.file_paths = joined_paths.c_str();
+    info.file_sizes = sizes.data();
+    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_METADATA, &info, 1);
+}
+
 int map_state(torrent_status const& st) {
     if (st.flags & torrent_flags::paused) return LT_STATE_PAUSED;
     switch (st.state) {
@@ -140,36 +181,12 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
 
             for (alert const* a : alerts) {
                 if (auto const* meta = alert_cast<metadata_received_alert>(a)) {
-                    torrent_handle h = meta->handle;
-                    std::shared_ptr<const torrent_info> ti = h.torrent_file();
-                    if (!ti) continue;
-
-                    file_storage const& fs = ti->files();
-                    int32_t count = static_cast<int32_t>(fs.num_files());
-
-                    // Locals below outlive emit(); pointers handed to Swift
-                    // are valid only for the duration of the callback.
-                    std::string id = hex_id(h);
-                    std::string name = ti->name();
-                    std::string joined_paths;
-                    std::vector<uint64_t> sizes;
-                    sizes.reserve(static_cast<size_t>(count));
-                    for (file_index_t i{0}; i != fs.end_file(); ++i) {
-                        if (!joined_paths.empty()) joined_paths.push_back('\n');
-                        joined_paths.append(fs.file_path(i));
-                        sizes.push_back(static_cast<uint64_t>(fs.file_size(i)));
-                    }
-
-                    lt_metadata_info info{};
-                    info.id = id.c_str();
-                    info.name = name.c_str();
-                    info.total_size = static_cast<uint64_t>(ti->total_size());
-                    info.piece_count = static_cast<int32_t>(ti->num_pieces());
-                    info.piece_length = static_cast<int32_t>(ti->piece_length());
-                    info.file_count = count;
-                    info.file_paths = joined_paths.c_str();
-                    info.file_sizes = sizes.data();
-                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_METADATA, &info, 1);
+                    dispatch_metadata(ctx, meta->handle);
+                } else if (auto const* added = alert_cast<add_torrent_alert>(a)) {
+                    // Covers .torrent files and resume-data restores, which
+                    // arrive with metadata already attached and therefore
+                    // never emit metadata_received_alert.
+                    if (!added->error) dispatch_metadata(ctx, added->handle);
                 } else if (auto const* done = alert_cast<torrent_finished_alert>(a)) {
                     std::string id = hex_id(done->handle);
                     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_COMPLETED, id.c_str(), 1);
