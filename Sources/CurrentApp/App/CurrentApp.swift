@@ -27,6 +27,20 @@ struct CurrentApp: App {
                 }
         }
         .windowToolbarStyle(.unified)
+        .commands {
+            // ⌘K used to live only on the toolbar button, which meant the
+            // shortcut died whenever that button wasn't on screen — it now
+            // drops out of the toolbar in the compact layout. AGENTS.md
+            // requires a keyboard path for every mouse interaction, so the
+            // command belongs in the menu bar where it exists regardless of
+            // what the toolbar is doing. It is also simply easier to find.
+            CommandGroup(after: .toolbar) {
+                Button("Command Palette") {
+                    app.isCommandPaletteVisible.toggle()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+            }
+        }
 
         Settings {
             SettingsView(tab: Binding(
