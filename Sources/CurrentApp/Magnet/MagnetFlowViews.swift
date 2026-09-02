@@ -64,7 +64,9 @@ struct NotchSurfaceView: View {
             EmptyView()
         } else if controller.flowStage != .idle || controller.selectionSummary != nil {
             flowContent
-        } else if controller.featured != nil {
+        } else if !controller.activeDownloads.isEmpty {
+            // Gate on the same list the card renders, so the panel can never be
+            // sized for rows that then decline to appear.
             activityContent
         }
     }
@@ -100,18 +102,19 @@ struct NotchSurfaceView: View {
 
     @ViewBuilder
     private var activityContent: some View {
-        if let featured = controller.featured {
-            ActivityCard(
-                featured: featured,
-                isPaused: false,
-                onPause: { controller.onPauseFeatured() },
-                onReveal: { controller.onRevealFeatured() }
+        if !controller.activeDownloads.isEmpty {
+            ActivityStackCard(
+                torrents: controller.visibleDownloads,
+                hiddenCount: controller.hiddenDownloadCount,
+                isExpanded: controller.isDetailExpanded,
+                onToggleMore: {
+                    withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
+                        controller.isDetailExpanded.toggle()
+                    }
+                },
+                onPause: { controller.onPause($0) },
+                onReveal: { controller.onReveal($0) }
             )
-            .onTapGesture {
-                withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
-                    controller.isDetailExpanded.toggle()
-                }
-            }
         }
     }
 }
@@ -243,13 +246,15 @@ struct CompletionBadge: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(SemanticColor.complete)
                 .font(.system(size: 17))
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("Download complete")
-                    .font(.callout.weight(.semibold))
-                Text(name)
-                    .font(.caption)
-                    .lineLimit(1)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.white.opacity(0.55))
+                // The name is the point of this badge — what finished. It used
+                // to be the dim subtitle under a heading that said nothing.
+                Text(name)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 16)
@@ -259,42 +264,103 @@ struct CompletionBadge: View {
     }
 }
 
-struct ActivityCard: View {
-    let featured: NotchWindowController.FeaturedTorrent
-    var isPaused: Bool
+/// The hover card: the transfers you're actually waiting on.
+///
+/// Two rows by default, more on request. The panel used to open at one fixed
+/// height regardless of content, so a single item — or a "download complete"
+/// badge — floated in a mostly-empty black rectangle. The controller now sizes
+/// the panel from `rowHeight` and the row count, so these two have to agree:
+/// if you change a row's height, change `NotchWindowController.rowHeight` too.
+struct ActivityStackCard: View {
+    let torrents: [NotchWindowController.FeaturedTorrent]
+    let hiddenCount: Int
+    let isExpanded: Bool
+    var onToggleMore: () -> Void
+    var onPause: (TorrentID) -> Void
+    var onReveal: (TorrentID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(torrents, id: \.id) { torrent in
+                ActivityRow(
+                    torrent: torrent,
+                    onPause: { onPause(torrent.id) },
+                    onReveal: { onReveal(torrent.id) }
+                )
+            }
+
+            if hiddenCount > 0 {
+                Button(action: onToggleMore) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(isExpanded ? "Show less" : "\(hiddenCount) more")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(height: NotchWindowController.moreRowHeight)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "Show fewer downloads" : "Show \(hiddenCount) more downloads")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+}
+
+private struct ActivityRow: View {
+    let torrent: NotchWindowController.FeaturedTorrent
     var onPause: () -> Void
     var onReveal: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(featured.name)
-                .font(.callout.weight(.semibold))
-                .lineLimit(1)
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(torrent.name)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(.white.opacity(0.95))
 
-            ProgressTrack(fraction: featured.progress, tint: Color.accentColor)
-                .frame(height: 4)
+                ProgressTrack(fraction: torrent.progress, tint: Color.accentColor)
+                    .frame(height: 3)
 
-            HStack(spacing: 12) {
-                Label(ByteFormatting.rate(featured.downloadRate), systemImage: "arrow.down")
-                Label(ByteFormatting.rate(featured.uploadRate), systemImage: "arrow.up")
-                Spacer()
-                if let eta = featured.etaSeconds {
-                    Text("\(ByteFormatting.eta(eta)) left")
+                HStack(spacing: 8) {
+                    Text(ByteFormatting.rate(torrent.downloadRate))
+                    if let eta = torrent.etaSeconds {
+                        Text("\(ByteFormatting.eta(eta)) left")
+                    }
+                    Spacer(minLength: 0)
                 }
+                .font(.caption2.tabularNumerics())
+                .foregroundStyle(.white.opacity(0.6))
             }
-            .font(.caption.tabularNumerics())
-            .foregroundStyle(.white.opacity(0.65))
 
-            HStack(spacing: 8) {
-                Button(isPaused ? "Resume" : "Pause") { onPause() }
-                    .controlSize(.small)
-                Button("Reveal") { onReveal() }
-                    .controlSize(.small)
-                Spacer()
-            }
-            .tint(.white)
+            iconButton("pause.fill", label: "Pause", action: onPause)
+            iconButton("folder", label: "Reveal in Finder", action: onReveal)
         }
-        .padding(14)
+        .frame(height: NotchWindowController.rowHeight)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func iconButton(
+        _ symbol: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: Layout.cornerS, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
