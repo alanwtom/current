@@ -29,7 +29,10 @@ struct TorrentListView: View {
                 .contextMenu { RowContextMenu(snapshot: snapshot) }
             }
         }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
+        // Striping an empty list draws a dozen empty bands behind the "No
+        // downloads" message, which reads as broken chrome rather than as an
+        // empty state. Nothing to alternate, so don't.
+        .listStyle(.inset(alternatesRowBackgrounds: !torrents.isEmpty))
         .animation(Motion.spring(reduceMotion: reduceMotion), value: membership)
         .overlay {
             if torrents.isEmpty {
