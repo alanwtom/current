@@ -56,7 +56,13 @@ struct NotchSurfaceView: View {
 
     @ViewBuilder
     private var content: some View {
-        if controller.flowStage != .idle || controller.selectionSummary != nil {
+        // Nothing is built while collapsed. Clipping alone would hide it, but
+        // there's no reason to keep laying out a view that can never be seen —
+        // and in this app, per-tick layout work in a window is exactly what has
+        // crashed it before.
+        if controller.surfaceState == .hidden {
+            EmptyView()
+        } else if controller.flowStage != .idle || controller.selectionSummary != nil {
             flowContent
         } else if controller.featured != nil {
             activityContent
