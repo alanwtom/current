@@ -8,13 +8,14 @@ struct TorrentRowView: View {
     let record: TorrentRecord?
     let failure: EngineFailure?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isCompactLayout) private var isCompact
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: isCompact ? 4 : 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(displayName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: isCompact ? 12 : 13, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if snapshot.pinned {
@@ -32,19 +33,24 @@ struct TorrentRowView: View {
                     tint: barTint,
                     reduceMotion: reduceMotion
                 )
-                .frame(height: 4)
+                .frame(height: isCompact ? 3 : 4)
 
-                HStack(spacing: 0) {
-                    detailLine
-                        .font(.caption)
-                        .tabularNumerics()
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    secondaryState
+                // The third line is what a narrow window can least afford, so
+                // compact folds the percentage up into the trailing stat and
+                // drops this row entirely rather than truncating everything.
+                if !isCompact {
+                    HStack(spacing: 0) {
+                        detailLine
+                            .font(.caption)
+                            .tabularNumerics()
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        secondaryState
+                    }
                 }
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, isCompact ? 5 : 10)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -76,8 +82,15 @@ struct TorrentRowView: View {
     private var trailingStat: some View {
         switch effectiveState {
         case .downloading:
-            Text(ByteFormatting.rate(snapshot.downloadRate))
-                .foregroundStyle(SemanticColor.downloading.opacity(0.9))
+            HStack(spacing: 6) {
+                if isCompact, snapshot.hasMetadata {
+                    // Carries the number the dropped detail line used to show.
+                    Text(ByteFormatting.progress(snapshot.progress))
+                        .foregroundStyle(.secondary)
+                }
+                Text(ByteFormatting.rate(snapshot.downloadRate))
+                    .foregroundStyle(SemanticColor.downloading.opacity(0.9))
+            }
         case .seeding:
             HStack(spacing: 5) {
                 if snapshot.uploadRate > 1 {
@@ -89,7 +102,12 @@ struct TorrentRowView: View {
                 }
             }
         default:
-            EmptyView()
+            // Compact drops the line that normally carries state, so the pill
+            // moves up here. Otherwise a finished torrent would show nothing
+            // at all in a narrow window.
+            if isCompact {
+                StatePill(state: effectiveState)
+            }
         }
     }
 

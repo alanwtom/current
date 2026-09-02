@@ -19,7 +19,9 @@ struct CurrentApp: App {
                 .environmentObject(app.magnetFlow)
                 .environmentObject(app.cleanup)
                 .environmentObject(app.toasts)
-                .frame(minWidth: 760, minHeight: 460)
+                // Small enough for a Transmission-style strip. Below ~620pt wide the
+                // app switches to its compact layout — see WindowMetrics.
+                .frame(minWidth: 380, minHeight: 260)
                 .onOpenURL { url in
                     handleIncoming(url)
                 }

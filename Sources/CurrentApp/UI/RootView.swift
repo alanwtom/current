@@ -12,6 +12,8 @@ struct RootView: View {
 
     @FocusState private var isSearchFocused: Bool
     @AppStorage("inspector.visible") private var inspectorVisible = true
+    @StateObject private var metrics = WindowMetrics()
+    @State private var columns: NavigationSplitViewVisibility = .automatic
 
     private var filteredTorrents: [TorrentSnapshot] {
         if store.activeSection == .readyToClean {
@@ -21,12 +23,35 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        // The width is measured out here, *outside* the split view, so the
+        // reading is the window's and not the content's. Measuring inside
+        // would feed the decision back into itself: hide the sidebar, the
+        // content gets wider, the threshold flips back, show it again.
+        GeometryReader { proxy in
+            splitView
+                .onAppear { metrics.update(width: proxy.size.width) }
+                .onChange(of: proxy.size.width) { _, width in
+                    metrics.update(width: width)
+                }
+        }
+        .environment(\.isCompactLayout, metrics.isCompact)
+    }
+
+    private var splitView: some View {
+        NavigationSplitView(columnVisibility: $columns) {
             Sidebar(store: store)
                 .environmentObject(app.sidebarCounts)
         } detail: {
             detailContent
-                .frame(minWidth: 460)
+                .frame(minWidth: metrics.isCompact ? 280 : 460)
+        }
+        // Shrunk far enough, the sidebar is the first thing to go — it costs
+        // ~200pt and the sections are still reachable from the command
+        // palette. Sections come back on their own when there is room again.
+        .onChange(of: metrics.isCompact) { _, compact in
+            withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
+                columns = compact ? .detailOnly : .all
+            }
         }
         .toolbar { toolbar }
         .inspector(isPresented: inspectorBinding) {
@@ -138,7 +163,10 @@ struct RootView: View {
                 TextField("Search", text: $store.searchText)
                     .textFieldStyle(.plain)
                     .font(.callout)
-                    .frame(width: 170)
+                    // 170pt of search is most of a 380pt window; it gives back
+                    // the space rather than pushing everything else into the
+                    // toolbar's overflow menu.
+                    .frame(width: metrics.isCompact ? 90 : 170)
                     .focused($isSearchFocused)
                 if !store.searchText.isEmpty {
                     Button {
@@ -173,7 +201,9 @@ struct RootView: View {
 
     private var inspectorBinding: Binding<Bool> {
         Binding(
-            get: { inspectorVisible && !store.selection.isEmpty },
+            // Forced shut in compact: at 380pt wide a 300pt inspector would
+            // leave nothing for the list it is describing.
+            get: { inspectorVisible && !store.selection.isEmpty && !metrics.isCompact },
             set: { inspectorVisible = $0 }
         )
     }
