@@ -64,7 +64,10 @@ struct NotchSurfaceView: View {
             EmptyView()
         } else if controller.flowStage != .idle || controller.selectionSummary != nil {
             flowContent
-        } else if controller.featured != nil {
+        } else if controller.summary != nil || controller.featured != nil {
+            // `summary` matters on its own here: a library that is finished and
+            // seeding still has something to report, but has no single
+            // "featured" torrent to point at.
             activityContent
         }
     }
@@ -100,20 +103,21 @@ struct NotchSurfaceView: View {
 
     @ViewBuilder
     private var activityContent: some View {
-        if let featured = controller.featured {
-            if controller.surfaceState == .pill {
-                ActivityPill(featured: featured)
-            } else {
-                ActivityCard(
-                    featured: featured,
-                    isPaused: false,
-                    onPause: { controller.onPauseFeatured() },
-                    onReveal: { controller.onRevealFeatured() }
-                )
-                .onTapGesture {
-                    withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
-                        controller.isDetailExpanded.toggle()
-                    }
+        if controller.surfaceState == .pill {
+            // The collapsed strip reports the whole queue, not one torrent.
+            if let summary = controller.summary {
+                ActivityAmbientPill(summary: summary)
+            }
+        } else if let featured = controller.featured {
+            ActivityCard(
+                featured: featured,
+                isPaused: false,
+                onPause: { controller.onPauseFeatured() },
+                onReveal: { controller.onRevealFeatured() }
+            )
+            .onTapGesture {
+                withAnimation(Motion.spring(reduceMotion: reduceMotion)) {
+                    controller.isDetailExpanded.toggle()
                 }
             }
         }
@@ -121,6 +125,74 @@ struct NotchSurfaceView: View {
 }
 
 // MARK: - Shared stage views
+
+/// The app mark, small. Same silhouette as the app icon — narrowing current
+/// lines ending in a drop — so the notch strip is recognisably this app.
+///
+/// Bars rather than waves on purpose: at 15pt the icon's wave crests are well
+/// under a pixel and just make the shape look furry. The icon's own 16pt
+/// artwork flattens for the same reason.
+struct CurrentMark: View {
+    var tint: Color
+    var body: some View {
+        VStack(spacing: 2) {
+            Capsule().frame(width: 15, height: 2.5)
+            Capsule().frame(width: 10, height: 2.5)
+            Capsule().frame(width: 5.5, height: 2.5)
+            Circle().frame(width: 2.5, height: 2.5)
+        }
+        .foregroundStyle(tint)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The collapsed notch strip: what's happening, in one glance.
+struct ActivityAmbientPill: View {
+    let summary: NotchWindowController.LibrarySummary
+
+    private var tint: Color {
+        switch summary.dominant {
+        case .downloading: return SemanticColor.downloading
+        case .seeding: return SemanticColor.seeding
+        case .complete: return SemanticColor.complete
+        case .failed: return SemanticColor.failure
+        }
+    }
+
+    /// Upload rate when seeding, download rate otherwise — the number that
+    /// matters for the state the strip is currently reporting.
+    private var rate: Double {
+        summary.dominant == .seeding ? summary.uploadRate : summary.downloadRate
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            CurrentMark(tint: tint)
+
+            Text("\(summary.done)/\(summary.total)")
+                .font(.caption2.weight(.semibold))
+                .tabularNumerics()
+                .foregroundStyle(.white.opacity(0.92))
+
+            if rate > 1 {
+                Text(ByteFormatting.rate(rate))
+                    .font(.caption2)
+                    .tabularNumerics()
+                    .foregroundStyle(tint)
+                    // Pinned so a rate crossing KB/s -> MB/s can't resize the
+                    // strip. A notch that twitches once a second is worse than
+                    // no notch at all.
+                    .frame(width: 62, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(summary.done) of \(summary.total) complete"
+                + (rate > 1 ? ", \(ByteFormatting.rate(rate))" : "")
+        )
+    }
+}
 
 struct ResolvingPill: View {
     let hint: String?
@@ -260,45 +332,6 @@ struct CompletionBadge: View {
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Download complete: \(name)")
-    }
-}
-
-struct ActivityPill: View {
-    let featured: NotchWindowController.FeaturedTorrent
-
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-                Text(ByteFormatting.rate(featured.downloadRate))
-            }
-            .tabularNumerics()
-
-            if featured.uploadRate > 1 {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(SemanticColor.seeding)
-                    Text(ByteFormatting.rate(featured.uploadRate))
-                }
-                .tabularNumerics()
-            } else {
-                Text(ByteFormatting.progress(featured.progress))
-                    .tabularNumerics()
-            }
-        }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(.white.opacity(0.85))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(activityLabel)
-    }
-
-    private var activityLabel: String {
-        "Downloading \(featured.name), \(ByteFormatting.progress(featured.progress)), down \(ByteFormatting.rate(featured.downloadRate))"
     }
 }
 

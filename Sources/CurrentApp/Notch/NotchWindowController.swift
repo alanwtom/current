@@ -33,6 +33,23 @@ final class NotchWindowController: ObservableObject {
         let totalBytes: Int64
     }
 
+    /// The at-a-glance state the collapsed notch shows: how much of the queue
+    /// is finished, how fast, and which single state dominates right now.
+    struct LibrarySummary: Equatable {
+        enum Dominant { case downloading, seeding, complete, failed }
+
+        let done: Int
+        let total: Int
+        let downloadRate: Double
+        let uploadRate: Double
+        let dominant: Dominant
+
+        /// True when there is anything worth telling the user about. Drives
+        /// whether the notch shows its ambient strip at all.
+        var isNoteworthy: Bool { total > 0 }
+    }
+
+    @Published private(set) var summary: LibrarySummary?
     @Published private(set) var featured: FeaturedTorrent?
     @Published private(set) var selectionSummary: SelectionSummary?
     @Published private(set) var flowStage: StageMirror = .idle
@@ -140,6 +157,37 @@ final class NotchWindowController: ObservableObject {
             )
         } else {
             featured = nil
+        }
+
+        // Queue summary for the ambient strip. Recomputed on the controller's
+        // 2 Hz tick like every other mirror, never per engine batch.
+        if candidates.isEmpty {
+            summary = nil
+        } else {
+            let finished = candidates.filter {
+                $0.state == .completed || $0.state == .seeding
+            }.count
+            let anyFailed = candidates.contains {
+                if case .failed = $0.state { return true }
+                return false
+            }
+            let anyDownloading = !downloading.isEmpty
+            let anySeeding = candidates.contains { $0.state == .seeding }
+
+            // One state wins, in order of what the user most needs to know.
+            let dominant: LibrarySummary.Dominant =
+                anyFailed ? .failed
+                : anyDownloading ? .downloading
+                : anySeeding ? .seeding
+                : .complete
+
+            summary = LibrarySummary(
+                done: finished,
+                total: candidates.count,
+                downloadRate: candidates.reduce(0) { $0 + $1.downloadRate },
+                uploadRate: candidates.reduce(0) { $0 + $1.uploadRate },
+                dominant: dominant
+            )
         }
 
         // Selection summary while a magnet resolves into a picker.
@@ -286,17 +334,16 @@ final class NotchWindowController: ObservableObject {
             break
         }
 
-        // Transfer activity on its own is NOT a reason to show anything. The
-        // whole premise of this app is that torrenting is background work, and
-        // a permanent black bar hanging off the camera housing is the opposite
-        // of that — it was on screen the entire time anything was downloading.
+        // Ambient presence, not a billboard. While there is a library to report
+        // on, the notch carries a compact strip — the app mark, how much of the
+        // queue is done, and the current speed — tinted by whichever state
+        // dominates. It should be obvious that something is happening without
+        // a full card parked on screen.
         //
-        // Collapsed, the panel is exactly the notch footprint and draws nothing,
-        // so it disappears into the hardware. Hovering the notch is what asks
-        // for detail. Hover still reaches us while collapsed because
+        // Hovering opens the detail. Hover reaches us in either state because
         // `isInteractive` only gates hitTest (clicks), not the tracking areas.
-        if hasActivity, center.isHovered {
-            return .card
+        if let summary, summary.isNoteworthy {
+            return center.isHovered ? .card : .pill
         }
 
         return .hidden
@@ -342,7 +389,10 @@ final class NotchWindowController: ObservableObject {
         case .hidden:
             frame = (notch.width, notch.height)
         case .pill:
-            frame = (max(notch.width + 110, 250), notch.height + 34)
+            // Deliberately close to the notch's own width so it reads as the
+            // housing bulging slightly, not as a bar hanging off it. Only 30pt
+            // of it is below the housing and therefore actually visible.
+            frame = (notch.width + 44, notch.height + 30)
         case .card:
             frame = (340, notch.height + 150)
         case .dropTarget:
