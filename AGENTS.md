@@ -17,10 +17,28 @@ Apple Silicon paths (`/opt/homebrew/{include,lib}`), so an Intel Mac needs
 ```bash
 brew install libtorrent-rasterbar
 swift build                 # debug
-swift test                  # 38 tests, all in CurrentCore + CurrentSim
+swift test                  # 50 tests, all in CurrentCore + CurrentSim
 Scripts/make-app.sh         # bundles .build/Current.app (add --release for release)
 open .build/Current.app
 ```
+
+**libtorrent's compile definitions are load-bearing.** `Package.swift` passes a
+list of `-D` defines to `LTShim` copied verbatim from
+`INTERFACE_COMPILE_DEFINITIONS` in
+`/opt/homebrew/lib/cmake/LibtorrentRasterbar/*.cmake`. Several of them —
+`TORRENT_ABI_VERSION` and `TORRENT_SSL_PEERS` above all — change the memory
+layout of structs like `torrent_status`.
+
+Get them wrong and **nothing fails loudly**. Every call succeeds, torrents
+download correctly and verify against their checksums, and every number the
+shim reads back is garbage: `has_metadata` false on a complete torrent,
+negative progress, a "downloaded" figure of 41 GB that changes each tick. The
+app looks broken while the engine is perfect. This cost a long debugging
+session; the shim now carries an `abi_canary()` that shouts once if
+`torrent_status` looks impossible, and setting `CURRENT_SHIM_LOG=1` prints
+every status row.
+
+If you upgrade libtorrent, re-read that cmake file. Do not guess.
 
 `Scripts/make-app.sh` and `.github/workflows/ci.yml` both hardcode
 `.build/arm64-apple-macosx/<config>/Current`. If you change the build triple,
