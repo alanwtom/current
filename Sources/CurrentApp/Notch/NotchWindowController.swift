@@ -51,14 +51,33 @@ final class NotchWindowController: ObservableObject {
     static let rowHeight: CGFloat = 52
     static let moreRowHeight: CGFloat = 26
     private static let cardInset: CGFloat = 16
+    private static let hiddenHoverMargin: CGFloat = 10
+
+    /// Row identities frozen at the moment the card opened.
+    ///
+    /// Without this the card resizes under a stationary pointer: which
+    /// torrents count as "active" jitters every tick in normal operation, so
+    /// the row count — and therefore the panel height — changed twice a
+    /// second. Measured: the panel oscillated between 152pt and 176pt while
+    /// the mouse sat still. Values inside the rows still update live; only the
+    /// set of rows is pinned.
+    private var pinnedRowIDs: [TorrentID]?
+
+    /// Latest mirror for every torrent, so pinned rows keep updating even if a
+    /// torrent stops being "active" while the card is open.
+    private var mirrorsByID: [TorrentID: FeaturedTorrent] = [:]
+
+    private var rowIDs: [TorrentID] {
+        pinnedRowIDs ?? activeDownloads.map(\.id)
+    }
 
     var visibleDownloads: [FeaturedTorrent] {
         let limit = isDetailExpanded ? Self.expandedRowLimit : Self.collapsedRowLimit
-        return Array(activeDownloads.prefix(limit))
+        return rowIDs.prefix(limit).compactMap { mirrorsByID[$0] }
     }
 
     var hiddenDownloadCount: Int {
-        max(0, activeDownloads.count - Self.collapsedRowLimit)
+        max(0, rowIDs.count - Self.collapsedRowLimit)
     }
 
     /// Height the card's content actually needs. The panel used to open at one
@@ -103,6 +122,7 @@ final class NotchWindowController: ObservableObject {
     private(set) var isAvailable = false
     private var geometry: NotchGeometry?
     private var currentFrame: CGRect = .zero
+    private var hoverPoll: Timer?
 
     private let enabled: () -> Bool
 
@@ -184,6 +204,19 @@ final class NotchWindowController: ObservableObject {
         } else {
             featured = nil
         }
+
+        mirrorsByID = Dictionary(
+            uniqueKeysWithValues: candidates.map {
+                ($0.id, FeaturedTorrent(
+                    id: $0.id,
+                    name: $0.name,
+                    progress: $0.progress,
+                    downloadRate: $0.downloadRate,
+                    uploadRate: $0.uploadRate,
+                    etaSeconds: $0.etaSeconds
+                ))
+            }
+        )
 
         // Everything the card can list: downloads first (what you're waiting
         // on), then other active transfers.
@@ -411,7 +444,11 @@ final class NotchWindowController: ObservableObject {
         let frame: (width: CGFloat, height: CGFloat)
         switch surfaceState {
         case .hidden:
-            frame = (notch.width, notch.height)
+            // A few points taller than the notch. The housing is opaque and
+            // the pointer is invisible behind it, so a hover target that is
+            // exactly the notch means aiming at something you cannot see.
+            // These extra points are fully transparent — nothing is drawn.
+            frame = (notch.width, notch.height + Self.hiddenHoverMargin)
         case .pill:
             // Deliberately close to the notch's own width so it reads as the
             // housing bulging slightly, not as a bar hanging off it. Only 30pt
@@ -458,11 +495,47 @@ final class NotchWindowController: ObservableObject {
     // MARK: - Hover
 
     private func setHovered(_ hovering: Bool) {
+        guard center?.isHovered != hovering else { return }
         center?.isHovered = hovering
-        if !hovering {
+        if hovering {
+            // Freeze which rows the card shows for as long as it is open.
+            pinnedRowIDs = activeDownloads.map(\.id)
+            startHoverPoll()
+        } else {
             isDetailExpanded = false
+            pinnedRowIDs = nil
+            stopHoverPoll()
         }
         refreshVisibility()
+    }
+
+    /// Hover *exit* is detected by polling the pointer, not by `mouseExited`.
+    ///
+    /// Entering the panel resizes it, resizing changes the view's bounds,
+    /// changing bounds rebuilds the tracking areas, and rebuilding them fires
+    /// spurious enter/exit pairs. Acting on those made the card open and close
+    /// under a stationary cursor. Polling the actual pointer position cannot
+    /// be fooled by any of that.
+    private func startHoverPoll() {
+        stopHoverPoll()
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let panel = self.panel else { return }
+                // Small slack so a pointer resting exactly on the edge, or a
+                // frame mid-animation, doesn't count as having left.
+                let zone = panel.frame.insetBy(dx: -6, dy: -6)
+                if !zone.contains(NSEvent.mouseLocation) {
+                    self.setHovered(false)
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverPoll = timer
+    }
+
+    private func stopHoverPoll() {
+        hoverPoll?.invalidate()
+        hoverPoll = nil
     }
 
     // MARK: - Drop plumbing
@@ -496,9 +569,11 @@ final class NotchContainerView: NSView {
         onHoverChanged?(true)
     }
 
-    override func mouseExited(with event: NSEvent) {
-        onHoverChanged?(false)
-    }
+    /// Deliberately empty. Exit is decided by the controller's pointer poll —
+    /// see `startHoverPoll`. Resizing the panel rebuilds tracking areas and
+    /// fires exits that never happened, and acting on them made the card
+    /// flicker. Do not "restore" this.
+    override func mouseExited(with event: NSEvent) {}
 
     /// Clicks pass through when there's nothing visible to interact with.
     override func hitTest(_ point: NSPoint) -> NSView? {
