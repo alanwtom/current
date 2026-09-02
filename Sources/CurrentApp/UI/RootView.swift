@@ -130,6 +130,17 @@ struct RootView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // Deliberately on the leading side, next to the sidebar toggle whose
+        // job it is taking over. Placed in the trailing group it competed with
+        // the search field for a narrow window's remaining width and lost —
+        // ending up in the overflow menu, which is a poor home for the only
+        // way to change sections once the sidebar is gone.
+        ToolbarItem(placement: .navigation) {
+            if metrics.isCompact {
+                filterMenu
+            }
+        }
+
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {
                 Button("Add Magnet Link…") { app.beginAddMagnet() }
@@ -141,18 +152,24 @@ struct RootView: View {
             }
             .help("Add torrent")
 
-            Button {
-                app.isCommandPaletteVisible.toggle()
-            } label: {
-                Image(systemName: "command")
-            }
-            .keyboardShortcut("k", modifiers: .command)
-            .help("Command palette ⌘K")
+            // Both of these give up their toolbar slot in compact, so the
+            // filter — which is the only way to change sections once the
+            // sidebar is gone — doesn't get pushed into the overflow menu.
+            // The palette keeps working on ⌘K, and the inspector toggle is
+            // inert in compact anyway because the inspector is forced shut.
+            if !metrics.isCompact {
+                Button {
+                    app.isCommandPaletteVisible.toggle()
+                } label: {
+                    Image(systemName: "command")
+                }
+                .help("Command palette ⌘K")
 
-            Toggle(isOn: $inspectorVisible) {
-                Image(systemName: "sidebar.trailing")
+                Toggle(isOn: $inspectorVisible) {
+                    Image(systemName: "sidebar.trailing")
+                }
+                .help("Toggle inspector")
             }
-            .help("Toggle inspector")
 
             Spacer()
 
@@ -186,6 +203,40 @@ struct RootView: View {
                     .fill(Color.primary.opacity(0.05))
             )
         }
+    }
+
+    /// Section filter for the compact layout.
+    ///
+    /// An inline `Picker` rather than a list of buttons, because that is what
+    /// gets the selected row a checkmark for free — with plain buttons there
+    /// is no indication of which filter is currently on.
+    private var filterMenu: some View {
+        Menu {
+            Picker("Filter", selection: $store.activeSection) {
+                Section("Library") {
+                    ForEach(SidebarSection.library, id: \.self) { section in
+                        Label(section.title, systemImage: section.symbol).tag(section)
+                    }
+                }
+                Section("Smart") {
+                    ForEach(SidebarSection.smart, id: \.self) { section in
+                        Label(section.title, systemImage: section.symbol).tag(section)
+                    }
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            // Filled means a filter is on. Without it the toolbar gives no clue
+            // that the list is showing a subset, which is how you end up
+            // thinking your torrents have disappeared.
+            Image(systemName: store.activeSection == .all
+                  ? "line.3.horizontal.decrease.circle"
+                  : "line.3.horizontal.decrease.circle.fill")
+        }
+        .help(store.activeSection == .all
+              ? "Filter"
+              : "Filtered: \(store.activeSection.title)")
+        .accessibilityLabel("Filter, currently \(store.activeSection.title)")
     }
 
     // MARK: - Selection plumbing

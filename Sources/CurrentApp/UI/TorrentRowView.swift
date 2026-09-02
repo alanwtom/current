@@ -83,9 +83,11 @@ struct TorrentRowView: View {
         switch effectiveState {
         case .downloading:
             HStack(spacing: 6) {
-                if isCompact, snapshot.hasMetadata {
-                    // Carries the number the dropped detail line used to show.
-                    Text(ByteFormatting.progress(snapshot.progress))
+                // Compact has no second line, so the ETA rides up here next to
+                // the rate. Progress is already legible from the bar, which is
+                // why that is the number that gets dropped rather than these.
+                if isCompact, let eta = snapshot.etaSeconds {
+                    Text(ByteFormatting.eta(eta))
                         .foregroundStyle(.secondary)
                 }
                 Text(ByteFormatting.rate(snapshot.downloadRate))
