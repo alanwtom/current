@@ -169,20 +169,28 @@ func drawIcon(into ctx: CGContext, pixels: CGFloat) {
     // below 32pt: three rows, heavier strokes, much bigger gaps, and a calmer
     // wave, which is the most detail that actually survives.
     let small = pixels <= 32
-    let rows: [(y: CGFloat, width: CGFloat, weight: CGFloat)] = small
+    // The y values are optically centred against the plate. Checked in the Dock
+    // beside a neighbouring icon, the first version sat noticeably high with a
+    // void underneath.
+    //
+    // `phase` can slide each row's crest sideways. It is 0 everywhere on
+    // purpose: staggering the crests was tried, to make the stack look less like
+    // a Wi-Fi glyph, and it only made the rows lean and their ends disagree.
+    // Aligned crests read as one body of water. Left as a knob, set to off.
+    let rows: [(y: CGFloat, width: CGFloat, weight: CGFloat, phase: CGFloat)] = small
         ? [
-            (y: 720, width: 400, weight: 88),
-            (y: 540, width: 268, weight: 84),
-            (y: 360, width: 136, weight: 80),
+            (y: 744, width: 400, weight: 88, phase: 0.00),
+            (y: 564, width: 268, weight: 84, phase: 0.0),
+            (y: 384, width: 136, weight: 80, phase: 0.0),
         ]
         : [
-            (y: 728, width: 392, weight: 58),
-            (y: 618, width: 300, weight: 54),
-            (y: 512, width: 208, weight: 50),
-            (y: 410, width: 116, weight: 46),
+            (y: 707, width: 392, weight: 58, phase: 0.00),
+            (y: 597, width: 300, weight: 54, phase: 0.0),
+            (y: 491, width: 208, weight: 50, phase: 0.0),
+            (y: 389, width: 116, weight: 46, phase: 0.0),
         ]
     let waviness: CGFloat = small ? 0.040 : 0.052
-    let drop: (y: CGFloat, size: CGFloat) = small ? (y: 196, size: 104) : (y: 288, size: 78)
+    let drop: (y: CGFloat, size: CGFloat) = small ? (y: 220, size: 104) : (y: 267, size: 78)
 
     for row in rows {
         // Amplitude scales with the row's width. A constant amplitude makes the
@@ -197,7 +205,7 @@ func drawIcon(into ctx: CGContext, pixels: CGFloat) {
         for i in 0...120 {
             let f = CGFloat(i) / 120
             let x = axis - half + row.width * f
-            let y = row.y + amplitude * sin(f * 2 * .pi)
+            let y = row.y + amplitude * sin((f + row.phase) * 2 * .pi)
             if first { ctx.move(to: CGPoint(x: x, y: y)); first = false }
             else { ctx.addLine(to: CGPoint(x: x, y: y)) }
         }
