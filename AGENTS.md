@@ -148,10 +148,11 @@ never converges, AppKit exceeds its own pass limit, and the process traps with:
 
 Two real instances, both fixed:
 
-- **Sidebar section counts.** Several are derived from jittery per-tick data
-  (`Rare Torrents` tracks connected seeds), so a count badge blinked in and out
-  once a second. Fixed by `SidebarCounts`, which coalesces to a 2 s tick and
-  publishes only on real change.
+- **Sidebar section counts.** They were derived from per-tick data, so a count
+  badge blinked in and out once a second. Fixed by `SidebarCounts`, which
+  coalesces to a 2 s tick and publishes only on real change. (The worst
+  offender was a `Rare Torrents` section keyed on connected seeds; that section
+  has since been removed, but the coalescing is still what keeps this safe.)
 - **The menu bar item.** SwiftUI's `MenuBarExtra` flushes its updates from
   inside the main window's layout pass. Nothing in our own view code could
   avoid it — a completely static label still crashed. Fixed by owning an
