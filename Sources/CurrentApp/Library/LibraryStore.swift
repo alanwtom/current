@@ -382,9 +382,19 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// Drops selected ids that no longer exist.
+    ///
+    /// The guard is load-bearing, not a micro-optimisation. This runs from
+    /// `selection`'s own `didSet`, and in Swift an assignment made inside
+    /// `didSet` re-enters `didSet` — so writing unconditionally recurses until
+    /// the stack overflows. That is a real crash, not a theoretical one:
+    /// picking a filter that empties the list makes the table write back a new
+    /// selection, and the app segfaulted on the way down.
     private func normalizeSelection() {
         let known = Set(orderedIDs)
-        selection = selection.intersection(known)
+        let pruned = selection.intersection(known)
+        guard pruned != selection else { return }
+        selection = pruned
     }
 
     // MARK: - Resume restoration
