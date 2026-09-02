@@ -150,23 +150,11 @@ struct SectionEmptyState: View {
                 title: "Nothing needs attention",
                 message: "Failed downloads and stuck magnets will show up here."
             )
-        case .rare:
-            EmptyStateView(
-                symbol: "sparkles",
-                title: "No rare torrents",
-                message: "Torrents with very few complete sources will appear here."
-            )
         case .readyToClean:
             EmptyStateView(
                 symbol: "sparkles",
                 title: "Nothing to clean",
                 message: "Completed downloads that have met their seeding goals appear here."
-            )
-        case .large:
-            EmptyStateView(
-                symbol: "externaldrive",
-                title: "No large downloads",
-                message: "Downloads over 10 GB will be collected here."
             )
         default:
             EmptyStateView(

@@ -27,9 +27,7 @@ enum SidebarSection: Hashable {
     case completed
 
     case attention
-    case rare
     case readyToClean
-    case large
 
     var title: String {
         switch self {
@@ -38,9 +36,7 @@ enum SidebarSection: Hashable {
         case .seeding: return "Seeding"
         case .completed: return "Completed"
         case .attention: return "Needs Attention"
-        case .rare: return "Rare Torrents"
         case .readyToClean: return "Ready to Clean"
-        case .large: return "Large Downloads"
         }
     }
 
@@ -51,14 +47,12 @@ enum SidebarSection: Hashable {
         case .seeding: return "arrow.up.circle"
         case .completed: return "checkmark.circle"
         case .attention: return "exclamationmark.triangle"
-        case .rare: return "sparkles"
         case .readyToClean: return "trash.circle"
-        case .large: return "externaldrive.badge.timemachine"
         }
     }
 
     static let library: [SidebarSection] = [.all, .downloading, .seeding, .completed]
-    static let smart: [SidebarSection] = [.attention, .rare, .readyToClean, .large]
+    static let smart: [SidebarSection] = [.attention, .readyToClean]
 }
 
 @MainActor
@@ -143,9 +137,9 @@ final class LibraryStore: ObservableObject {
             if case .failed = snapshot.state { return true }
             if case .resolving = snapshot.state, !recentlyAdded(snapshot) { return true }
             return false
-        case .rare:
-            return SwarmHealth(seeds: snapshot.swarm.connectedSeeds) == .rare && !snapshot.state.isPaused
-        case .readyToClean, .large:
+        case .readyToClean:
+            // Membership comes from the cleanup plan, not from this predicate —
+            // see RootView.filteredTorrents.
             return true
         }
     }
