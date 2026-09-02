@@ -3,6 +3,8 @@ import CurrentCore
 
 enum SettingsTab: Hashable {
     case general
+    case bandwidth
+    case network
     case storage
     case seeding
     case power
@@ -18,6 +20,8 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $tab) {
             GeneralPane().tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general)
+            BandwidthPane().tabItem { Label("Bandwidth", systemImage: "speedometer") }.tag(SettingsTab.bandwidth)
+            NetworkPane().tabItem { Label("Network", systemImage: "network") }.tag(SettingsTab.network)
             StoragePane().tabItem { Label("Storage", systemImage: "internaldrive") }.tag(SettingsTab.storage)
             SeedingPane().tabItem { Label("Seeding", systemImage: "seedling") }.tag(SettingsTab.seeding)
             PowerPane().tabItem { Label("Power", systemImage: "battery.75") }.tag(SettingsTab.power)
@@ -71,6 +75,162 @@ private struct GeneralPane: View {
         if panel.runModal() == .OK, let url = panel.url {
             settings.downloadsFolder = url
         }
+    }
+}
+
+// MARK: - Bandwidth
+
+/// A speed limit, off when zero. Torrent clients conventionally talk in KB/s
+/// and people think in those units, so the stored bytes/second value is only
+/// ever shown divided down.
+private struct RateRow: View {
+    let label: String
+    @Binding var bytesPerSecond: Int
+
+    private var isLimited: Binding<Bool> {
+        Binding(
+            get: { bytesPerSecond > 0 },
+            // Turning a limit on with a value of zero would silently stop all
+            // traffic, so switching on picks a sane starting point.
+            set: { bytesPerSecond = $0 ? max(bytesPerSecond, 1_000_000) : 0 }
+        )
+    }
+
+    private var kilobytes: Binding<Int> {
+        Binding(
+            get: { bytesPerSecond / 1000 },
+            set: { bytesPerSecond = max(0, $0) * 1000 }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(label, isOn: isLimited)
+            if isLimited.wrappedValue {
+                HStack(spacing: 6) {
+                    TextField(
+                        "",
+                        value: kilobytes,
+                        format: .number.precision(.fractionLength(0))
+                    )
+                    .frame(width: 90)
+                    .tabularNumerics()
+                    Text("KB/s")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.leading, 20)
+            }
+        }
+    }
+}
+
+private struct BandwidthPane: View {
+    @EnvironmentObject private var settings: SettingsStore
+    @EnvironmentObject private var app: AppEnvironment
+
+    var body: some View {
+        Form {
+            Section("Normal speeds") {
+                RateRow(label: "Limit download speed", bytesPerSecond: $settings.normalDownloadLimit)
+                RateRow(label: "Limit upload speed", bytesPerSecond: $settings.normalUploadLimit)
+            }
+
+            Section("Reduced speeds") {
+                Text("A slower set you can switch to when you need the connection for something else.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                RateRow(label: "Limit download speed", bytesPerSecond: $settings.reducedDownloadLimit)
+                RateRow(label: "Limit upload speed", bytesPerSecond: $settings.reducedUploadLimit)
+                Toggle("Use reduced speeds now", isOn: $settings.isReducedSpeedForced)
+                Text("Also switched on automatically while on battery, if that is enabled in Power.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Right now") {
+                // Anything the app decides on its own has to be able to say
+                // why — see AGENTS.md.
+                Label(app.bandwidthExplanation, systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Queue") {
+                Stepper(
+                    "Download at most \(settings.maxActiveDownloads) at a time",
+                    value: $settings.maxActiveDownloads, in: 1...20
+                )
+                Stepper(
+                    "Seed at most \(settings.maxActiveSeeds) at a time",
+                    value: $settings.maxActiveSeeds, in: 0...50
+                )
+                Text("Anything past these waits its turn instead of every torrent starting at once and splitting the line.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Connections") {
+                Stepper(
+                    "Up to \(settings.maxConnections) peer connections",
+                    value: $settings.maxConnections, in: 20...1000, step: 20
+                )
+                Stepper(
+                    "Up to \(settings.maxUploadSlots) upload slots",
+                    value: $settings.maxUploadSlots, in: 1...50
+                )
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Network
+
+private struct NetworkPane: View {
+    @EnvironmentObject private var settings: SettingsStore
+
+    var body: some View {
+        Form {
+            Section("Incoming connections") {
+                HStack(spacing: 6) {
+                    Text("Listening port")
+                    Spacer()
+                    TextField(
+                        "",
+                        value: $settings.listenPort,
+                        format: .number.precision(.fractionLength(0))
+                    )
+                    .frame(width: 90)
+                    .tabularNumerics()
+                }
+                Toggle("Map the port automatically (UPnP / NAT-PMP)", isOn: $settings.isPortMappingEnabled)
+                Text("Without a reachable port you can still download, but fewer peers can reach you and speeds suffer.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Finding peers") {
+                Toggle("Distributed hash table (DHT)", isOn: $settings.isDHTEnabled)
+                Toggle("Local peer discovery", isOn: $settings.isLocalDiscoveryEnabled)
+                Text("DHT finds peers without a tracker. Local discovery finds them on your own network, which is fast and uses no internet bandwidth.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Encryption") {
+                Picker("Peer connections", selection: $settings.encryption) {
+                    ForEach(EncryptionPolicy.allCases, id: \.self) { policy in
+                        Text(policy.title).tag(policy)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                Text(settings.encryption.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

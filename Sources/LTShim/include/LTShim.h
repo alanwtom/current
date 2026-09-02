@@ -118,6 +118,29 @@ int lt_force_recheck(lt_session* session, const char* id);
 int lt_set_file_priorities(lt_session* session, const char* id,
                            const int* priorities, int32_t count);
 
+/* Session-wide settings, applied together.
+ *
+ * Rates are bytes/second where 0 means unlimited — libtorrent's own
+ * convention, kept rather than translated so nothing can mix up nil and zero
+ * at the boundary. listen_port 0 asks the OS for any free port.
+ * encryption_policy: 0 = allow both, 1 = prefer encrypted, 2 = require it. */
+typedef struct {
+    int download_rate;
+    int upload_rate;
+    int max_connections;
+    int max_upload_slots;
+    int active_downloads;
+    int active_seeds;
+    int listen_port;
+    int enable_dht;
+    int enable_lsd;
+    int enable_port_mapping;
+    int encryption_policy;
+} lt_settings;
+
+/* Returns 0 on success, -1 if the session is gone. */
+int lt_apply_settings(lt_session* session, const lt_settings* settings);
+
 /* Non-blocking: asks the torrent to generate resume data. The result is
  * delivered later as an LT_EVENT_RESUME_DATA callback on the worker thread.
  * Returns 0 if the request was made, -1 if the torrent is unknown. */

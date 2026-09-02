@@ -442,6 +442,67 @@ int lt_set_file_priorities(lt_session* opaque, const char* id,
     return 0;
 }
 
+int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
+    auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses || !cfg) return -1;
+
+    settings_pack pack;
+    pack.set_int(settings_pack::download_rate_limit, cfg->download_rate);
+    pack.set_int(settings_pack::upload_rate_limit, cfg->upload_rate);
+    pack.set_int(settings_pack::connections_limit, cfg->max_connections);
+    pack.set_int(settings_pack::unchoke_slots_limit, cfg->max_upload_slots);
+
+    // The queue. Without these, twenty added torrents all start at once and
+    // split the line into uselessness.
+    pack.set_int(settings_pack::active_downloads, cfg->active_downloads);
+    pack.set_int(settings_pack::active_seeds, cfg->active_seeds);
+    pack.set_int(settings_pack::active_limit,
+                 cfg->active_downloads + cfg->active_seeds);
+
+    pack.set_bool(settings_pack::enable_dht, cfg->enable_dht != 0);
+    pack.set_bool(settings_pack::enable_lsd, cfg->enable_lsd != 0);
+    pack.set_bool(settings_pack::enable_upnp, cfg->enable_port_mapping != 0);
+    pack.set_bool(settings_pack::enable_natpmp, cfg->enable_port_mapping != 0);
+
+    char interfaces[64];
+    std::snprintf(interfaces, sizeof interfaces, "0.0.0.0:%d,[::]:%d",
+                  cfg->listen_port, cfg->listen_port);
+    pack.set_str(settings_pack::listen_interfaces, interfaces);
+
+    // "Required" genuinely shrinks the reachable swarm, which is why it is a
+    // deliberate choice rather than the default.
+    switch (cfg->encryption_policy) {
+        case 2:
+            pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_forced);
+            pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_forced);
+            pack.set_bool(settings_pack::prefer_rc4, true);
+            break;
+        case 1:
+            pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_enabled);
+            pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_enabled);
+            pack.set_bool(settings_pack::prefer_rc4, true);
+            break;
+        default:
+            pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_enabled);
+            pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_enabled);
+            pack.set_bool(settings_pack::prefer_rc4, false);
+            break;
+    }
+
+    if (shim_logging()) {
+        fprintf(stderr, "[shim] apply_settings dl=%d ul=%d conn=%d slots=%d "
+                        "active=%d/%d port=%d dht=%d lsd=%d pmp=%d enc=%d\n",
+                cfg->download_rate, cfg->upload_rate, cfg->max_connections,
+                cfg->max_upload_slots, cfg->active_downloads, cfg->active_seeds,
+                cfg->listen_port, cfg->enable_dht, cfg->enable_lsd,
+                cfg->enable_port_mapping, cfg->encryption_policy);
+        fflush(stderr);
+    }
+
+    ctx->ses->apply_settings(pack);
+    return 0;
+}
+
 int lt_request_resume_data(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;

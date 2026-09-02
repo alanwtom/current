@@ -164,6 +164,14 @@ public actor SimulationEngine: TorrentEngine {
         mutate(id) { $0.downloaded = 0 }
     }
 
+    /// Recorded rather than acted on, so tests and the UI can assert that the
+    /// app pushes settings down to the engine without needing a real session.
+    public private(set) var lastConfiguration: EngineConfiguration?
+
+    public func apply(_ configuration: EngineConfiguration) {
+        lastConfiguration = configuration
+    }
+
     public func resumeData(for id: TorrentID) async -> Data? {
         guard let record = records[id] else { return nil }
         return try? JSONEncoder().encode(RestoredRecord(record: record))

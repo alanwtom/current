@@ -384,6 +384,33 @@ public actor LibtorrentEngine: TorrentEngine {
         }
     }
 
+    public func apply(_ configuration: EngineConfiguration) {
+        guard let session else { return }
+        var settings = lt_settings()
+        settings.download_rate = Int32(clamping: configuration.rateLimits.download)
+        settings.upload_rate = Int32(clamping: configuration.rateLimits.upload)
+        settings.max_connections = Int32(clamping: configuration.maxConnections)
+        settings.max_upload_slots = Int32(clamping: configuration.maxUploadSlots)
+        settings.active_downloads = Int32(clamping: configuration.maxActiveDownloads)
+        settings.active_seeds = Int32(clamping: configuration.maxActiveSeeds)
+        settings.listen_port = Int32(clamping: configuration.listenPort)
+        settings.enable_dht = configuration.isDHTEnabled ? 1 : 0
+        settings.enable_lsd = configuration.isLocalDiscoveryEnabled ? 1 : 0
+        settings.enable_port_mapping = configuration.isPortMappingEnabled ? 1 : 0
+        settings.encryption_policy = switch configuration.encryption {
+        case .allowed: 0
+        case .preferred: 1
+        case .required: 2
+        }
+
+        let result = withUnsafePointer(to: &settings) {
+            lt_apply_settings(session, $0)
+        }
+        if result != 0 {
+            NSLog("Current: engine rejected session settings")
+        }
+    }
+
     public func shutdown() {
         if let session {
             lt_session_destroy(session)
