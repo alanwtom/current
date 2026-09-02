@@ -37,6 +37,45 @@ final class NotchWindowController: ObservableObject {
     /// arithmetic lives in `LibraryActivity` (Core) because the menu bar needs
     /// the same numbers and exists on Macs that have no notch.
     @Published private(set) var summary: LibraryActivity?
+
+    /// Active transfers the hover card lists, newest-downloading first. Capped
+    /// at `expandedRowLimit` so a hundred-torrent library can't ask for a panel
+    /// taller than the screen.
+    @Published private(set) var activeDownloads: [FeaturedTorrent] = []
+
+    /// How many rows the card shows before it needs a "more" toggle.
+    static let collapsedRowLimit = 2
+    /// The most it will ever show, expanded.
+    static let expandedRowLimit = 5
+
+    static let rowHeight: CGFloat = 52
+    static let moreRowHeight: CGFloat = 26
+    private static let cardInset: CGFloat = 16
+
+    var visibleDownloads: [FeaturedTorrent] {
+        let limit = isDetailExpanded ? Self.expandedRowLimit : Self.collapsedRowLimit
+        return Array(activeDownloads.prefix(limit))
+    }
+
+    var hiddenDownloadCount: Int {
+        max(0, activeDownloads.count - Self.collapsedRowLimit)
+    }
+
+    /// Height the card's content actually needs. The panel used to open at one
+    /// fixed size no matter what was in it, so a single "download complete"
+    /// badge sat in a mostly-empty black rectangle.
+    private var cardContentHeight: CGFloat {
+        switch flowStage {
+        case .completed: return 66
+        case .selecting: return 150
+        case .starting: return 44
+        case .resolving: return 96
+        case .idle:
+            let rows = max(visibleDownloads.count, 1)
+            let more = hiddenDownloadCount > 0 ? Self.moreRowHeight : 0
+            return CGFloat(rows) * Self.rowHeight + more + Self.cardInset
+        }
+    }
     @Published private(set) var featured: FeaturedTorrent?
     @Published private(set) var selectionSummary: SelectionSummary?
     @Published private(set) var flowStage: StageMirror = .idle
@@ -51,8 +90,8 @@ final class NotchWindowController: ObservableObject {
 
     // Wired by AppEnvironment after construction.
     weak var app: AppEnvironment?
-    var onPauseFeatured: () -> Void = {}
-    var onRevealFeatured: () -> Void = {}
+    var onPause: (TorrentID) -> Void = { _ in }
+    var onReveal: (TorrentID) -> Void = { _ in }
     var onChooseFiles: () -> Void = {}
     var onConfirmSelection: (_ selectedBytes: Int64) -> Void = { _ in }
     var onCancelSelection: () -> Void = {}
@@ -144,6 +183,22 @@ final class NotchWindowController: ObservableObject {
             )
         } else {
             featured = nil
+        }
+
+        // Everything the card can list: downloads first (what you're waiting
+        // on), then other active transfers.
+        let ordered = downloading + active.filter { candidate in
+            !downloading.contains { $0.id == candidate.id }
+        }
+        activeDownloads = ordered.prefix(Self.expandedRowLimit).map {
+            FeaturedTorrent(
+                id: $0.id,
+                name: $0.name,
+                progress: $0.progress,
+                downloadRate: $0.downloadRate,
+                uploadRate: $0.uploadRate,
+                etaSeconds: $0.etaSeconds
+            )
         }
 
         // Recomputed on the controller's 2 Hz tick like every other mirror,
@@ -363,7 +418,7 @@ final class NotchWindowController: ObservableObject {
             // of it is below the housing and therefore actually visible.
             frame = (notch.width + 44, notch.height + 30)
         case .card:
-            frame = (340, notch.height + 150)
+            frame = (340, notch.height + cardContentHeight)
         case .dropTarget:
             frame = (380, notch.height + 130)
         }

@@ -328,13 +328,11 @@ final class AppEnvironment: ObservableObject {
 
         notch.bind(center: magnetFlow, library: library)
         notch.app = self
-        notch.onPauseFeatured = { [weak self] in
-            guard let self, let featured = self.notch.featured else { return }
-            self.library.togglePause(for: [featured.id])
+        notch.onPause = { [weak self] id in
+            self?.library.togglePause(for: [id])
         }
-        notch.onRevealFeatured = { [weak self] in
-            guard let self, let featured = self.notch.featured else { return }
-            self.revealInFinder(featured.id)
+        notch.onReveal = { [weak self] id in
+            self?.revealInFinder(id)
         }
         notch.onChooseFiles = { [weak self] in
             guard let self else { return }
