@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import SwiftUI
 import AppKit
 import UserNotifications
@@ -38,6 +39,8 @@ final class AppEnvironment: ObservableObject {
     @Published var settingsTab: SettingsTab = .general
 
     private var eventTask: Task<Void, Never>?
+    private var configCancellables = Set<AnyCancellable>()
+    private var appliedConfiguration: EngineConfiguration?
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -92,12 +95,48 @@ final class AppEnvironment: ObservableObject {
 
         statusItem = StatusItemController(app: self, library: library)
 
+        // Push session settings down whenever they change, and whenever the
+        // power source does. This is what makes the settings real: before it
+        // existed, "Keep downloading but slower when on battery" was a toggle
+        // in Settings that no code anywhere read.
+        //
+        // Throttled and deduplicated — settings edits arrive per keystroke from
+        // the steppers, and re-applying an identical configuration would put
+        // avoidable work on the engine every time.
+        for publisher in [settings.objectWillChange, power.objectWillChange] {
+            publisher
+                .throttle(for: .seconds(0.4), scheduler: RunLoop.main, latest: true)
+                .sink { [weak self] _ in
+                    MainActor.assumeIsolated { self?.pushEngineConfiguration() }
+                }
+                .store(in: &configCancellables)
+        }
+        pushEngineConfiguration()
+
         eventTask = Task.detached(priority: .utility) { [engine] in
             let stream = await engine.events
             for await event in stream {
                 await MainActor.run { self.route(event) }
             }
         }
+    }
+
+    /// Recomputes the session configuration and hands it to the engine if it
+    /// actually changed.
+    private func pushEngineConfiguration() {
+        let onBattery = power.isOnBattery || power.isLowPowerMode
+        let configuration = settings.engineConfiguration(onBattery: onBattery)
+        guard configuration != appliedConfiguration else { return }
+        appliedConfiguration = configuration
+        Task { [engine] in await engine.apply(configuration) }
+    }
+
+    /// Plain-language reason the current speed limits are what they are, for
+    /// Settings to show. Automatic behaviour has to explain itself.
+    var bandwidthExplanation: String {
+        settings.bandwidthPolicy.explanation(
+            onBattery: power.isOnBattery || power.isLowPowerMode
+        )
     }
 
     // MARK: - Event routing

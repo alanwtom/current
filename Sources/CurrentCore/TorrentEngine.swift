@@ -46,6 +46,11 @@ public protocol TorrentEngine: Actor {
 
     /// Serialised session state for restoring after relaunch.
     func resumeData(for id: TorrentID) async -> Data?
+
+    /// Applies every session-wide setting at once: speed limits, connection
+    /// and queue caps, listen port, peer discovery and encryption. One call
+    /// with one struct so adding a setting doesn't widen this protocol.
+    func apply(_ configuration: EngineConfiguration) async
 }
 
 extension TorrentEngine {
