@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <span>
 #include <string>
@@ -110,6 +111,51 @@ void dispatch_metadata(SessionContext* ctx, torrent_handle const& h) {
     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_METADATA, &info, 1);
 }
 
+
+/// Diagnostics for the stats pipeline, off unless CURRENT_SHIM_LOG is set.
+/// Reading it once avoids a getenv on every row of every tick.
+
+/// One-time sanity check that we and libtorrent agree on struct layout.
+///
+/// Several of libtorrent's compile definitions change the layout of
+/// `torrent_status` — TORRENT_ABI_VERSION and TORRENT_SSL_PEERS especially.
+/// Build the shim without matching the installed library and nothing fails
+/// loudly: the calls all succeed, torrents download correctly, and every field
+/// we read back is garbage. That cost a long debugging session, because the
+/// app looked broken while the engine was fine.
+///
+/// A torrent that has a parsed .torrent file *must* report has_metadata, and a
+/// torrent with metadata *must* have a non-zero size. If either is false here,
+/// the numbers cannot be trusted and the build is mismatched. Say so, loudly,
+/// once — an unreadable app is better than a plausible-looking lying one.
+void abi_canary(torrent_handle const& h) {
+    static bool checked = false;
+    if (checked || !h.is_valid()) return;
+    checked = true;
+
+    if (!h.torrent_file()) return;   // genuinely has no metadata yet
+    torrent_status const st = h.status();
+    if (st.has_metadata && st.total_wanted > 0) return;
+
+    fprintf(stderr,
+            "[LTShim] FATAL-ish: torrent_status looks impossible "
+            "(has_metadata=%d total_wanted=%lld) for a torrent whose metadata "
+            "we just parsed.\n"
+            "[LTShim] This means the shim and libtorrent disagree on struct "
+            "layout. Compare Package.swift's cxxSettings against\n"
+            "[LTShim]   INTERFACE_COMPILE_DEFINITIONS in "
+            "/opt/homebrew/lib/cmake/LibtorrentRasterbar/*.cmake\n"
+            "[LTShim] Every value the app displays will be garbage until they "
+            "match.\n",
+            st.has_metadata ? 1 : 0, (long long)st.total_wanted);
+    fflush(stderr);
+}
+
+bool shim_logging() {
+    static bool const on = getenv("CURRENT_SHIM_LOG") != nullptr;
+    return on;
+}
+
 int map_state(torrent_status const& st) {
     if (st.flags & torrent_flags::paused) return LT_STATE_PAUSED;
     switch (st.state) {
@@ -186,7 +232,10 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
                     // Covers .torrent files and resume-data restores, which
                     // arrive with metadata already attached and therefore
                     // never emit metadata_received_alert.
-                    if (!added->error) dispatch_metadata(ctx, added->handle);
+                    if (!added->error) {
+                        abi_canary(added->handle);
+                        dispatch_metadata(ctx, added->handle);
+                    }
                 } else if (auto const* done = alert_cast<torrent_finished_alert>(a)) {
                     std::string id = hex_id(done->handle);
                     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_COMPLETED, id.c_str(), 1);
@@ -245,10 +294,31 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
                 row.seed_seconds = static_cast<uint64_t>(st.seeding_duration.count());
                 row.active_seconds = static_cast<uint64_t>(st.active_duration.count());
                 row.has_metadata = st.has_metadata ? 1 : 0;
+
+                if (shim_logging()) {
+                    fprintf(stderr,
+                            "[shim] id=%.8s state=%d has_meta=%d total_wanted=%lld "
+                            "downloaded=%lld progress=%.4f peers=%d seeds=%d dl=%.0f "
+                            "valid=%d paused=%d\n",
+                            ids.back().c_str(), row.state, row.has_metadata,
+                            (long long)st.total_wanted,
+                            (long long)st.total_payload_download,
+                            row.progress, st.num_peers, st.num_seeds,
+                            st.download_payload_rate,
+                            h.is_valid() ? 1 : 0,
+                            (st.flags & torrent_flags::paused) ? 1 : 0);
+                    fflush(stderr);
+                }
+
                 rows.push_back(row);
             }
 
             lt_stats_batch batch{rows.data(), static_cast<int32_t>(rows.size())};
+            if (shim_logging()) {
+                fprintf(stderr, "[shim] -> sending %d row(s), callback=%s\n",
+                        (int)rows.size(), ctx->callback ? "set" : "NULL");
+                fflush(stderr);
+            }
             if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_STATS, &batch, 1);
         }
     });
