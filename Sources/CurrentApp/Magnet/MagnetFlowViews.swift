@@ -16,15 +16,32 @@ struct NotchSurfaceView: View {
             content
             Spacer(minLength: 0)
         }
+        // The top of this panel is flush with the top of the screen, which on a
+        // notched Mac is behind the camera housing. Drawing there is invisible
+        // in real life but still captured in screenshots, so it looks like the
+        // panel is "just black" while a screen capture shows the text fine.
+        // Content starts below the housing.
+        .padding(.top, controller.notchHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(
-            // Merges with the notch hardware; invisible in the hidden state.
-            controller.surfaceState == .hidden
-                ? Color.clear
-                : Color.black
+            // Square at the top so it meets the screen edge seamlessly, rounded
+            // below so it reads as the notch growing rather than a black box
+            // parked over the desktop.
+            UnevenRoundedRectangle(
+                bottomLeadingRadius: plateCornerRadius,
+                bottomTrailingRadius: plateCornerRadius,
+                style: .continuous
+            )
+            .fill(controller.surfaceState == .hidden ? Color.clear : Color.black)
         )
         .animation(Motion.spring(reduceMotion: reduceMotion), value: animationToken)
         .clipped()
+    }
+
+    /// Hidden state has to stay a plain rectangle so it matches the hardware
+    /// notch exactly and disappears into it.
+    private var plateCornerRadius: CGFloat {
+        controller.surfaceState == .hidden ? 0 : Layout.cornerL
     }
 
     private var animationToken: Int {

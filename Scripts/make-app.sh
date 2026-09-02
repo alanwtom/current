@@ -21,6 +21,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Current"
 cp "$ROOT/Scripts/Info.plist" "$APP/Contents/Info.plist"
 
+# App icon. Regenerate with `swift Scripts/make-icon.swift` after editing it.
+if [[ -f "$ROOT/Scripts/AppIcon.icns" ]]; then
+    cp "$ROOT/Scripts/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+else
+    echo "warning: Scripts/AppIcon.icns missing — run: swift Scripts/make-icon.swift" >&2
+fi
+
 # Embed Homebrew libtorrent so the bundle runs without a bare /opt/homebrew dependency.
 if [[ -f /opt/homebrew/lib/libtorrent-rasterbar.2.1.dylib ]]; then
     mkdir -p "$APP/Contents/Frameworks"

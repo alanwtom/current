@@ -176,6 +176,7 @@ final class NotchWindowController: ObservableObject {
             height: height
         )
         geometry = NotchGeometry(screen: screen, notchRect: notchRect)
+        notchHeight = height
         isAvailable = true
     }
 
@@ -260,6 +261,15 @@ final class NotchWindowController: ObservableObject {
 
     @Published private(set) var surfaceState: SurfaceState = .hidden
 
+    /// Height of the physical camera housing, republished when displays change.
+    ///
+    /// Anything drawn in the top `notchHeight` points of the panel sits behind
+    /// aluminium: invisible on the actual display, but still present in the
+    /// framebuffer — so it shows up perfectly in a screen capture. That
+    /// asymmetry makes this very easy to get wrong and very confusing to debug,
+    /// which is exactly what happened. Content must start below this.
+    @Published private(set) var notchHeight: CGFloat = 32
+
     private func evaluateState() -> SurfaceState {
         guard let center, enabled(), isAvailable else { return .hidden }
 
@@ -313,16 +323,21 @@ final class NotchWindowController: ObservableObject {
         let notch = geometry.notchRect
         let screenTop = geometry.screen.frame.maxY
 
+        // Every height below is `notch.height + the space the content actually
+        // needs`, because the first `notch.height` points are hidden behind the
+        // camera housing. The pill used to be `notch.height + 12`, which left
+        // 12pt for a line of text — so it rendered as a black bar with its
+        // contents tucked invisibly under the housing.
         let frame: (width: CGFloat, height: CGFloat)
         switch surfaceState {
         case .hidden:
             frame = (notch.width, notch.height)
         case .pill:
-            frame = (max(notch.width + 110, 250), notch.height + 12)
+            frame = (max(notch.width + 110, 250), notch.height + 34)
         case .card:
-            frame = (340, 168)
+            frame = (340, notch.height + 150)
         case .dropTarget:
-            frame = (380, 150)
+            frame = (380, notch.height + 130)
         }
 
         return CGRect(
