@@ -16,23 +16,15 @@ import SwiftUI
 @MainActor
 final class WindowMetrics: ObservableObject {
 
-    /// Below this the sidebar plus a comfortable list no longer fit.
-    private static let enterCompactWidth: CGFloat = 620
-
-    /// Leaving compact deliberately needs more room than entering it. Without
-    /// that gap, a window parked exactly on the threshold flickers between the
-    /// two layouts as it is dragged.
-    private static let leaveCompactWidth: CGFloat = 690
-
     @Published private(set) var isCompact = false
 
+    /// The decision itself is `WindowLayout.isCompact` — pure, and swept across
+    /// window widths by `WindowLayoutTests` rather than checked once at one
+    /// size. This class is only the part that has to be observable.
     func update(width: CGFloat) {
-        guard width > 0 else { return }
-        if isCompact, width >= Self.leaveCompactWidth {
-            isCompact = false
-        } else if !isCompact, width < Self.enterCompactWidth {
-            isCompact = true
-        }
+        let next = WindowLayout.isCompact(width: width, wasCompact: isCompact)
+        guard next != isCompact else { return }
+        isCompact = next
     }
 }
 

@@ -131,12 +131,15 @@ final class StatusItemController {
     /// colour here as it is in the list. Red is reserved for failure — a
     /// healthy seeding torrent glowing red would read as a problem.
     private static func tint(for activity: LibraryActivity?) -> NSColor {
-        guard let activity else { return .secondaryLabelColor }
+        guard let activity else { return NSColor(Theme.textTertiary) }
+        // The app's own tokens, not `controlAccentColor` / `systemTeal`, so a
+        // torrent is the same colour here as it is in the list. At 15pt the
+        // colour is most of what this icon can say.
         switch activity.dominant {
-        case .downloading: return .controlAccentColor
-        case .seeding: return .systemTeal
-        case .complete: return .systemGreen
-        case .failed: return .systemRed
+        case .downloading: return NSColor(Theme.downloading)
+        case .seeding: return NSColor(Theme.seeding)
+        case .complete: return NSColor(Theme.complete)
+        case .failed: return NSColor(Theme.failure)
         }
     }
 

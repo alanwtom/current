@@ -10,6 +10,13 @@ struct Toast: Identifiable, Equatable {
     var title: String
     var message: String?
     var actionTitle: String?
+    /// What the action button actually does.
+    ///
+    /// This used to be missing, and `show(action:)` quietly threw its argument
+    /// away — so a finished download offered you a "Reveal" button that only
+    /// closed the toast. Two of these existed. If a toast has a title for a
+    /// button, it needs something for the button to do.
+    var action: (@MainActor () -> Void)?
     /// Identity used to deduplicate rapid identical events.
     var coalesceKey: String?
 
@@ -61,7 +68,7 @@ final class ToastCenter: ObservableObject {
         message: String? = nil,
         actionTitle: String? = nil,
         coalesceKey: String? = nil,
-        action: (() -> Void)? = nil
+        action: (@MainActor () -> Void)? = nil
     ) {
         if let key = coalesceKey,
            toasts.contains(where: { $0.toast.coalesceKey == key }) {
@@ -72,6 +79,7 @@ final class ToastCenter: ObservableObject {
             title: title,
             message: message,
             actionTitle: actionTitle,
+            action: action,
             coalesceKey: coalesceKey
         )
         let task = scheduleDismissal(of: toast.id)
@@ -79,7 +87,6 @@ final class ToastCenter: ObservableObject {
         if toasts.count > 3 {
             dismiss(toasts[0].id)
         }
-        _ = action
     }
 
     func dismiss(_ id: UUID) {

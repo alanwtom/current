@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import AppKit
 import UserNotifications
+import UniformTypeIdentifiers
 import CurrentCore
 import CurrentEngine
 import CurrentSim
@@ -19,6 +20,8 @@ final class AppEnvironment: ObservableObject {
     let automation: AutomationCoordinator
     let cleanup: CleanupCenter
     let sidebarCounts: SidebarCounts
+    /// Combined transfer rates for the chrome bar, coalesced to 1 Hz.
+    let activity: ActivityModel
     let magnetFlow: MagnetFlowCenter
     let toasts: ToastCenter
     let notch: NotchWindowController
@@ -37,6 +40,13 @@ final class AppEnvironment: ObservableObject {
     @Published var isAddMagnetSheetVisible = false
     @Published var showMagnetFilePicker = false
     @Published var settingsTab: SettingsTab = .general
+    @Published var isSettingsVisible = false
+    /// Non-nil while the "close the window?" dialog is up. Holds the action
+    /// that actually closes it, handed over by `WindowChrome`.
+    @Published var pendingWindowClose: (() -> Void)?
+    /// The launch intro plays once per run, not once per window — opening a
+    /// second window shouldn't replay it. See `LaunchIntro`.
+    @Published var isIntroPlaying = true
 
     private var eventTask: Task<Void, Never>?
     private var configCancellables = Set<AnyCancellable>()
@@ -57,13 +67,18 @@ final class AppEnvironment: ObservableObject {
         let database = AppDatabase(url: appSupport.appendingPathComponent("library.sqlite"))
         self.database = database
         self.settings = SettingsStore(database: database)
-        let library = LibraryStore(engine: engine, database: database)
+        // Before any window exists, so the first frame is already the right
+        // appearance. The property's own `didSet` handles later changes, but it
+        // doesn't fire during `init`.
+        AppearanceApplier.apply(settings.appearance)
+        let library = LibraryStore(engine: engine, database: database, persistsRecords: !simulate)
         self.library = library
         self.power = PowerMonitor()
 
         let cleanup = CleanupCenter(library: library, database: database)
         self.cleanup = cleanup
         self.sidebarCounts = SidebarCounts(library: library, cleanup: cleanup)
+        self.activity = ActivityModel(library: library)
         let settingsRef = settings
         self.notch = NotchWindowController(enabled: { [weak settingsRef] in
             settingsRef?.isNotchEnabled ?? false
@@ -84,7 +99,10 @@ final class AppEnvironment: ObservableObject {
                 title: "\(ByteFormatting.bytes(summary.bytesReclaimed)) cleaned",
                 message: "\(summary.torrentsCleaned) completed download\(summary.torrentsCleaned == 1 ? "" : "s") moved to Trash.",
                 actionTitle: "View",
-                coalesceKey: "cleanup"
+                coalesceKey: "cleanup",
+                // "View" now goes somewhere: the section listing what cleanup
+                // considered, so you can see what it took.
+                action: { [weak self] in self?.library.activeSection = .readyToClean }
             )
         }
 
@@ -330,14 +348,50 @@ final class AppEnvironment: ObservableObject {
 
     // MARK: - Window management
 
+    /// Settings live inside the window now, not in a separate `Settings` scene.
+    ///
+    /// The scene version came with a system window: its own title bar, its own
+    /// `TabView` of system tab icons, and its own set of stock form controls.
+    /// Presenting settings as one of the app's own surfaces is both the Cursor
+    /// model and the only way the pane can look like the rest of the app. ⌘,
+    /// still opens it, because that is the shortcut people reach for.
     func openSettings(tab: SettingsTab) {
         settingsTab = tab
-        requestOpenSettings?()
-        NSApp.activate(ignoringOtherApps: true)
+        isSettingsVisible = true
     }
 
     func beginAddMagnet() {
         isAddMagnetSheetVisible = true
+    }
+
+    /// Downloads that haven't finished yet.
+    ///
+    /// Seeding deliberately doesn't count. A torrent set to seed forever would
+    /// otherwise make every single window close ask a question, which is exactly
+    /// the kind of nagging this app is supposed to avoid.
+    var unfinishedCount: Int {
+        library.orderedIDs.reduce(into: 0) { total, id in
+            switch library.snapshot(for: id)?.state {
+            case .downloading, .checking, .resolving: total += 1
+            default: break
+            }
+        }
+    }
+
+    /// Moved off the root view so the chrome bar, the command palette and the
+    /// menu bar can all reach it without each keeping its own copy.
+    func pickTorrentFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        if let type = UTType(filenameExtension: "torrent") {
+            panel.allowedContentTypes = [type]
+        }
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            Task { await addTorrentFile(at: url) }
+        }
     }
 
     // MARK: - Notifications
