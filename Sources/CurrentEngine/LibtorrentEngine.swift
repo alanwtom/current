@@ -66,7 +66,7 @@ public actor LibtorrentEngine: TorrentEngine {
             guard let context else { return }
             let box = Unmanaged<Bridge>.fromOpaque(context).takeUnretainedValue()
             box.target?.ingest(kind: kind, payload: payload, count: count)
-        }, context)
+        }, context, Self.dhtStatePath())
 
         // Wired after creation on the same thread; the engine worker waits
         // ≥250 ms between polls, so no event can observe a nil target.
@@ -78,6 +78,27 @@ public actor LibtorrentEngine: TorrentEngine {
             // instead of crashing the app.
             NSLog("Current: libtorrent session failed to start")
         }
+    }
+
+    /// Where the DHT routing table lives between launches.
+    ///
+    /// Beside the library database rather than in a cache directory: a cold DHT
+    /// is the difference between a magnet resolving in seconds and appearing to
+    /// do nothing, so this is worth keeping rather than something the system
+    /// may evict. A nil-safe empty string disables persistence in the shim,
+    /// which is what happens if the directory can't be created.
+    private static func dhtStatePath() -> String {
+        let manager = FileManager.default
+        guard let support = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return ""
+        }
+        let directory = support.appendingPathComponent("Current", isDirectory: true)
+        do {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return ""
+        }
+        return directory.appendingPathComponent("dht.state").path
     }
 
     deinit {

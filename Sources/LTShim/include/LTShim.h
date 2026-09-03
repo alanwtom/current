@@ -100,7 +100,13 @@ typedef struct {
  */
 typedef void (*lt_event_callback)(void* context, lt_event_kind kind, const void* payload, int32_t count);
 
-lt_session* lt_session_create(lt_event_callback callback, void* context);
+/*
+ * `state_path` is where the DHT routing table is kept between launches; pass
+ * NULL or "" to disable it. It is written on a timer as well as at shutdown,
+ * because a clean shutdown is not guaranteed.
+ */
+lt_session* lt_session_create(lt_event_callback callback, void* context,
+                              const char* state_path);
 void lt_session_destroy(lt_session* session);
 
 /* Returns 0 on success. On failure returns -1, writes out_error and sets

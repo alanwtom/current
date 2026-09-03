@@ -243,6 +243,57 @@ When idle it shrinks to exactly the notch rectangle and draws nothing. **No notc
 means no panel** — the magnet flow presents in-window instead, so never assume the
 panel exists.
 
+## Magnet links come from outside the app
+
+Clicking a magnet link in a browser is the main way anyone adds a torrent, and
+it is the path with the least code and the most ways to break. All of it goes
+through `AppDelegate`, and none of it through SwiftUI:
+
+- **`.onOpenURL` on a `WindowGroup` is wrong here, twice over.** With the app
+  closed it never fires — LaunchServices delivers the URL the instant launching
+  finishes, and `.onOpenURL` only reaches views that already exist, so the link
+  was silently dropped and the app opened to an empty library. With the app open
+  it fires, but a `WindowGroup` also reads the URL as a request for a *new*
+  window, so a second empty one appeared beside the real one, once per click.
+- **Implementing `application(_:open:)` receives the URL but does not stop
+  SwiftUI acting on it too** — `NSApplicationDelegateAdaptor` wraps our delegate
+  rather than replacing it. Taking the `'GURL'` Apple Event over in
+  `applicationWillFinishLaunching` is what actually keeps the scene out of it.
+  It has to be the *will* hook: at `didFinishLaunching` the launch URL has
+  already been dispatched, which is exactly the case that matters.
+- **`.handlesExternalEvents(matching: [])` is not the tidy version of this.** It
+  also declines the launch event, so an app opened by a magnet link came up with
+  no window at all.
+- URLs that arrive before there is an engine wait in `AppDelegate.pending` and
+  are drained at the end of `finishSetup`. On a cold launch that is every URL.
+- What a delivered URL *means* is `DropParser.parse(url:)` — the same parser
+  drops and pastes use, so all three routes agree. Schemes are compared
+  case-insensitively, because `MAGNET:` links exist.
+
+**Resolving a magnet is where "it doesn't work" usually comes from**, and it is
+rarely the code:
+
+- `announce_to_all_trackers` and `announce_to_all_tiers` are on. A magnet off
+  the web ships a dozen trackers and most are long dead; tier by tier, resolving
+  meant timing out on each corpse before reaching a live one.
+- **The DHT routing table is persisted** (`dht.state`, beside the library
+  database, written on a five-minute timer and at shutdown). Without it every
+  launch bootstrapped the DHT from nothing, and a magnet whose trackers are all
+  dead has only the DHT — so the first magnet after each launch paid for a cold
+  start. The timer is not belt-and-braces: `lt_session_destroy` runs from
+  `deinit`, and the object owning it lives until the process exits, so on a
+  normal quit it never runs.
+- A magnet that never resolves is removed after two minutes, and **says so** —
+  a toast, plus the flow being taken down with it. It used to write a
+  decision-log entry and nothing else, which from the outside is
+  indistinguishable from the app ignoring the link; worse, the notch panel went
+  on saying "Resolving magnet…" about a torrent that no longer existed.
+
+When testing this by hand, use a magnet with live trackers (Ubuntu's release
+torrents are ideal, and `Scripts/` has no helper for it — build the magnet from
+the `.torrent`'s info hash). A dummy hash never resolves, so it only exercises
+delivery, and `CURRENT_SHIM_LOG=1` is how you tell the two apart.
+
 ## Window chrome — two traps that cost hours
 
 The window has no system title bar and no toolbar. `WindowChrome` configures the

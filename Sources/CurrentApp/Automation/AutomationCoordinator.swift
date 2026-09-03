@@ -12,6 +12,14 @@ final class AutomationCoordinator {
     private let database: AppDatabase
     private let power: PowerMonitor
 
+    /// Told when a magnet is given up on, so the app can say so.
+    ///
+    /// It used to write a decision-log entry and nothing else. From the outside
+    /// that is indistinguishable from the app ignoring the link: the row
+    /// disappears two minutes after you clicked something, with the explanation
+    /// filed away in a tab you had no reason to open.
+    var onMagnetTimedOut: ((String) -> Void)?
+
     /// Torrents this coordinator paused automatically; resumed when conditions clear.
     private var batteryPaused = Set<TorrentID>()
     private var seedingStoppedLogged = Set<TorrentID>()
@@ -139,6 +147,7 @@ final class AutomationCoordinator {
                     "The magnet link may be dead — you can retry it",
                 ]
             )
+            onMagnetTimedOut?(snapshot.name)
         }
     }
 

@@ -76,6 +76,50 @@ final class DropParserTests: XCTestCase {
         XCTAssertEqual(parsed, [.magnet("magnet:?xt=urn:btih:xyz")])
     }
 
+    // MARK: - URLs handed over by the system
+    //
+    // This is the path a magnet link clicked in a browser takes, and it was
+    // broken in both directions: with the app closed the URL was dropped
+    // entirely, and with the app open it also opened a second, empty window.
+    // The delivery is AppKit's problem (see `AppDelegate`); what a delivered
+    // URL *means* is this, and it's worth pinning.
+
+    func testRecognisesAMagnetURL() {
+        let url = URL(string: "magnet:?xt=urn:btih:abc123&dn=Something")!
+        XCTAssertEqual(DropParser.parse(url: url), .magnet(url.absoluteString))
+    }
+
+    /// URL schemes are case-insensitive, and `MAGNET:` links exist in the wild.
+    func testRecognisesAMagnetURLWhateverTheSchemesCase() {
+        let upper = URL(string: "MAGNET:?xt=urn:btih:abc123")!
+        XCTAssertEqual(DropParser.parse(url: upper), .magnet(upper.absoluteString))
+
+        let mixed = URL(string: "Magnet:?xt=urn:btih:abc123")!
+        XCTAssertEqual(DropParser.parse(url: mixed), .magnet(mixed.absoluteString))
+    }
+
+    func testRecognisesATorrentFileURL() {
+        let url = URL(fileURLWithPath: "/tmp/ubuntu.torrent")
+        XCTAssertEqual(DropParser.parse(url: url), .torrentFile(url))
+
+        let shouty = URL(fileURLWithPath: "/tmp/ubuntu.TORRENT")
+        XCTAssertEqual(DropParser.parse(url: shouty), .torrentFile(shouty))
+    }
+
+    /// Classification, not validation: whether a magnet is *usable* is the
+    /// engine's answer to give, and it reports it properly.
+    func testAMalformedMagnetIsStillAMagnet() {
+        let url = URL(string: "magnet:?dn=NoHashHere")!
+        XCTAssertEqual(DropParser.parse(url: url), .magnet(url.absoluteString))
+    }
+
+    func testIgnoresAnythingElse() {
+        XCTAssertNil(DropParser.parse(url: URL(string: "https://example.com/file.torrent")!))
+        XCTAssertNil(DropParser.parse(url: URL(fileURLWithPath: "/tmp/notes.txt")))
+        XCTAssertNil(DropParser.parse(url: URL(fileURLWithPath: "/tmp/torrent")))
+        XCTAssertNil(DropParser.parse(url: URL(string: "ftp://example.com/x")!))
+    }
+
     func testTorrentFilesOnlyAcceptedByExtension() {
         let torrentURL = URL(fileURLWithPath: "/tmp/thing.torrent")
         let otherURL = URL(fileURLWithPath: "/tmp/other.txt")
@@ -86,6 +130,27 @@ final class DropParserTests: XCTestCase {
     func testNameHintFromMagnet() {
         XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=My%20Movie"), "My Movie")
         XCTAssertNil(DropParser.nameHint(fromMagnet: "magnet:?xt=x"))
+    }
+
+    /// Real magnets encode spaces as `+`, not `%20`, and the library showed the
+    /// plus signs: `Some.Release+Name+Here`.
+    func testNameHintDecodesPlusAsSpace() {
+        XCTAssertEqual(
+            DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=Big+Buck+Bunny+2008"),
+            "Big Buck Bunny 2008"
+        )
+        // Mixed encodings in one name, which is also common.
+        XCTAssertEqual(
+            DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=Sintel+%282010%29&tr=udp://x"),
+            "Sintel (2010)"
+        )
+    }
+
+    /// A `dn` that isn't valid percent-encoding must still produce a name
+    /// rather than nothing — `removingPercentEncoding` returns nil for a stray
+    /// `%`, and the library then fell back to showing the info hash.
+    func testNameHintSurvivesBadEncoding() {
+        XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=100%+Complete"), "100% Complete")
     }
 }
 
