@@ -343,6 +343,14 @@ final class NotchWindowController: ObservableObject {
         panel.becomesKeyOnlyIfNeeded = true
         panel.contentView = container
         panel.ignoresMouseEvents = false
+        // Pinned to dark regardless of the app's appearance setting. This panel
+        // is drawn on pure black so it reads as the camera housing growing, and
+        // that is true whether the user runs the app light or dark. Pinning it
+        // means the shared stage views can use the ordinary `Theme` tokens and
+        // still come out legible here — before this they hardcoded white, which
+        // made the same views unreadable when they appeared in a light window
+        // as the no-notch fallback.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.orderFrontRegardless()
 
         self.panel = panel
@@ -491,9 +499,14 @@ final class NotchWindowController: ObservableObject {
         // this context's duration and timing entirely, blocks the main thread until
         // it finishes, and can't retarget if the state changes again mid-resize.
         // The animator proxy honours all three.
+        // Bubbles, like every popup inside the window does. The panel is an
+        // `NSWindow` frame so it can't use `Motion.pop` directly; `popTiming` is
+        // a Bézier that overshoots to approximate the same settle, which is why
+        // the panel visibly grows a hair past its size before landing. On the
+        // notch that reads as the housing swelling, which is the whole idea.
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = Motion.standard
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = Motion.popResponse
+            context.timingFunction = Motion.popTiming
             context.allowsImplicitAnimation = true
             panel.animator().setFrame(target, display: true)
         })

@@ -125,7 +125,13 @@ public enum FileTreeBuilder {
         return copy
     }
 
-    private static func totalSize(_ nodes: [FileNode]) -> Int64 {
+    /// Every byte in the tree, selected or not.
+    ///
+    /// Public because the file picker's footer needs it: "download 2.1 GB of
+    /// 4.0 GB" only means something if the second number is the whole torrent.
+    /// A folder's `size` already aggregates its children, so summing the top
+    /// level is the total.
+    public static func totalSize(_ nodes: [FileNode]) -> Int64 {
         nodes.reduce(0) { $0 + $1.size }
     }
 

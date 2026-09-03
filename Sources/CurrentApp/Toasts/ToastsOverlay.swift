@@ -1,14 +1,19 @@
 import SwiftUI
 import CurrentCore
 
-/// Bottom-trailing transient surface. Enters with a small rise + scale,
-/// exits fast with a fade; hover pauses the auto-dismiss timer.
+/// Bottom-trailing transient surface.
+///
+/// Enters with a small rise and a touch of overshoot — a toast is one of the
+/// few things in the app that should feel like it *arrived* — and leaves with a
+/// plain fade, because something going away shouldn't perform. Hover pauses the
+/// auto-dismiss timer, so a toast can't disappear out from under a cursor
+/// heading for its button.
 struct ToastsOverlay: View {
     @EnvironmentObject private var toasts: ToastCenter
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .trailing, spacing: Space.m) {
             ForEach(toasts.toasts) { presented in
                 ToastCard(toast: presented.toast) {
                     toasts.dismiss(presented.id)
@@ -21,20 +26,23 @@ struct ToastsOverlay: View {
                     }
                 }
                 .transition(
-                    .asymmetric(
-                        insertion: .opacity
-                            .combined(with: .move(edge: .bottom))
-                            .combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)),
-                        removal: .opacity
-                    )
+                    reduceMotion
+                        ? .opacity
+                        : .asymmetric(
+                            insertion: .opacity
+                                .combined(with: .move(edge: .bottom))
+                                .combined(with: .scale(scale: 0.94, anchor: .bottomTrailing)),
+                            removal: .opacity
+                        )
                 )
             }
         }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
+        .padding(Space.xxl)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .animation(Motion.spring(reduceMotion: reduceMotion), value: toasts.toasts)
-        .allowsHitTesting(true)
+        // Bouncy, unlike almost everything else here: a toast is a physical
+        // object sliding into a corner, and the app's motion rules allow
+        // overshoot for exactly that.
+        .animation(Motion.gestureSpring(Motion.standard, reduceMotion: reduceMotion), value: toasts.toasts)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notifications")
     }
@@ -44,11 +52,61 @@ private struct ToastCard: View {
     let toast: Toast
     var dismiss: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.l) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toast.title)
+                    .typeStyle(Typo.label)
+                    .foregroundStyle(Theme.text)
+                if let message = toast.message {
+                    Text(message)
+                        .typeStyle(Typo.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let actionTitle = toast.actionTitle, let action = toast.action {
+                    Button(actionTitle) {
+                        action()
+                        dismiss()
+                    }
+                    .currentButton(.secondary, scale: .small)
+                    .padding(.top, Space.s)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // Appears on hover only. A permanent × on every toast is four extra
+            // pixels of clutter in the corner of the window at all times, and
+            // the toast dismisses itself anyway.
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+            }
+            .iconButton(size: 18, glyph: 9)
+            .opacity(isHovering ? 1 : 0)
+            .help("Dismiss")
+        }
+        .padding(Space.l)
+        .frame(width: 320, alignment: .leading)
+        .raisedSurface(radius: Radius.l)
+        .animation(Motion.adaptive(Motion.instant, reduceMotion: reduceMotion), value: isHovering)
+        .onHover { isHovering = $0 }
+        .accessibilityElement(children: .combine)
+    }
+
     private var tint: Color {
         switch toast.kind {
-        case .success: return SemanticColor.complete
-        case .warning: return SemanticColor.warning
-        case .info: return Color.accentColor
+        case .success: return Theme.complete
+        case .warning: return Theme.warning
+        case .info: return Theme.accent
         }
     }
 
@@ -58,47 +116,5 @@ private struct ToastCard: View {
         case .warning: return "exclamationmark.triangle.fill"
         case .info: return "info.circle.fill"
         }
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(toast.title)
-                    .font(.callout.weight(.semibold))
-                if let message = toast.message {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            if let actionTitle = toast.actionTitle {
-                Button(actionTitle, action: dismiss)
-                    .controlSize(.small)
-                    .padding(.leading, 4)
-            }
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss")
-        }
-        .padding(12)
-        .frame(maxWidth: 340, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Layout.cornerL, style: .continuous)
-                .fill(.regularMaterial)
-                .shadow(color: .black.opacity(0.16), radius: 14, y: 5)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Layout.cornerL, style: .continuous)
-                .strokeBorder(.separator.opacity(0.4))
-        )
     }
 }

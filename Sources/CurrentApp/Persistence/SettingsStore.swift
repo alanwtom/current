@@ -11,7 +11,10 @@ final class SettingsStore: ObservableObject {
     enum Keys {
         static let downloadsFolder = "downloads.folder"
         static let seedPolicy = "seed.policy"
-        static let storageLimitGB = "storage.limit.gb"
+        /// Holds a byte count, despite the name. The key string is kept as-is so
+        /// existing installs don't lose their budget; only the constant is
+        /// honest about it.
+        static let storageLimit = "storage.limit.gb"
         static let autoCleanup = "storage.autoCleanup"
         static let notchEnabled = "notch.enabled"
         static let pauseOnBattery = "power.pauseOnBattery"
@@ -21,6 +24,7 @@ final class SettingsStore: ObservableObject {
         static let notifyFailed = "notifications.failed"
         static let notifyBudget = "notifications.budget"
         static let launchAtLogin = "general.launchAtLogin"
+        static let appearance = "general.appearance"
         // Bandwidth. Stored in bytes/second; 0 means unlimited.
         static let normalDown = "bandwidth.normal.down"
         static let normalUp = "bandwidth.normal.up"
@@ -50,13 +54,23 @@ final class SettingsStore: ObservableObject {
     }
     /// nil means unlimited.
     @Published var storageLimitBytes: Int64? {
-        didSet { persist(storageLimitBytes.map(String.init) ?? "", forKey: Keys.storageLimitGB) }
+        didSet { persist(storageLimitBytes.map(String.init) ?? "", forKey: Keys.storageLimit) }
     }
     @Published var isAutoCleanupEnabled: Bool {
         didSet { persist(isAutoCleanupEnabled, forKey: Keys.autoCleanup) }
     }
     @Published var isNotchEnabled: Bool {
         didSet { persist(isNotchEnabled, forKey: Keys.notchEnabled) }
+    }
+    /// Light, dark, or follow the Mac. Applied immediately rather than on next
+    /// launch — the Appearance pane is the one place where the setting *is* the
+    /// preview, so it has to take effect as you click it.
+    @Published var appearance: AppearanceMode {
+        didSet {
+            guard appearance != oldValue else { return }
+            AppearanceApplier.apply(appearance)
+            persist(appearance.rawValue, forKey: Keys.appearance)
+        }
     }
     @Published var pauseDownloadsOnBattery: Bool {
         didSet { persist(pauseDownloadsOnBattery, forKey: Keys.pauseOnBattery) }
@@ -166,10 +180,22 @@ final class SettingsStore: ObservableObject {
             value(Keys.downloadsFolder).flatMap(URL.init(string:)) ?? documents.appendingPathComponent("Current")
 
         self.defaultSeedPolicy = Self.policy(fromKey: value(Keys.seedPolicy))
-        let storedLimit = Int64(value(Keys.storageLimitGB) ?? "")
-        self.storageLimitBytes = storedLimit.map { $0 * 1_000_000_000 }
+        // Read back as bytes, because bytes are what `didSet` writes.
+        //
+        // This used to multiply the stored number by a billion, treating it as
+        // gigabytes — and it is a byte count. Switching the storage limit on
+        // wrote 100,000,000,000; the next launch multiplied that by 1e9, blew
+        // past `Int64.max`, and the app trapped on arithmetic overflow *inside
+        // its own initialiser*. Every launch after that crashed the same way,
+        // with no way out from inside the app. `Self.sanitizedLimit` is the belt
+        // and braces: a nonsense value now disables the budget instead of
+        // taking the process down.
+        self.storageLimitBytes = Self.sanitizedLimit(value(Keys.storageLimit))
         self.isAutoCleanupEnabled = value(Keys.autoCleanup).map({ $0 == "1" }) ?? false
         self.isNotchEnabled = value(Keys.notchEnabled).map({ $0 == "1" }) ?? true
+        // System on a fresh install: the app should look like it belongs on the
+        // machine before it looks like it has an opinion.
+        self.appearance = value(Keys.appearance).flatMap(AppearanceMode.init(rawValue:)) ?? .system
         self.pauseDownloadsOnBattery = value(Keys.pauseOnBattery).map({ $0 == "1" }) ?? false
         self.limitSpeedsOnBattery = value(Keys.limitOnBattery).map({ $0 == "1" }) ?? false
         self.preventSleepWhileDownloading = value(Keys.preventSleepWhileDownloading).map({ $0 == "1" }) ?? false
@@ -210,6 +236,17 @@ final class SettingsStore: ObservableObject {
 
     private func persist(_ value: Bool, forKey key: String) {
         persist(value ? "1" : "0", forKey: key)
+    }
+
+    /// A stored storage budget, or `nil` for "no limit".
+    ///
+    /// Anything absent, unparseable, negative or absurd reads as no limit.
+    /// A settings value is not worth crashing over, and this one is read before
+    /// there is any UI to complain through.
+    nonisolated static func sanitizedLimit(_ raw: String?) -> Int64? {
+        guard let raw, !raw.isEmpty, let bytes = Int64(raw), bytes > 0 else { return nil }
+        // A petabyte of torrents is not a budget anyone set on purpose.
+        return bytes <= 1_000_000_000_000_000 ? bytes : nil
     }
 
     nonisolated private static func policy(fromKey raw: String?) -> SeedPolicy {

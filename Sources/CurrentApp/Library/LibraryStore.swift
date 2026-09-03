@@ -67,6 +67,13 @@ final class LibraryStore: ObservableObject {
     @Published var activeSection: SidebarSection = .all
     @Published var searchText = ""
 
+    /// The two markers `ListSelection` works from — the fixed end of a range
+    /// and the moving end. Deliberately not `@Published`: nothing draws them, so
+    /// republishing on every click would invalidate the whole list for no
+    /// visible reason.
+    private(set) var selectionAnchor: TorrentID?
+    private(set) var selectionCursor: TorrentID?
+
     // High-frequency engine state, deliberately not a single @Published blob:
     // rows observe only their own snapshot through `snapshot(for:)` inside
     // their own body, keeping updates local instead of invalidating the list.
@@ -77,9 +84,21 @@ final class LibraryStore: ObservableObject {
     let engine: any TorrentEngine
     private let database: AppDatabase
 
-    init(engine: any TorrentEngine, database: AppDatabase) {
+    /// Whether per-torrent records are worth writing to disk.
+    ///
+    /// False under `-simulate`. Records are now created on demand for any
+    /// torrent the engine reports (see `ensureRecord`), and the simulator's
+    /// torrents are invented fresh at every launch — so persisting them would
+    /// quietly file rows for downloads that never existed into the same
+    /// `library.sqlite` the real app reads at startup. Pinning still works in
+    /// the simulator; it just doesn't outlive the session, which is exactly as
+    /// long as the torrent it belongs to lasts.
+    private let persistsRecords: Bool
+
+    init(engine: any TorrentEngine, database: AppDatabase, persistsRecords: Bool = true) {
         self.engine = engine
         self.database = database
+        self.persistsRecords = persistsRecords
 
         for (id, name, pinned, policy, addedAt, directory) in database.loadTorrentRecords() {
             records[id] = TorrentRecord(
@@ -272,6 +291,7 @@ final class LibraryStore: ObservableObject {
 
     func setPinned(_ pinned: Bool, for ids: Set<TorrentID>) {
         for id in ids {
+            guard ensureRecord(for: id) else { continue }
             records[id]?.pinned = pinned
             snapshots[id]?.pinned = pinned
             persistRecord(id: id)
@@ -281,6 +301,7 @@ final class LibraryStore: ObservableObject {
 
     func setPolicy(_ policy: SeedPolicy, for ids: Set<TorrentID>) {
         for id in ids {
+            guard ensureRecord(for: id) else { continue }
             records[id]?.policy = policy
             persistRecord(id: id)
         }
@@ -345,6 +366,39 @@ final class LibraryStore: ObservableObject {
         .defaultPolicy
     }
 
+    /// Makes sure a torrent the engine knows about also has an app-owned record,
+    /// creating one from its snapshot if it doesn't. Returns false only when
+    /// there is no snapshot either, so there is nothing to build a record from.
+    ///
+    /// **This is what made pinning look broken.** `setPinned` wrote through
+    /// `records[id]?`, which does nothing at all when the record is missing —
+    /// and `applySnapshots` re-reads `pinned` from that same missing record on
+    /// every engine batch, so the pin appeared for under a second and vanished.
+    /// It looked like the click hadn't registered.
+    ///
+    /// A record only ever existed for torrents added through the app in this
+    /// session (`registerAdded`) or loaded from the database at launch. Anything
+    /// the engine reported on its own had none — which is *every* torrent under
+    /// `-simulate`, so the one place UI work is supposed to be tested was the
+    /// one place pinning could never work. A real torrent whose database row
+    /// went missing hit the same hole.
+    @discardableResult
+    private func ensureRecord(for id: TorrentID) -> Bool {
+        if records[id] != nil { return true }
+        guard let snapshot = snapshots[id] else { return false }
+        records[id] = TorrentRecord(
+            name: snapshot.name,
+            pinned: snapshot.pinned,
+            policy: defaultPolicy(),
+            addedAt: snapshot.addedAt,
+            completedAt: snapshot.completedAt,
+            lastActivityAt: snapshot.lastActivityAt,
+            sourceMagnet: nil,
+            saveDirectory: snapshot.saveDirectory
+        )
+        return true
+    }
+
     private func persistRecord(for id: TorrentID, snapshot: TorrentSnapshot) {
         guard var record = records[id] else { return }
         record.name = snapshot.name
@@ -356,7 +410,8 @@ final class LibraryStore: ObservableObject {
     }
 
     private func persistRecord(id: TorrentID) {
-        guard let record = records[id],
+        guard persistsRecords,
+              let record = records[id],
               let snapshot = snapshots[id] ?? placeholderSnapshot(record: record, id: id)
         else { return }
         Task.detached(priority: .utility) { [database] in
@@ -405,6 +460,79 @@ final class LibraryStore: ObservableObject {
         let pruned = selection.intersection(known)
         guard pruned != selection else { return }
         selection = pruned
+    }
+
+    // MARK: - Selection gestures
+    //
+    // The library list draws its own rows now, so click, ⌘-click, ⇧-click and
+    // the arrow keys are ours to implement. The rules themselves live in
+    // `ListSelection` over in CurrentCore, where they can be tested; these are
+    // just the wiring that keeps the two markers in step with the selection.
+    //
+    // `visible` is the filtered, on-screen order — not `orderedIDs`. A range has
+    // to span what the user can see, or ⇧-clicking two rows either side of a
+    // filtered-out torrent would quietly select it too.
+
+    func handleClick(_ gesture: ListSelection.Gesture, on id: TorrentID, visible: [TorrentID]) {
+        apply(ListSelection.click(
+            gesture,
+            on: id,
+            order: visible,
+            selection: selection,
+            anchor: selectionAnchor,
+            cursor: selectionCursor
+        ))
+    }
+
+    func moveSelection(by delta: Int, extending: Bool, visible: [TorrentID]) {
+        apply(ListSelection.move(
+            by: delta,
+            order: visible,
+            selection: selection,
+            anchor: selectionAnchor,
+            cursor: selectionCursor,
+            extending: extending
+        ))
+    }
+
+    func selectAll(visible: [TorrentID]) {
+        apply(ListSelection.all(order: visible))
+    }
+
+    func clearSelection() {
+        apply(.init(selection: [], anchor: nil, cursor: nil))
+    }
+
+    /// Drops anything that has scrolled out of existence.
+    ///
+    /// Called when the visible set changes — a new section, a search keystroke,
+    /// a download finishing and leaving Downloading. Without this, Pause and
+    /// Remove would keep acting on rows that are no longer on screen, which is
+    /// how you end up trashing the wrong torrent.
+    func pruneSelection(visible: [TorrentID]) {
+        let outcome = ListSelection.pruned(
+            selection: selection,
+            anchor: selectionAnchor,
+            cursor: selectionCursor,
+            order: visible
+        )
+        guard outcome.selection != selection
+            || outcome.anchor != selectionAnchor
+            || outcome.cursor != selectionCursor
+        else { return }
+        apply(outcome)
+    }
+
+    /// The row the keyboard is "on" — drawn with a focus outline so arrowing
+    /// through the list is followable.
+    var focusedRow: TorrentID? { selectionCursor }
+
+    private func apply(_ outcome: ListSelection.Outcome) {
+        selectionAnchor = outcome.anchor
+        selectionCursor = outcome.cursor
+        // Guarded for the same reason `normalizeSelection` is: this can be
+        // reached from inside `selection`'s own `didSet`.
+        if outcome.selection != selection { selection = outcome.selection }
     }
 
     // MARK: - Resume restoration

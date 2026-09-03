@@ -9,9 +9,10 @@ presentation layer that never talks to the engine directly.
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ CurrentApp (SwiftUI + AppKit)                            │
-│  RootView · Sidebar · TorrentList · Inspector            │
-│  NotchWindowController · MagnetFlow surfaces             │
-│  CommandPalette · Toasts · StatusBarExtra · Settings     │
+│  Design/ — the design system every surface draws from    │
+│  AppShell · ChromeBar · SidebarView · LibraryList        │
+│  InspectorPanel · SettingsSurface · CommandPalette       │
+│  NotchWindowController · MagnetFlow surfaces · Toasts    │
 └──────────────┬─────────────────────────────┬─────────────┘
                │                             │
         LibraryStore (MainActor)      MagnetFlowCenter
@@ -67,6 +68,28 @@ No AppKit, no SwiftUI. Everything here is deterministic and unit-tested:
   watches for magnets that never resolve.
 - **CleanupCenter** recomputes the plan on demand and performs reversible
   cleanup: remove from engine → move content to Trash → record event → toast.
+
+### The presentation layer
+
+`Design/` is the whole visual vocabulary and nothing bypasses it: `Theme`
+(colour, two values per token so light and dark resolve automatically), `Typo`
+(type styles that carry their own letter-spacing), `Space`/`Radius`/`Size`/
+`Chrome` (metrics), `Motion` (durations and springs), and `Controls/` (buttons,
+switch, checkbox, segmented picker, radio group, fields, stepper, slider,
+progress track, chips, empty states).
+
+None of it comes from the system's design. `AppShell` replaces
+`NavigationSplitView` + `.toolbar` + `.inspector` with columns it sizes itself;
+`ChromeBar` replaces the title bar; `LibraryList` replaces `List(selection:)`
+and reimplements click / ⌘-click / ⇧-click / arrow keys on top of
+`ListSelection` in CurrentCore; `SettingsSurface` replaces the `Settings` scene
+with an in-window panel. The reason is plain: those APIs *are* the stock-Mac
+look, and none of them can be restyled far enough to stop being it.
+
+The side benefit is structural. Column widths are now plain `frame(width:)`
+calls driven by app state rather than a negotiation with AppKit — and that
+negotiation is what turned a once-per-second sidebar badge into a crash. See the
+layout-churn section of `AGENTS.md`.
 
 ### The signature interaction
 

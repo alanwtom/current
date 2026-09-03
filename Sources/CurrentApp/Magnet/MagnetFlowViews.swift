@@ -41,7 +41,7 @@ struct NotchSurfaceView: View {
     /// Hidden state has to stay a plain rectangle so it matches the hardware
     /// notch exactly and disappears into it.
     private var plateCornerRadius: CGFloat {
-        controller.surfaceState == .hidden ? 0 : Layout.cornerL
+        controller.surfaceState == .hidden ? 0 : Radius.l
     }
 
     private var animationToken: Int {
@@ -126,16 +126,14 @@ struct ResolvingPill: View {
     var anchoredToNotch = true
 
     var body: some View {
-        HStack(spacing: 7) {
-            ProgressView()
-                .controlSize(.mini)
-                .tint(anchoredToNotch ? .white.opacity(0.8) : .secondary)
+        HStack(spacing: Space.s) {
+            Spinner(size: 11, tint: Theme.textSecondary)
             Text("Resolving magnet…")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(anchoredToNotch ? Color.white.opacity(0.85) : Color.primary.opacity(0.85))
+                .typeStyle(Typo.caption)
+                .foregroundStyle(Theme.textSecondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.s)
     }
 }
 
@@ -145,34 +143,33 @@ struct ResolvingCard: View {
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
+        VStack(alignment: .leading, spacing: Space.m) {
+            HStack(spacing: Space.l) {
+                Spinner(size: 13, tint: Theme.accent)
                 Text(hint ?? "Resolving magnet…")
-                    .font(.callout.weight(.semibold))
+                    .typeStyle(Typo.heading)
+                    .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                Spacer()
-                Button {
-                    onCancel()
-                } label: {
+                Spacer(minLength: Space.m)
+                Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
                 }
-                .buttonStyle(.plain)
+                .iconButton(size: 20, glyph: 9)
                 .keyboardShortcut(.cancelAction)
                 .help("Cancel")
             }
 
+            // Ticks once a second only to change one sentence after fifteen
+            // seconds. Cheap, and it is the difference between "this is taking
+            // a while" and "this is broken".
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let elapsed = context.date.timeIntervalSince(startedAt)
                 Text(elapsed > 15 ? "Still looking — this can take a minute" : "Contacting peers for file details")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+                    .typeStyle(Typo.caption)
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
-        .padding(14)
+        .padding(Chrome.panePadding)
     }
 }
 
@@ -183,58 +180,55 @@ struct SelectionSummaryCard: View {
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: Space.xl) {
+            HStack(alignment: .top, spacing: Space.l) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(summary.name)
-                        .font(.headline)
+                        .typeStyle(Typo.heading)
+                        .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Text("\(summary.fileCount) files · \(ByteFormatting.bytes(summary.totalBytes))")
-                        .font(.caption)
+                        .typeStyle(Typo.caption)
                         .tabularNumerics()
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Theme.textSecondary)
                 }
-                Spacer()
+                Spacer(minLength: Space.m)
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
                 }
-                .buttonStyle(.plain)
+                .iconButton(size: 20, glyph: 9)
                 .keyboardShortcut(.cancelAction)
                 .help("Cancel")
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: Space.m) {
                 Button("Choose files…") { onChooseFiles() }
-                    .controlSize(.small)
-                Spacer()
-                Button {
-                    onConfirm()
-                } label: {
+                    .currentButton(.secondary, scale: .small)
+                Spacer(minLength: Space.m)
+                Button(action: onConfirm) {
                     Text("Download \(ByteFormatting.bytes(summary.totalBytes))")
                         .tabularNumerics()
-                        .font(.subheadline.weight(.semibold))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .currentButton(.primary, scale: .small)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(16)
+        .padding(Space.xl)
     }
 }
 
 struct StartingIndicator: View {
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: Space.s) {
             Image(systemName: "arrow.down.circle.fill")
-                .foregroundStyle(Color.accentColor)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.accent)
             Text("Starting download…")
-                .font(.caption.weight(.medium))
+                .typeStyle(Typo.caption)
+                .foregroundStyle(Theme.text)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.s)
     }
 }
 
@@ -242,23 +236,24 @@ struct CompletionBadge: View {
     let name: String
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: Space.l) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(SemanticColor.complete)
+                .foregroundStyle(Theme.complete)
                 .font(.system(size: 17))
             VStack(alignment: .leading, spacing: 1) {
                 Text("Download complete")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .typeStyle(Typo.overline)
+                    .foregroundStyle(Theme.textTertiary)
                 // The name is the point of this badge — what finished. It used
                 // to be the dim subtitle under a heading that said nothing.
                 Text(name)
-                    .font(.callout.weight(.semibold))
+                    .typeStyle(Typo.heading)
+                    .foregroundStyle(Theme.text)
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.l)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Download complete: \(name)")
     }
@@ -291,14 +286,19 @@ struct ActivityStackCard: View {
 
             if hiddenCount > 0 {
                 Button(action: onToggleMore) {
-                    HStack(spacing: 4) {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    HStack(spacing: Space.xs) {
+                        // Rotates rather than swapping glyphs: one arrow that
+                        // turns says "this opens and closes" better than two.
+                        Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .bold))
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
                         Text(isExpanded ? "Show less" : "\(hiddenCount) more")
-                            .font(.caption2.weight(.medium))
+                            .typeStyle(Typo.caption)
                     }
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity)
                     .frame(height: NotchWindowController.moreRowHeight)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isExpanded ? "Show fewer downloads" : "Show \(hiddenCount) more downloads")
@@ -316,51 +316,38 @@ private struct ActivityRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Space.xs) {
                 Text(torrent.name)
-                    .font(.caption.weight(.semibold))
+                    .typeStyle(Typo.caption)
                     .lineLimit(1)
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(Theme.text)
 
-                ProgressTrack(fraction: torrent.progress, tint: Color.accentColor)
+                ProgressTrack(fraction: torrent.progress, tint: Theme.downloading)
                     .frame(height: 3)
 
-                HStack(spacing: 8) {
+                HStack(spacing: Space.m) {
                     Text(ByteFormatting.rate(torrent.downloadRate))
+                        .numericTransition()
                     if let eta = torrent.etaSeconds {
                         Text("\(ByteFormatting.eta(eta)) left")
+                            .numericTransition()
                     }
                     Spacer(minLength: 0)
                 }
-                .font(.caption2.tabularNumerics())
-                .foregroundStyle(.white.opacity(0.6))
+                .typeStyle(Typo.caption)
+                .tabularNumerics()
+                .foregroundStyle(Theme.textTertiary)
             }
 
-            iconButton("pause.fill", label: "Pause", action: onPause)
-            iconButton("folder", label: "Reveal in Finder", action: onReveal)
+            Button(action: onPause) { Image(systemName: "pause.fill") }
+                .iconButton(size: 22, glyph: 10)
+                .help("Pause")
+            Button(action: onReveal) { Image(systemName: "folder") }
+                .iconButton(size: 22, glyph: 10)
+                .help("Reveal in Finder")
         }
         .frame(height: NotchWindowController.rowHeight)
         .accessibilityElement(children: .contain)
-    }
-
-    private func iconButton(
-        _ symbol: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.75))
-                .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: Layout.cornerS, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
     }
 }
 
@@ -368,13 +355,13 @@ private struct ActivityRow: View {
 
 struct DropTargetBadge: View {
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Space.m) {
             Image(systemName: "arrow.down.to.line.compact")
                 .font(.system(size: 20, weight: .light))
             Text("Drop to add")
-                .font(.caption.weight(.semibold))
+                .typeStyle(Typo.caption)
         }
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(Theme.text)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -394,6 +381,7 @@ struct MagnetFlowOverlayView: View {
     @EnvironmentObject private var app: AppEnvironment
     @EnvironmentObject private var flow: MagnetFlowCenter
     @EnvironmentObject private var store: LibraryStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -435,6 +423,16 @@ struct MagnetFlowOverlayView: View {
         .padding(.top, 8)
         .frame(maxWidth: .infinity, alignment: .top)
         .allowsHitTesting(flow.stage.isActive)
+        // The stages are driven from an async task, so nothing sets them inside
+        // `withAnimation` and the cards' own transitions had no animation to run
+        // with — each stage simply blinked into place. Keyed on the stage rather
+        // than on anything inside it: the resolving card ticks a clock every
+        // second, and animating on per-tick values is what has taken this app's
+        // window down before.
+        .animation(
+            Motion.pop(presenting: flow.stage.isActive, reduceMotion: reduceMotion),
+            value: flow.stage
+        )
     }
 
     private var selectingID: TorrentID? {
@@ -445,19 +443,9 @@ struct MagnetFlowOverlayView: View {
     @ViewBuilder
     private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
-            .background(
-                RoundedRectangle(cornerRadius: Layout.cornerL + 6, style: .continuous)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Layout.cornerL + 6, style: .continuous)
-                    .strokeBorder(.separator.opacity(0.4))
-            )
-            .padding(.horizontal, 60)
-            .transition(.asymmetric(
-                insertion: .opacity.combined(with: .move(edge: .top)).combined(with: .scale(scale: 0.96)),
-                removal: .opacity
-            ))
+            .frame(maxWidth: 460)
+            .raisedSurface(radius: Radius.xl, deep: true)
+            .popTransition(reduceMotion: reduceMotion)
+            .padding(.horizontal, Space.xxxl)
     }
 }
