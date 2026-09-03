@@ -11,10 +11,13 @@
 #include <libtorrent/hex.hpp>
 #include <libtorrent/load_torrent.hpp>
 #include <libtorrent/write_resume_data.hpp>
+#include <libtorrent/session_params.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <cstring>
 #include <cstdlib>
 #include <memory>
@@ -37,7 +40,62 @@ struct SessionContext {
     std::thread worker;
     std::atomic<bool> running{false};
     std::chrono::steady_clock::time_point next_stats_tick{std::chrono::steady_clock::now()};
+    /// Where the DHT routing table is kept between launches. Empty disables it.
+    std::string state_path;
+    std::chrono::steady_clock::time_point next_state_save{std::chrono::steady_clock::now()};
 };
+
+/// How often the DHT routing table is written out.
+///
+/// It is saved on a timer rather than only at shutdown because nothing
+/// guarantees a clean shutdown: the engine's `lt_session_destroy` runs from
+/// `deinit`, and the object that owns it lives until the process exits, so on a
+/// normal quit it never runs at all. A five-minute timer means a warm routing
+/// table survives a force-quit, a crash, and a debugger stop.
+constexpr auto kStateSaveInterval = std::chrono::minutes(5);
+
+/// Reads the saved DHT state, if there is any.
+///
+/// Every failure path returns default params: a missing, truncated or
+/// stale-format state file must never stop the session from starting.
+session_params load_session_params(std::string const& path) {
+    if (path.empty()) return session_params();
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return session_params();
+    std::vector<char> buf{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (buf.empty()) return session_params();
+    try {
+        return read_session_params(std::span<char const>(buf.data(), buf.size()));
+    } catch (...) {
+        return session_params();
+    }
+}
+
+void save_session_params(SessionContext* ctx) {
+    if (!ctx || !ctx->ses || ctx->state_path.empty()) return;
+    try {
+        // DHT state only. Settings come from the app on every launch, and
+        // writing them here as well would mean a stale copy on disk quietly
+        // competing with the real ones.
+        session_params state = ctx->ses->session_state(session_handle::save_dht_state);
+        std::vector<char> buf = write_session_params_buf(state, session_handle::save_dht_state);
+        std::string tmp = ctx->state_path + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) return;
+            out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            if (!out) return;
+        }
+        // Renamed into place, so an interrupted write can't leave a half-file
+        // that the next launch then has to recover from.
+        std::rename(tmp.c_str(), ctx->state_path.c_str());
+        if (std::getenv("CURRENT_SHIM_LOG")) {
+            std::fprintf(stderr, "[shim] saved dht state (%zu bytes)\n", buf.size());
+        }
+    } catch (...) {
+        // A failed save costs a slower first magnet next launch. Nothing more.
+    }
+}
 
 inline void copy_string(char* dst, size_t cap, char const* src) {
     std::snprintf(dst, cap, "%s", src ? src : "");
@@ -193,10 +251,15 @@ bool find_handle(SessionContext* ctx, char const* id, torrent_handle* out) {
 
 extern "C" {
 
-lt_session* lt_session_create(lt_event_callback callback, void* context) {
+lt_session* lt_session_create(lt_event_callback callback, void* context,
+                              const char* state_path) {
     auto* ctx = new SessionContext();
     ctx->callback = callback;
     ctx->user = context;
+    if (state_path) ctx->state_path = state_path;
+    // First save a minute in, then on the interval: a routing table that took
+    // a minute to build is worth keeping even if the app doesn't survive long.
+    ctx->next_state_save = std::chrono::steady_clock::now() + std::chrono::minutes(1);
 
     settings_pack pack;
     pack.set_int(settings_pack::alert_mask,
@@ -208,11 +271,26 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
     pack.set_int(settings_pack::connections_limit, 240);
     pack.set_int(settings_pack::alert_queue_size, 5000);
     pack.set_str(settings_pack::user_agent, "Current/1.0");
+    // Announce to every tracker in every tier at once, rather than walking the
+    // tiers in order and waiting for each to fail.
+    //
+    // This is about magnets specifically. A magnet off the web typically ships
+    // a dozen trackers, most of them long dead — coppersurfer, glotorrents,
+    // popcorn-tracker and friends still turn up in links years after the
+    // servers went away. Tier by tier, resolving a magnet meant timing out on
+    // each corpse before reaching a live one, which is most of why it felt like
+    // nothing was happening.
+    pack.set_bool(settings_pack::announce_to_all_trackers, true);
+    pack.set_bool(settings_pack::announce_to_all_tiers, true);
 
     try {
-        session_params params;
+        // Starts from the saved DHT routing table when there is one. Without
+        // it, every launch bootstrapped the DHT from nothing, and a magnet
+        // whose trackers are all dead has only the DHT to find peers with —
+        // so the first magnet after every launch paid for a cold start.
+        session_params params = load_session_params(ctx->state_path);
         params.settings = pack;
-        ctx->ses = std::make_unique<session>(params);
+        ctx->ses = std::make_unique<session>(std::move(params));
     } catch (...) {
         delete ctx;
         return nullptr;
@@ -264,6 +342,14 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
             }
 
             auto const now = std::chrono::steady_clock::now();
+
+            // The DHT routing table, on a timer. See `kStateSaveInterval` for
+            // why this can't wait for shutdown.
+            if (ctx->running && !ctx->state_path.empty() && now >= ctx->next_state_save) {
+                ctx->next_state_save = now + kStateSaveInterval;
+                save_session_params(ctx);
+            }
+
             if (!ctx->running || now < ctx->next_stats_tick) continue;
             ctx->next_stats_tick = now + std::chrono::milliseconds(1000);
 
@@ -329,6 +415,8 @@ lt_session* lt_session_create(lt_event_callback callback, void* context) {
 void lt_session_destroy(lt_session* opaque) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx) return;
+    // Before the worker stops, so the freshest routing table is the one kept.
+    save_session_params(ctx);
     ctx->running = false;
     if (ctx->worker.joinable()) ctx->worker.join();
     ctx->ses.reset();

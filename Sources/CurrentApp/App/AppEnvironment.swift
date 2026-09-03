@@ -93,6 +93,35 @@ final class AppEnvironment: ObservableObject {
             power: power
         )
 
+        // Says so out loud when a magnet is abandoned. Two minutes after
+        // clicking a link, a row vanishing without a word is the app looking
+        // broken; this is the same rule the rest of the automation follows —
+        // if it acts on its own, it explains itself.
+        automation.onMagnetTimedOut = { [weak self] name in
+            guard let self else { return }
+
+            // Take the flow down with it. The coordinator removes the torrent,
+            // but nothing told the flow — so the notch panel sat there saying
+            // "Resolving magnet…" indefinitely, about a torrent that no longer
+            // existed, and the only way out was quitting the app.
+            if case .resolving = self.magnetFlow.stage {
+                self.magnetFlow.resolveFailed(message: name)
+            }
+
+            // Deliberately short. A toast truncates, and a warning that ends in
+            // an ellipsis tells you less than a shorter one that finishes its
+            // sentence — the first draft of this ran to two lines and was cut
+            // off mid-word.
+            self.toasts.show(
+                .warning,
+                title: "Couldn't get the file details",
+                message: "No peers answered in two minutes. The link may be dead.",
+                actionTitle: "Try Again",
+                coalesceKey: "magnet.timeout",
+                action: { [weak self] in self?.beginAddMagnet() }
+            )
+        }
+
         cleanup.onCleanupCompleted = { [weak self] summary in
             self?.toasts.show(
                 .success,
@@ -364,6 +393,35 @@ final class AppEnvironment: ObservableObject {
         isAddMagnetSheetVisible = true
     }
 
+    /// A magnet link or a `.torrent` handed over by the system.
+    ///
+    /// The one entry point for both, called from `AppDelegate` — see there for
+    /// why this doesn't live in `.onOpenURL`. Anything that isn't a magnet or a
+    /// torrent is ignored rather than reported: the app is registered for those
+    /// two things, so a third would mean the system got it wrong, and a dialog
+    /// about it would be noise.
+    func open(_ url: URL) {
+        // Through `DropParser`, like drops and pastes, so all three routes into
+        // the app agree about what counts as a magnet.
+        switch DropParser.parse(url: url) {
+        case .magnet(let uri):
+            Task { await addMagnet(uri) }
+        case .torrentFile(let file):
+            Task { await addTorrentFile(at: file) }
+        case nil:
+            return
+        }
+
+        // Bring the app forward and make sure there's a window to watch it in.
+        // Clicking a magnet in a browser is a request to see something happen,
+        // and on a Mac with no notch the flow is drawn *in* the window — which
+        // may well be closed, since this app keeps running in the menu bar.
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
     /// Downloads that haven't finished yet.
     ///
     /// Seeding deliberately doesn't count. A torrent set to seed forever would
@@ -453,6 +511,12 @@ final class AppEnvironment: ObservableObject {
         } else {
             await library.restoreResumeData()
         }
+
+        // Last, and only now: a magnet clicked in a browser launches the app,
+        // so its URL was waiting here before there was an engine to hand it to.
+        // Draining after the restore keeps the new magnet from racing the
+        // torrents being resumed.
+        AppDelegate.flushPendingURLs()
     }
 
     func prepareForTermination() async {
