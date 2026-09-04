@@ -376,8 +376,20 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// What seed policy a newly added torrent gets.
+    ///
+    /// Supplied by the app so that the Seeding pane's "default policy" picker
+    /// is actually the answer. It used to return `SeedPolicy.defaultPolicy`
+    /// unconditionally, so the picker saved your choice, showed it back to you
+    /// on the next launch, and had no effect on a single torrent — every one
+    /// of them came out Balanced.
+    ///
+    /// A closure rather than a reference to the settings, so tests can build a
+    /// store without one and still get a sensible answer.
+    var defaultPolicyProvider: () -> SeedPolicy = { .defaultPolicy }
+
     private func defaultPolicy() -> SeedPolicy {
-        .defaultPolicy
+        defaultPolicyProvider()
     }
 
     /// Makes sure a torrent the engine knows about also has an app-owned record,

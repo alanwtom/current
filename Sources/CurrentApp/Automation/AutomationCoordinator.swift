@@ -11,6 +11,7 @@ final class AutomationCoordinator {
     private let settings: SettingsStore
     private let database: AppDatabase
     private let power: PowerMonitor
+    private let cleanup: CleanupCenter
 
     /// Told when a magnet is given up on, so the app can say so.
     ///
@@ -20,6 +21,13 @@ final class AutomationCoordinator {
     /// filed away in a tab you had no reason to open.
     var onMagnetTimedOut: ((String) -> Void)?
 
+    /// Told when the library is over its storage budget and the app can't fix
+    /// it on its own — either automatic cleanup is off, or it is on and
+    /// nothing is eligible. Deliberately *not* called when automatic cleanup
+    /// is about to handle it: a notification telling you about a problem the
+    /// app is already solving is noise.
+    var onStorageBudgetPressure: ((_ overBy: Int64) -> Void)?
+
     /// Torrents this coordinator paused automatically; resumed when conditions clear.
     private var batteryPaused = Set<TorrentID>()
     private var seedingStoppedLogged = Set<TorrentID>()
@@ -27,6 +35,20 @@ final class AutomationCoordinator {
     /// Magnets whose resolve timeout has already been handled, so a stale
     /// row can't re-trigger removal + logging on every tick.
     private var resolveTimeoutsHandled = Set<TorrentID>()
+
+    /// True while an automatic cleanup is in flight. The tick is every 15 s and
+    /// a cleanup is async, so without this a slow one would be started again
+    /// underneath itself and the same files trashed twice.
+    private var isCleaningAutomatically = false
+    /// Whether we've already said the budget needs attention. Cleared when the
+    /// library drops back under, so one crossing means one notification rather
+    /// than one every fifteen seconds until something changes.
+    private var budgetPressureNotified = false
+
+    /// Held while downloads are running and the user asked us to keep the Mac
+    /// awake. Releasing it is what lets the machine idle-sleep again, so it
+    /// must be dropped the moment either condition stops being true.
+    private var sleepAssertion: NSObjectProtocol?
 
     private var timer: Timer?
     static let tickInterval: TimeInterval = 15
@@ -36,12 +58,14 @@ final class AutomationCoordinator {
         library: LibraryStore,
         settings: SettingsStore,
         database: AppDatabase,
-        power: PowerMonitor
+        power: PowerMonitor,
+        cleanup: CleanupCenter
     ) {
         self.library = library
         self.settings = settings
         self.database = database
         self.power = power
+        self.cleanup = cleanup
 
         timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -53,6 +77,8 @@ final class AutomationCoordinator {
     func tick() {
         enforceSeedGoals()
         enforcePowerPolicy()
+        enforceSleepPolicy()
+        enforceStorageBudget()
         watchResolveTimeouts()
     }
 
@@ -123,6 +149,89 @@ final class AutomationCoordinator {
                 batteryPaused.removeAll()
             }
         }
+    }
+
+    // MARK: - Sleep
+
+    /// Keeps the Mac awake while something is actually transferring.
+    ///
+    /// This is an *idle* sleep assertion, which is the honest kind: it stops
+    /// the Mac dozing off while a download runs, and it deliberately does not
+    /// fight the lid. Closing a laptop is an unambiguous instruction to sleep,
+    /// and an app that refused would be a battery bug people can't diagnose.
+    /// The settings copy says so.
+    private func enforceSleepPolicy() {
+        let isTransferring = library.snapshots.values.contains { $0.state == .downloading }
+        let shouldStayAwake = settings.preventSleepWhileDownloading && isTransferring
+
+        if shouldStayAwake, sleepAssertion == nil {
+            sleepAssertion = ProcessInfo.processInfo.beginActivity(
+                options: .idleSystemSleepDisabled,
+                reason: "Downloading"
+            )
+        } else if !shouldStayAwake, let assertion = sleepAssertion {
+            ProcessInfo.processInfo.endActivity(assertion)
+            sleepAssertion = nil
+        }
+    }
+
+    // MARK: - Storage budget
+
+    /// Acts on the storage budget: cleans up to it if allowed, says so if not.
+    ///
+    /// Both halves need a budget to exist. With no limit set there is nothing
+    /// to be over, and that guard is load-bearing — the manual "clean now"
+    /// command treats "no limit" as "everything eligible", which is the right
+    /// answer when a person just asked for it and a catastrophic one on a
+    /// timer.
+    private func enforceStorageBudget() {
+        guard let limit = settings.storageLimitBytes else {
+            budgetPressureNotified = false
+            return
+        }
+        let used = library.usedStorageBytes
+        guard used > limit else {
+            budgetPressureNotified = false
+            return
+        }
+        let overBy = used - limit
+
+        cleanup.refreshPlan()
+        // `candidates` has already been through the eligibility gate: complete,
+        // seed goals met, not pinned, not active, and rare swarms excluded.
+        // Ranking happens after that gate, never instead of it.
+        let candidates = cleanup.plan.candidatesToReach(freeBytesTarget: overBy)
+
+        if settings.isAutoCleanupEnabled, !candidates.isEmpty, !isCleaningAutomatically {
+            isCleaningAutomatically = true
+            Task { [weak self] in
+                guard let self else { return }
+                await self.cleanup.performCleanup(
+                    candidates,
+                    trigger: "Over your storage budget by \(ByteFormatting.bytes(overBy))"
+                )
+                self.isCleaningAutomatically = false
+            }
+            return
+        }
+
+        // Nothing the app can do by itself, so this is genuinely yours to look
+        // at: either you've turned automatic cleanup off, or everything left is
+        // pinned, still seeding towards a goal, or too rare to remove.
+        guard !budgetPressureNotified else { return }
+        budgetPressureNotified = true
+        log(
+            .cleanupProposed,
+            torrentID: nil,
+            name: nil,
+            reasons: [
+                "Using \(ByteFormatting.bytes(used)) against a \(ByteFormatting.bytes(limit)) budget",
+                settings.isAutoCleanupEnabled
+                    ? "Nothing is eligible to clean — what's left is pinned, still seeding, or rare"
+                    : "Automatic cleanup is off, so nothing was removed",
+            ]
+        )
+        onStorageBudgetPressure?(overBy)
     }
 
     // MARK: - Resolving timeouts

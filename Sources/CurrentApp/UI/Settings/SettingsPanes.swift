@@ -551,12 +551,15 @@ struct PowerPane: View {
             }
 
             SettingsGroup(title: "Sleep") {
+                // Not conditional on anything. This used to be disabled unless
+                // one of the battery switches above was on, which made no
+                // sense in either direction — keeping the Mac awake for a
+                // download is exactly as useful on mains power, and more so.
                 ToggleRow(
                     title: "Prevent sleep while downloading",
-                    detail: "Only while something is actually transferring.",
+                    detail: "Only while something is actually transferring. Closing the lid still sleeps.",
                     isOn: $settings.preventSleepWhileDownloading
                 )
-                .disabled(!settings.pauseDownloadsOnBattery && !settings.limitSpeedsOnBattery)
             }
         }
     }
