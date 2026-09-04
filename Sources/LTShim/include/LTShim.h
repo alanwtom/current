@@ -120,6 +120,9 @@ int lt_add_torrent_data(lt_session* session, const uint8_t* data, size_t len,
 int lt_pause(lt_session* session, const char* id);
 int lt_resume(lt_session* session, const char* id);
 int lt_remove(lt_session* session, const char* id, int delete_files);
+/* Changes where a torrent's files go. Meant for a torrent that has resolved but
+ * not started, which is when the app asks the user where to put it. */
+int lt_set_save_path(lt_session* session, const char* id, const char* save_path);
 int lt_force_recheck(lt_session* session, const char* id);
 int lt_set_file_priorities(lt_session* session, const char* id,
                            const int* priorities, int32_t count);

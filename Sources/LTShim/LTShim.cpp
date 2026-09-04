@@ -506,6 +506,24 @@ int lt_remove(lt_session* opaque, const char* id, int delete_files) {
     return 0;
 }
 
+/// Changes where a torrent's files are written.
+///
+/// The app calls this in exactly one situation: a torrent that has resolved its
+/// metadata and is sitting paused while the user decides what to do with it, so
+/// there is nothing on disk yet and "moving" the storage really just picks it.
+/// `dont_replace` is the conservative flag — if files somehow *did* exist at the
+/// destination libtorrent keeps them rather than clobbering them, which matters
+/// because the destination is a folder the user chose and may well have things
+/// in it.
+int lt_set_save_path(lt_session* opaque, const char* id, const char* save_path) {
+    auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
+    torrent_handle h;
+    if (!find_handle(ctx, id, &h)) return -1;
+    h.move_storage(save_path, move_flags_t::dont_replace);
+    return 0;
+}
+
 int lt_force_recheck(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;

@@ -101,7 +101,13 @@ public actor SimulationEngine: TorrentEngine {
             var record = Record(
                 id: id,
                 name: name,
-                state: .downloading,
+                // Starts in `.resolving` with no delay, so the next tick emits
+                // `metadataReceived` and the app can offer the same confirm card
+                // a magnet gets. The real engine does emit metadata for a
+                // .torrent file — it arrives with the alert that adds it — and
+                // the simulator not doing so was a divergence that made the two
+                // behave differently for the same user action.
+                state: .resolving,
                 totalSize: Self.size(forName: name),
                 downloaded: 0,
                 uploaded: 0,
@@ -115,7 +121,7 @@ public actor SimulationEngine: TorrentEngine {
                 saveDirectory: saveDirectory,
                 metadata: nil,
                 priorities: [.normal],
-                resolveDelayRemaining: nil,
+                resolveDelayRemaining: 0,
                 failure: nil
             )
             record.metadata = Self.metadata(for: record)
@@ -154,6 +160,10 @@ public actor SimulationEngine: TorrentEngine {
     public func remove(_ id: TorrentID, deleteFiles: Bool) {
         records[id] = nil
         continuation.yield(.removed(id))
+    }
+
+    public func setSaveDirectory(_ id: TorrentID, _ directory: URL) {
+        mutate(id) { $0.saveDirectory = directory }
     }
 
     public func setFilePriorities(_ id: TorrentID, _ priorities: [FilePriority]) {

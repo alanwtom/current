@@ -354,6 +354,20 @@ final class LibraryStore: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Records where a download was actually sent, after the user chose a folder
+    /// for it.
+    ///
+    /// The engine owns the live answer — snapshots carry their own directory —
+    /// but the record is what survives a relaunch and what `restoreResumeData`
+    /// re-adds the torrent with. Leave this out and the folder you picked lasts
+    /// exactly until you quit.
+    func updateSaveDirectory(_ id: TorrentID, _ directory: URL) {
+        guard records[id]?.saveDirectory != directory else { return }
+        records[id]?.saveDirectory = directory
+        persistRecord(id: id)
+        objectWillChange.send()
+    }
+
     func updateNameIfNeeded(_ id: TorrentID, name: String) {
         if records[id]?.name != name {
             records[id]?.name = name
