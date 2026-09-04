@@ -263,7 +263,6 @@ final class SettingsStore: ObservableObject {
         case "helpful": return .helpful
         case "archive": return .archive
         case "temporary": return .temporary
-        case "custom": return .custom(SeedGoal(targetRatio: 2.0, minimumSeedSeconds: 48 * 3600))
         default: return .balanced
         }
     }
@@ -274,7 +273,6 @@ final class SettingsStore: ObservableObject {
         case .helpful: return "helpful"
         case .archive: return "archive"
         case .temporary: return "temporary"
-        case .custom: return "custom"
         }
     }
 }

@@ -70,13 +70,15 @@ final class SeedPolicyTests: XCTestCase {
         XCTAssertTrue(decision.reasons.contains { $0.contains("Ready for cleanup") })
     }
 
-    func testCustomGoalRespected() {
-        let goal = SeedGoal(targetRatio: 3.0, minimumSeedSeconds: nil)
-        let low = snapshot(uploaded: 1_500, downloaded: 1_000, seedSeconds: 0, seeds: 50)
-        XCTAssertFalse(SeedEvaluator.evaluate(snapshot: low, policy: .custom(goal)).shouldStop)
+    /// The ratio-only branch of the evaluator, which Temporary is now the
+    /// only policy to exercise — this used to be written against `custom`,
+    /// a policy nothing could select.
+    func testRatioOnlyGoalStopsAtTheRatio() {
+        let low = snapshot(uploaded: 500, downloaded: 1_000, seedSeconds: 0, seeds: 50)
+        XCTAssertFalse(SeedEvaluator.evaluate(snapshot: low, policy: .temporary).shouldStop)
 
-        let high = snapshot(uploaded: 3_100, downloaded: 1_000, seedSeconds: 0, seeds: 50)
-        XCTAssertTrue(SeedEvaluator.evaluate(snapshot: high, policy: .custom(goal)).shouldStop)
+        let high = snapshot(uploaded: 1_100, downloaded: 1_000, seedSeconds: 0, seeds: 50)
+        XCTAssertTrue(SeedEvaluator.evaluate(snapshot: high, policy: .temporary).shouldStop)
     }
 
     func testIncompleteTorrentsAreNeverStopped() {

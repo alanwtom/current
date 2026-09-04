@@ -25,8 +25,8 @@ happening, and delightful when you interact with it.
   when metadata arrives, and hands off to live progress the moment you press
   **Download 8.3 GB**. One continuous interaction instead of three dialogs,
   and it happens in the window, where the library it's about already is.
-- **Smart Seed** — five plain-language policies (Balanced, Helpful, Archive,
-  Temporary, Custom). Helpful mode keeps rare torrents alive even after their
+- **Smart Seed** — four plain-language policies (Balanced, Helpful, Archive,
+  Temporary). Helpful mode keeps rare torrents alive even after their
   goal is met. Every automated decision is explained in the Rules tab:
   *why did this happen?*
 - **Smart Cleanup** — set a storage budget; Current ranks completed downloads

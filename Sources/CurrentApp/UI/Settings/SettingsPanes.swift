@@ -516,7 +516,6 @@ struct SeedingPane: View {
         case .helpful: return "helpful"
         case .archive: return "archive"
         case .temporary: return "temporary"
-        case .custom: return "custom"
         }
     }
 

@@ -177,7 +177,6 @@ final class AppDatabase: Sendable {
         case .helpful: return "helpful"
         case .archive: return "archive"
         case .temporary: return "temporary"
-        case .custom: return "custom"
         }
     }
 
@@ -186,7 +185,6 @@ final class AppDatabase: Sendable {
         case "helpful": return .helpful
         case "archive": return .archive
         case "temporary": return .temporary
-        case "custom": return .custom(SeedGoal(targetRatio: 2.0, minimumSeedSeconds: 48 * 3600))
         default: return .balanced
         }
     }
