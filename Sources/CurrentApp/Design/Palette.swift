@@ -94,6 +94,12 @@ enum Theme {
     /// thickness.
     static let track = dynamic(light: rgba(0, 0, 0, 0.09), dark: rgba(255, 255, 255, 0.10))
 
+    /// The same track on a surface that is already raised. `track` is tuned
+    /// against the library's dark canvas; on the lighter fill of a floating
+    /// panel it all but disappears, and a bar at 2% then reads as a hairline
+    /// rule rather than a download that has barely started.
+    static let trackRaised = dynamic(light: rgba(0, 0, 0, 0.14), dark: rgba(255, 255, 255, 0.17))
+
     // MARK: - Strokes
 
     /// Hairlines and control borders. Low enough to read as an edge rather than
@@ -108,6 +114,16 @@ enum Theme {
     /// cheapest trick in dark UI: one 8%-white line and a flat rectangle starts
     /// to look like a physical object.
     static let strokeHighlight = dynamic(light: rgba(255, 255, 255, 0.9), dark: rgba(255, 255, 255, 0.07))
+
+    /// The same trick spread over an area instead of a line: a wash that fades
+    /// out a third of the way down a floating surface, so the top catches light
+    /// and the bottom sits in it. Only for surfaces that float over something
+    /// else — inside the window it would fight the material underneath.
+    ///
+    /// Deliberately weaker than `strokeHighlight`. A gradient covering hundreds
+    /// of points reads far stronger than a one-pixel line at the same alpha;
+    /// at 7% this looked like a lighting bug rather than a sheen.
+    static let sheen = dynamic(light: rgba(255, 255, 255, 0.55), dark: rgba(255, 255, 255, 0.035))
 
     // MARK: - Text
     //

@@ -24,6 +24,9 @@ struct ProgressTrack: View {
     var reduceMotion: Bool = false
     /// Unknown progress — pulses gently instead of showing a length.
     var indeterminate = false
+    /// The unfilled part. Defaults to the value tuned for the library's canvas;
+    /// surfaces that float above it need `Theme.trackRaised` instead.
+    var track: Color = Theme.track
 
     @State private var pulsing = false
 
@@ -32,7 +35,7 @@ struct ProgressTrack: View {
             let clamped = max(0, min(1, fraction))
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
-                    .fill(Theme.track)
+                    .fill(track)
 
                 if indeterminate {
                     Capsule(style: .continuous)
