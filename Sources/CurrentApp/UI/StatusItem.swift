@@ -35,7 +35,6 @@ final class StatusItemController {
     private static let idleGrace: TimeInterval = 5
 
     private let item: NSStatusItem
-    private let menu = NSMenu()
     private weak var app: AppEnvironment?
     private weak var library: LibraryStore?
 
@@ -43,11 +42,17 @@ final class StatusItemController {
     private var shownTitle: String = ""
     private var shownTint: NSColor?
     private var cancellable: AnyCancellable?
-    private let menuDelegate = MenuDelegate()
+
+    /// The panel behind the icon, and everything that keeps it honest.
+    private let panelModel: StatusPanelModel
+    private var panel: NSPanel?
+    private var clickOutsideMonitor: Any?
+    private var panelObserver: NSObjectProtocol?
 
     init(app: AppEnvironment, library: LibraryStore) {
         self.app = app
         self.library = library
+        self.panelModel = StatusPanelModel(library: library)
 
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -58,17 +63,24 @@ final class StatusItemController {
                 ofSize: NSFont.smallSystemFontSize,
                 weight: .regular
             )
+            // No `item.menu`. Setting that hands the click to AppKit, which
+            // opens a menu hanging from the item's left edge — the "uncentered
+            // and boring" thing this replaced. Taking the action ourselves is
+            // what lets a real panel open, centred under the icon.
+            button.target = self
+            button.action = #selector(statusItemClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-
-        menuDelegate.onOpen = { [weak self] in self?.rebuildMenu() }
-        menu.delegate = menuDelegate
-        item.menu = menu
-        rebuildMenu()
 
         cancellable = library.objectWillChange
             .throttle(for: .seconds(Self.tick), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshTitle() }
+                MainActor.assumeIsolated {
+                    self?.refreshTitle()
+                    // Only while the panel is on screen. Closed, it costs
+                    // nothing and observes nothing.
+                    if self?.panel != nil { self?.panelModel.refresh() }
+                }
             }
         refreshTitle()
     }
@@ -81,6 +93,7 @@ final class StatusItemController {
     /// Called before the app quits so the icon doesn't linger in the menu bar.
     func tearDown() {
         cancellable = nil
+        closePanel()
         NSStatusBar.system.removeStatusItem(item)
     }
 
@@ -171,86 +184,166 @@ final class StatusItemController {
         return image
     }
 
-    // MARK: - Menu
+    // MARK: - Panel
 
-    /// Rebuilt each time the menu opens, so the numbers are current without
-    /// anything having to observe the library while the menu is closed.
-    private func rebuildMenu() {
-        menu.removeAllItems()
-        guard let app, let library else { return }
+    @objc private func statusItemClicked() {
+        panel == nil ? openPanel() : closePanel()
+    }
 
-        menu.addItem(disabled(summary(for: library)))
-        menu.addItem(disabled("\(library.activeDownloadCount) active"))
-        menu.addItem(.separator())
+    private func openPanel() {
+        guard let button = item.button, let buttonWindow = button.window else { return }
 
-        menu.addItem(action("Pause All") { [weak app] in app?.pauseAll() })
-        menu.addItem(action("Resume All") { [weak app] in app?.resumeAll() })
+        // Decide the rows before measuring, because the panel's height is
+        // measured from them and then never changes while it's open.
+        panelModel.freeze()
 
-        let completions = Array(app.recentCompletions.suffix(3))
-        if !completions.isEmpty {
-            menu.addItem(.separator())
-            menu.addItem(disabled("Recently finished"))
-            for name in completions {
-                let entry = disabled(name)
-                entry.image = NSImage(
-                    systemSymbolName: "checkmark.circle",
-                    accessibilityDescription: nil
-                )
-                menu.addItem(entry)
-            }
+        let hosting = NSHostingView(rootView: makePanelView())
+        // Measured once, here. Letting the window track its content instead
+        // would mean re-measuring on every engine tick, which is the exact
+        // shape of the bug that has taken this app down twice.
+        hosting.setFrameSize(
+            NSSize(width: StatusPanelMetrics.width, height: hosting.fittingSize.height)
+        )
+        let size = hosting.frame.size
+
+        let panel = StatusBarPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentView = hosting
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .statusBar
+        panel.isMovable = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.setFrameOrigin(origin(for: size, under: button, in: buttonWindow))
+
+        // Key, but non-activating. The panel has real buttons in it, and a
+        // panel that can't become key gets no keyboard and no reliable clicks —
+        // that failure is on the record here, it's half of why the notch panel
+        // was removed. `canBecomeKey` is overridden below; `.nonactivatingPanel`
+        // keeps the app from stealing focus from whatever you were using.
+        panel.makeKeyAndOrderFront(nil)
+        button.isHighlighted = true
+        self.panel = panel
+
+        // Two ways out, because neither covers the other: the monitor catches
+        // a click in another app, and `didResignKey` catches ⌘-tab, Mission
+        // Control, and anything else that takes focus without a click.
+        clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closePanel() }
         }
-
-        menu.addItem(.separator())
-        let open = action("Open Current") {
-            NSApp.activate(ignoringOtherApps: true)
-            for window in NSApp.windows where window.canBecomeMain {
-                window.makeKeyAndOrderFront(nil)
-                break
-            }
+        panelObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closePanel() }
         }
-        open.keyEquivalent = "0"
-        open.keyEquivalentModifierMask = .command
-        menu.addItem(open)
-
-        menu.addItem(.separator())
-        let quit = action("Quit Current") { NSApp.terminate(nil) }
-        quit.keyEquivalent = "q"
-        quit.keyEquivalentModifierMask = .command
-        menu.addItem(quit)
     }
 
-    private func summary(for library: LibraryStore) -> String {
-        let down = library.aggregateDownloadRate
-        let up = library.aggregateUploadRate
-        let downText = down > 1 ? ByteFormatting.rate(down) : "0/s"
-        let upText = up > 1 ? ByteFormatting.rate(up) : "0/s"
-        return "\u{2193} \(downText)  \u{2191} \(upText)"
+    private func closePanel() {
+        if let monitor = clickOutsideMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickOutsideMonitor = nil
+        }
+        if let panelObserver {
+            NotificationCenter.default.removeObserver(panelObserver)
+            self.panelObserver = nil
+        }
+        panel?.orderOut(nil)
+        panel = nil
+        item.button?.isHighlighted = false
+        panelModel.thaw()
     }
 
-    private func disabled(_ title: String) -> NSMenuItem {
-        let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        entry.isEnabled = false
-        return entry
+    /// Centred under the icon, and kept on screen.
+    ///
+    /// A status item near the right edge would otherwise hang a 324pt panel
+    /// off the side of the display — which is what "uncentered" looked like
+    /// from the other direction. The clamp is why centring is safe to ask for.
+    private func origin(for size: NSSize, under button: NSStatusBarButton, in window: NSWindow) -> NSPoint {
+        let buttonRect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        var x = buttonRect.midX - size.width / 2
+        let y = buttonRect.minY - size.height - StatusPanelMetrics.menuBarGap
+
+        if let screen = window.screen ?? NSScreen.main {
+            let margin: CGFloat = 8
+            let minX = screen.visibleFrame.minX + margin
+            let maxX = screen.visibleFrame.maxX - size.width - margin
+            x = min(max(x, minX), max(minX, maxX))
+        }
+        return NSPoint(x: x, y: y)
     }
 
-    private func action(_ title: String, handler: @escaping () -> Void) -> NSMenuItem {
-        let entry = NSMenuItem(title: title, action: #selector(ActionTarget.fire), keyEquivalent: "")
-        let target = ActionTarget(handler: handler)
-        entry.target = target
-        entry.representedObject = target   // menu items don't retain their target
-        return entry
+    private func makePanelView() -> some View {
+        StatusPanelView(
+            model: panelModel,
+            onTogglePause: { [weak self] id in
+                self?.library?.togglePause(for: [id])
+                self?.panelModel.refresh()
+            },
+            onReveal: { [weak self] id in
+                self?.app?.revealInFinder(id)
+                self?.closePanel()
+            },
+            onOpenTorrent: { [weak self] id in
+                self?.library?.selection = [id]
+                self?.activateWindow()
+                self?.closePanel()
+            },
+            onPauseAll: { [weak self] in
+                self?.app?.pauseAll()
+                self?.panelModel.refresh()
+            },
+            onResumeAll: { [weak self] in
+                self?.app?.resumeAll()
+                self?.panelModel.refresh()
+            },
+            onAdd: { [weak self] in
+                self?.closePanel()
+                self?.activateWindow()
+                self?.app?.beginAddMagnet()
+            },
+            onOpenApp: { [weak self] in
+                self?.closePanel()
+                self?.activateWindow()
+            },
+            onSettings: { [weak self] in
+                self?.closePanel()
+                self?.activateWindow()
+                self?.app?.openSettings(tab: .general)
+            },
+            onQuit: { NSApp.terminate(nil) }
+        )
     }
 
-    /// NSMenuItem holds its target weakly, so the closure needs an owner that
-    /// lives as long as the item does.
-    private final class ActionTarget: NSObject {
-        private let handler: () -> Void
-        init(handler: @escaping () -> Void) { self.handler = handler }
-        @objc func fire() { handler() }
+    private func activateWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.canBecomeMain {
+            window.makeKeyAndOrderFront(nil)
+            break
+        }
     }
+}
 
-    private final class MenuDelegate: NSObject, NSMenuDelegate {
-        var onOpen: (() -> Void)?
-        func menuNeedsUpdate(_ menu: NSMenu) { onOpen?() }
+/// A borderless panel that can still take the keyboard.
+///
+/// `.nonactivatingPanel` on its own gives you a surface that draws but never
+/// becomes key, so its buttons need two clicks and its fields never focus.
+/// Overriding `canBecomeKey` is the whole difference between a panel you can
+/// use and one you can only look at.
+private final class StatusBarPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+
+    /// Escape closes it, like every other summoned surface in the app.
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)
     }
 }
