@@ -53,12 +53,11 @@ enum AppearanceMode: String, CaseIterable, Identifiable, Hashable {
 /// Pushes the chosen appearance onto the application.
 ///
 /// Setting it on `NSApp` rather than on each window is what makes the whole
-/// thing work: every window, panel, menu, the notch surface and the status item
-/// inherit it, and — because the palette's colours are dynamic `NSColor`s —
-/// every token in the app re-resolves without a single view knowing a change
-/// happened. SwiftUI's `.preferredColorScheme` would only reach the view tree
-/// and would leave the window frame, the traffic lights and the notch panel
-/// wearing the system appearance.
+/// thing work: every window, panel, menu and the status item inherit it, and —
+/// because the palette's colours are dynamic `NSColor`s — every token in the
+/// app re-resolves without a single view knowing a change happened. SwiftUI's
+/// `.preferredColorScheme` would only reach the view tree and would leave the
+/// window frame and the traffic lights wearing the system appearance.
 @MainActor
 enum AppearanceApplier {
     static func apply(_ mode: AppearanceMode) {

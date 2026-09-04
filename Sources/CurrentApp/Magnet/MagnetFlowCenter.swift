@@ -4,8 +4,12 @@ import CurrentCore
 /// State machine for the signature interaction:
 /// magnet → resolving → file selection → downloading → completion.
 ///
-/// One stage machine drives every presentation surface (notch window,
-/// in-window card) so they can never disagree.
+/// It presents in one place: `MagnetFlowOverlayView`, above the library. There
+/// used to be a second presentation pinned to the camera housing, and this
+/// machine existed partly so the two could never disagree about which stage
+/// the flow was in. The notch panel is gone — everything that asks the user a
+/// question now asks it in the window, where the answer is next to the library
+/// it changes.
 @MainActor
 final class MagnetFlowCenter: ObservableObject {
 
@@ -20,19 +24,8 @@ final class MagnetFlowCenter: ObservableObject {
     }
 
     @Published var stage: Stage = .idle
-    /// True while a drag session hovers the notch target.
-    @Published var isDropTarget = false
-    /// True when the pointer rests on the surface (notch mode only).
-    @Published var isHovered = false
-    /// Where the flow is being presented.
-    var usesNotchSurface: Bool { notchController.isAvailable }
 
-    private let notchController: NotchWindowController
     private var selectingID: TorrentID?
-
-    init(notchController: NotchWindowController) {
-        self.notchController = notchController
-    }
 
     // MARK: - Transitions
 
@@ -71,7 +64,6 @@ final class MagnetFlowCenter: ObservableObject {
     func dismiss() {
         stage = .idle
         selectingID = nil
-        isDropTarget = false
     }
 
     func resolveFailed(message: String) {

@@ -344,9 +344,9 @@ final class LibraryStore: ObservableObject {
         )
         // Adding a torrent that is already here must not list it twice. The
         // engine returns the same id for a duplicate add, so without this the
-        // id appears twice in `orderedIDs` — which crashed the notch's mirror
-        // (it builds a dictionary keyed by id) and quietly breaks SwiftUI's
-        // ForEach identity, since that requires ids to be unique.
+        // id appears twice in `orderedIDs` — which crashed anything building a
+        // dictionary keyed by id, and quietly breaks SwiftUI's ForEach
+        // identity, since that requires ids to be unique.
         if !orderedIDs.contains(id) {
             orderedIDs.insert(id, at: 0)
         }
