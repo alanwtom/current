@@ -41,12 +41,19 @@ public actor LibtorrentEngine: TorrentEngine {
         var connectedSeeds: Int32
         var connectedPeers: Int32
         var knownSeeds: Int32
+        /// -1 from the shim when no tracker has reported; kept as -1 here and
+        /// turned into nil at the boundary below, so "unknown" survives the
+        /// trip instead of becoming a zero.
+        var swarmSeeds: Int32
+        var swarmPeers: Int32
         var seedSeconds: UInt64
         var activeSeconds: UInt64
         var hasMetadata: Bool
     }
 
     public init() {
+        Self.useBundledCertificates()
+
         let (stream, continuation) = AsyncStream.makeStream(
             of: EngineEvent.self,
             bufferingPolicy: .bufferingNewest(32)
@@ -85,6 +92,31 @@ public actor LibtorrentEngine: TorrentEngine {
     /// Beside the library database rather than in a cache directory: a cold DHT
     /// is the difference between a magnet resolving in seconds and appearing to
     /// do nothing, so this is worth keeping rather than something the system
+    /// Points OpenSSL at the certificate bundle shipped inside the app.
+    ///
+    /// The copy of OpenSSL travelling in `Contents/Frameworks` was built by
+    /// Homebrew, and Homebrew compiles the location of the trust store *into*
+    /// the library — `/opt/homebrew/etc/openssl@3`. That path exists on the
+    /// machine that built the app and on no user's Mac, so without this the
+    /// library comes up with an empty set of trusted roots.
+    ///
+    /// The symptom is nasty precisely because it isn't a crash: most trackers
+    /// are HTTPS and libtorrent verifies them, so every announce to one fails
+    /// certificate validation and magnets resolve only through the DHT, slowly
+    /// or not at all. It looks like a flaky network rather than a broken build.
+    ///
+    /// `SSL_CERT_FILE` is OpenSSL's own override and is read when the default
+    /// trust store is first loaded, so setting it before the session exists is
+    /// early enough. Outside a bundle — `swift run`, tests — there is nothing
+    /// to point at and the Homebrew path is present anyway, so this does
+    /// nothing.
+    private static func useBundledCertificates() {
+        guard let bundled = Bundle.main.url(forResource: "cacert", withExtension: "pem"),
+              FileManager.default.fileExists(atPath: bundled.path)
+        else { return }
+        setenv("SSL_CERT_FILE", bundled.path, 1)
+    }
+
     /// may evict. A nil-safe empty string disables persistence in the shim,
     /// which is what happens if the directory can't be created.
     private static func dhtStatePath() -> String {
@@ -138,6 +170,8 @@ public actor LibtorrentEngine: TorrentEngine {
                     connectedSeeds: row.connected_seeds,
                     connectedPeers: row.connected_peers,
                     knownSeeds: row.known_seeds,
+                    swarmSeeds: row.swarm_seeds,
+                    swarmPeers: row.swarm_peers,
                     seedSeconds: row.seed_seconds,
                     activeSeconds: row.active_seconds,
                     hasMetadata: row.has_metadata != 0
@@ -236,7 +270,9 @@ public actor LibtorrentEngine: TorrentEngine {
                     swarm: SwarmSummary(
                         connectedSeeds: Int(row.connectedSeeds),
                         connectedPeers: Int(row.connectedPeers),
-                        knownSeeds: Int(row.knownSeeds)
+                        knownSeeds: Int(row.knownSeeds),
+                        swarmSeeds: row.swarmSeeds < 0 ? nil : Int(row.swarmSeeds),
+                        swarmPeers: row.swarmPeers < 0 ? nil : Int(row.swarmPeers)
                     ),
                     addedAt: addedDates[id] ?? Date(),
                     activeSeedSeconds: TimeInterval(row.seedSeconds),
