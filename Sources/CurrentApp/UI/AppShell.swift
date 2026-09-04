@@ -124,11 +124,13 @@ struct AppShell: View {
         // and the bar sits underneath it, leaving the buttons stranded in an
         // empty band of their own.
         .ignoresSafeArea(.container, edges: .top)
+        // Where a clicked magnet link reports in, and where it asks which files
+        // to take. It used to be conditional — the notch panel had it on Macs
+        // with a camera housing — so this same card was only ever seen by some
+        // people, on some machines. It is now the only presentation.
         .overlay(alignment: .top) {
-            if !flow.usesNotchSurface {
-                MagnetFlowOverlayView()
-                    .padding(.top, Chrome.barHeight + Space.m)
-            }
+            MagnetFlowOverlayView()
+                .padding(.top, Chrome.barHeight + Space.m)
         }
         // Every covering surface below is wrapped in a `ZStack` carrying
         // `Motion.pop(presenting:)`. That wrapper is what makes them bubble:

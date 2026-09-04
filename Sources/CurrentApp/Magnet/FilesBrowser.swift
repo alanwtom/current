@@ -451,7 +451,7 @@ private struct NodeRow: View {
 
 // MARK: - Magnet file selection sheet
 
-/// Full file picker opened from the notch card or the in-window overlay.
+/// Full file picker, opened from "Choose files…" on the magnet flow card.
 ///
 /// Presented by `modalSurface` rather than `.sheet`, so it takes a `close`
 /// closure — `\.dismiss` does nothing outside a real presentation — and draws no

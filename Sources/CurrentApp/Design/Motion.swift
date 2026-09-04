@@ -1,5 +1,4 @@
 import SwiftUI
-import QuartzCore
 
 /// Central motion tokens. Every animation in the app references these so timing
 /// stays coherent and audits stay possible.
@@ -56,10 +55,10 @@ enum Motion {
     //
     // The one entrance every modal surface in the app shares: the add-magnet
     // card, the file picker, the confirm dialogs, settings, the command palette
-    // and the notch panel. They used to arrive four different ways — a system
-    // sheet dropping out of the title bar, a couple of hand-rolled fades, and
-    // one surface that deliberately didn't animate at all — so opening two
-    // things in a row felt like using two applications.
+    // and the magnet flow's cards. They used to arrive four different ways — a
+    // system sheet dropping out of the title bar, a couple of hand-rolled
+    // fades, and one surface that deliberately didn't animate at all — so
+    // opening two things in a row felt like using two applications.
     //
     // It bubbles: starts small, slightly soft, and springs past its final size
     // by a few percent before settling. This is the third and last place in the
@@ -100,18 +99,6 @@ enum Motion {
     /// off the flag being animated rather than from two separate animations.
     static func pop(presenting: Bool, reduceMotion: Bool = false) -> Animation {
         presenting ? Self.pop(reduceMotion: reduceMotion) : Self.popExit(reduceMotion: reduceMotion)
-    }
-
-    /// The bubble, for the one surface that can't use a SwiftUI spring: the
-    /// notch panel, whose size is an `NSWindow` frame animated through
-    /// `NSAnimationContext`.
-    ///
-    /// A cubic Bézier can overshoot if a control point sits above 1, which is
-    /// how this fakes the spring's settle. It is an approximation and it only
-    /// has to match closely enough that the panel and the surfaces inside the
-    /// window feel like the same app.
-    static var popTiming: CAMediaTimingFunction {
-        CAMediaTimingFunction(controlPoints: 0.2, 1.28, 0.36, 1)
     }
 
     // MARK: - Micro-interaction constants

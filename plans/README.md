@@ -7,6 +7,12 @@ target values follow the audit playbook at
 Two of these are correctness bugs rather than taste calls — they are here
 because they are the reason existing animation work is never seen.
 
+**Historical record, kept as written.** Plan 002's subject — the notch panel —
+has since been removed from the app, so `Notch/NotchWindowController.swift`
+doesn't exist any more. The reasoning about non-blocking, interruptible frame
+animation still applies to anything that animates an `NSWindow` frame; nothing
+currently does.
+
 ## Plans
 
 | # | Title | Severity | Files | Status |

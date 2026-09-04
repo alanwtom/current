@@ -26,8 +26,7 @@ import CurrentCore
 @MainActor
 final class StatusItemController {
 
-    /// Matches the notch's throttle. Twice a second is as often as a
-    /// glanceable readout is worth redrawing.
+    /// Twice a second is as often as a glanceable readout is worth redrawing.
     private static let tick: TimeInterval = 0.5
 
     /// How long rates must stay quiet before the readout drops back to the bare
@@ -87,10 +86,9 @@ final class StatusItemController {
 
     // MARK: - Readout
 
-    /// This is the app's ambient presence. The notch deliberately shows nothing
-    /// when it isn't hovered — it collapses into the camera housing — so this
-    /// is where "something is happening" has to be legible, and it works on
-    /// Macs with no notch at all.
+    /// This is the app's ambient presence with the window closed — the one
+    /// place "something is happening" has to be legible without opening
+    /// anything, on every Mac.
     private func refreshTitle() {
         guard let library, let button = item.button else { return }
         let snapshots = library.orderedIDs.compactMap { library.snapshot(for: $0) }

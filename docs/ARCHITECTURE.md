@@ -12,7 +12,7 @@ presentation layer that never talks to the engine directly.
 │  Design/ — the design system every surface draws from    │
 │  AppShell · ChromeBar · SidebarView · LibraryList        │
 │  InspectorPanel · SettingsSurface · CommandPalette       │
-│  NotchWindowController · MagnetFlow surfaces · Toasts    │
+│  MagnetFlow surfaces · Toasts                            │
 └──────────────┬─────────────────────────────┬─────────────┘
                │                             │
         LibraryStore (MainActor)      MagnetFlowCenter
@@ -94,26 +94,21 @@ layout-churn section of `AGENTS.md`.
 ### The signature interaction
 
 `MagnetFlowCenter` is a five-state machine
-(`resolving → selecting → starting → completed → idle`). One state machine
-drives **both** presentations — the notch panel and the in-window fallback —
-so they can never disagree. On metadata arrival the torrent is paused, all
-priorities default to selected; confirming applies priorities and resumes;
-cancelling removes quietly.
+(`resolving → selecting → starting → completed → idle`). It presents in exactly
+one place: `MagnetFlowOverlayView`, a card at the top of the library. On
+metadata arrival the torrent is paused, all priorities default to selected;
+confirming applies priorities and resumes; cancelling removes quietly.
 
-### Notch window
-
-`NotchWindowController` manages one borderless non-activating panel pinned to
-the camera housing (geometry derived from
-`auxiliaryTopLeftArea`/`auxiliaryTopRightArea`). Frame changes animate with an
-ease-out under 300 ms; Reduce Motion switches to instant frames. When idle the
-panel shrinks to exactly the notch rectangle and draws nothing. No notch → no
-panel; the flow presents in-window instead.
+There used to be a second presentation — a borderless panel pinned to the
+camera housing, with the in-window card as its fallback on Macs with no notch —
+and the state machine existed partly to keep the two in agreement. The panel is
+gone. Anything that asks the user a question asks it in the window, where the
+answer can be reached by keyboard and sits next to the library it changes.
 
 ## Performance notes
 
 - Engine batches arrive at ~1 Hz and are coalesced; per-row views depend only
   on their own snapshot.
-- The notch controller throttles library observation to 2 Hz.
 - All motion uses springs (interruptible by construction) or short ease-outs;
   keyboard-initiated surfaces (command palette) do not animate at all.
 - Numbers that change continuously render with monospaced digits everywhere.

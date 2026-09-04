@@ -33,17 +33,6 @@ struct AppearancePane: View {
                     .foregroundStyle(Theme.textSecondary)
                     .animation(Motion.adaptive(Motion.quick, reduceMotion: reduceMotion), value: settings.appearance)
             }
-
-            SettingsGroup(
-                title: "Menu bar",
-                footer: "The notch panel shows a magnet's progress where your eyes already are. On a Mac without a notch it presents in the window instead."
-            ) {
-                ToggleRow(
-                    title: "Use the notch for magnet links",
-                    detail: "Requires a Mac with a camera housing.",
-                    isOn: $settings.isNotchEnabled
-                )
-            }
         }
     }
 

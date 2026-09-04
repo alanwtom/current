@@ -53,8 +53,8 @@ final class LibraryStoreSelectionTests: XCTestCase {
     /// Regression for a crash found by running the real libtorrent engine and
     /// handing it a torrent twice: the engine returns the same id, and
     /// `registerAdded` used to insert it again. A duplicated id then trapped
-    /// the notch's id-keyed mirror, and duplicate ids also break SwiftUI's
-    /// ForEach identity, which requires them to be unique.
+    /// anything building a dictionary keyed by id, and duplicate ids also break
+    /// SwiftUI's ForEach identity, which requires them to be unique.
     /// Regression for the bug that made every added torrent appear twice.
     ///
     /// `registerAdded` puts the id in the list but cannot produce a snapshot —
