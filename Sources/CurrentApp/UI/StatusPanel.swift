@@ -18,13 +18,29 @@ enum StatusPanelMetrics {
     static let maxRows = 5
     /// Gap between the menu bar and the top of the panel.
     static let menuBarGap: CGFloat = 6
-    /// Transparent breathing room inside the window, around the card.
-    ///
-    /// A window clips its own content, so a shadow drawn at the card's edge is
-    /// a shadow drawn at the window's edge and gets cut in half. The margin is
-    /// what the shadow falls into. `StatusItemController` subtracts it when
-    /// placing the window, so the card still lands where the maths says.
-    static let shadowMargin: CGFloat = 22
+    // MARK: Shadow room
+    //
+    // A window clips its own content, so a shadow drawn at the card's edge is a
+    // shadow drawn at the window's edge. These margins are the transparent room
+    // it falls into, and they have to be **larger than the shadow actually
+    // reaches** — a blur of radius r spreads about 2r, plus its offset. Get
+    // this wrong and the shadow doesn't look soft, it looks like a dark
+    // rectangle with the card sitting in it, because that is exactly what a
+    // clipped Gaussian is. That was the first version: 22pt of room for a
+    // shadow that needed seventy.
+    //
+    // They're asymmetric because the shadow is. It falls downward, and the top
+    // edge is tucked under the menu bar where there is nothing to catch it —
+    // spending room up there would only push the window off the top of the
+    // screen. `StatusItemController` accounts for all three when placing it.
+
+    /// Blur radius. `2 × this + shadowDrop` is what it costs in room.
+    static let shadowBlur: CGFloat = 22
+    /// How far the shadow falls below the card.
+    static let shadowDrop: CGFloat = 10
+    static let shadowRoomTop: CGFloat = 22
+    static let shadowRoomSide: CGFloat = 48
+    static let shadowRoomBottom: CGFloat = 58
 }
 
 // MARK: - Model
@@ -194,7 +210,12 @@ struct StatusPanelView: View {
 
     var body: some View {
         card
-            .padding(StatusPanelMetrics.shadowMargin)
+            .padding(EdgeInsets(
+                top: StatusPanelMetrics.shadowRoomTop,
+                leading: StatusPanelMetrics.shadowRoomSide,
+                bottom: StatusPanelMetrics.shadowRoomBottom,
+                trailing: StatusPanelMetrics.shadowRoomSide
+            ))
             // The margin is part of the window, so it swallows clicks that look
             // like they landed outside the panel. Giving it the dismiss action
             // makes it behave the way it looks.
@@ -227,11 +248,18 @@ struct StatusPanelView: View {
                 .frame(height: Size.hairline)
                 .padding(.horizontal, Radius.xl)
         }
-        // Wide and soft, thrown well below the panel. This is what separates a
+        // Wide and soft, thrown below the panel. This is what separates a
         // surface floating over another app from one pasted onto it, and it is
-        // the reason the window carries a transparent margin.
-        .shadow(color: Theme.shadowDeep, radius: 30, y: 12)
-        .shadow(color: Theme.shadow, radius: 4, y: 2)
+        // the reason the window carries transparent margins. Change either
+        // number and the margins above have to grow to match.
+        .shadow(
+            color: Theme.shadowDeep,
+            radius: StatusPanelMetrics.shadowBlur,
+            y: StatusPanelMetrics.shadowDrop
+        )
+        // A second, tight one to seat the edge. Small enough that the margins
+        // already cover it several times over.
+        .shadow(color: Theme.shadow, radius: 3, y: 1)
         // Bubbles in like every other summoned surface. It can't use
         // `.popTransition()` — that needs a presenting container, and this
         // view's container is an `NSPanel` that AppKit has already put on
