@@ -175,7 +175,7 @@ struct GeneralPane: View {
 
     var body: some View {
         SettingsPane {
-            SettingsGroup(title: "Downloads") {
+            SettingsGroup(title: "Downloads", footer: askFooter) {
                 SettingRow(
                     title: "Save to",
                     detail: settings.downloadsFolder.path
@@ -183,6 +183,11 @@ struct GeneralPane: View {
                     Button("Choose…") { chooseFolder() }
                         .currentButton(.secondary)
                 }
+                Hairline()
+                ToggleRow(
+                    title: "Ask where to save each download",
+                    isOn: $settings.asksForDownloadLocation
+                )
             }
 
             SettingsGroup(
@@ -203,6 +208,15 @@ struct GeneralPane: View {
                 }
             }
         }
+    }
+
+    /// Says what the switch above actually does in each position, because "ask
+    /// where to save" reads the same whether it's on or off until you know
+    /// which folder it falls back to.
+    private var askFooter: String {
+        settings.asksForDownloadLocation
+            ? "Every download offers a folder before it starts, beginning with the one above. Ticking \"Remember this location\" there turns this off."
+            : "Downloads go straight to the folder above without asking."
     }
 
     private func chooseFolder() {

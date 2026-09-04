@@ -25,11 +25,27 @@ final class MagnetFlowCenter: ObservableObject {
 
     @Published var stage: Stage = .idle
 
+    /// The folder the user picked for *this* download, if they picked one.
+    ///
+    /// Nil means "wherever the settings say", which is also where the torrent
+    /// was added, so nil is the case that needs no work at all. It has to be
+    /// per-flow rather than a setting, because choosing a folder once for one
+    /// film is not the same as changing where everything goes — that second
+    /// thing is what the Remember tick is for.
+    @Published var chosenDestination: URL?
+
+    /// Whether this download's folder should become the default and end the
+    /// question. Reset with every new magnet: a decision to stop being asked is
+    /// deliberate, and shouldn't carry over from the last thing you added.
+    @Published var remembersDestination = false
+
     private var selectingID: TorrentID?
 
     // MARK: - Transitions
 
     func beginResolving(nameHint: String?) {
+        chosenDestination = nil
+        remembersDestination = false
         stage = .resolving(nameHint: nameHint, startedAt: Date())
     }
 
@@ -64,6 +80,8 @@ final class MagnetFlowCenter: ObservableObject {
     func dismiss() {
         stage = .idle
         selectingID = nil
+        chosenDestination = nil
+        remembersDestination = false
     }
 
     func resolveFailed(message: String) {

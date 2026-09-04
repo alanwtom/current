@@ -1,5 +1,38 @@
 import Foundation
 
+/// Paths as people read them, not as the file system stores them.
+public enum PathFormatting {
+
+    /// `/Users/alan/Downloads/Current` → `~/Downloads/Current`.
+    ///
+    /// The home prefix is dead weight in every path a download can plausibly
+    /// have: it is the same for all of them, it is the widest part of the
+    /// string, and dropping it is what lets a folder fit on one line beside a
+    /// button. Paths outside the home folder — an external drive, say — are
+    /// left exactly as they are, because there the leading part is the thing
+    /// that tells you where you're writing.
+    ///
+    /// Takes the home directory as an argument rather than reading it, so this
+    /// stays a pure function and can be tested without depending on whose
+    /// machine it runs on.
+    public static func abbreviatingHome(_ path: String, home: String) -> String {
+        // A trailing slash on either side would otherwise turn
+        // `/Users/alan` + `/Users/alan/` into a non-match, and both spellings
+        // reach here from `URL.path` depending on how the URL was built.
+        let home = home.hasSuffix("/") ? String(home.dropLast()) : home
+        let path = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+        guard !home.isEmpty else { return path }
+        if path == home { return "~" }
+        guard path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
+    /// The same thing for a `URL`, using the real home directory.
+    public static func friendly(_ url: URL) -> String {
+        abbreviatingHome(url.path, home: FileManager.default.homeDirectoryForCurrentUser.path)
+    }
+}
+
 public enum ByteFormatting {
     private static let units: [String] = ["B", "KB", "MB", "GB", "TB", "PB"]
 

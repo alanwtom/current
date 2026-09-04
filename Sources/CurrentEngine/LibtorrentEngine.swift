@@ -335,6 +335,24 @@ public actor LibtorrentEngine: TorrentEngine {
         logEngineFailure(result, "remove", id)
     }
 
+    public func setSaveDirectory(_ id: TorrentID, _ directory: URL) {
+        guard let session else { return }
+        // The folder has to exist before libtorrent is pointed at it — the user
+        // may have made a new one in the chooser, and `move_storage` on a
+        // missing path fails silently from our side.
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let result = id.raw.withCString { idC in
+            directory.path.withCString { pathC in
+                lt_set_save_path(session, idC, pathC)
+            }
+        }
+        logEngineFailure(result, "setSaveDirectory", id)
+        guard result == 0 else { return }
+        // Snapshots read their directory from this map, not from libtorrent, so
+        // it has to move too or the app keeps revealing the old folder in Finder.
+        saveDirectories[id] = directory
+    }
+
     public func forceRecheck(_ id: TorrentID) {
         guard let session else { return }
         let result = id.raw.withCString { lt_force_recheck(session, $0) }

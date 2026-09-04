@@ -269,6 +269,33 @@ The at-a-glance-while-the-window-is-closed job belongs to the menu bar item
 (`StatusItemController`), which works on every Mac. Everything that needs an
 answer belongs in the window.
 
+## Where a download goes
+
+The save folder is chosen on the confirm card, not at add time, and that
+ordering is forced: a magnet is an unresolved hash when it arrives, so there is
+no name and no size to decide against yet. The torrent is added to the default
+folder, resolves, pauses for selection, and only then does
+`applyMagnetSelection` move it — `engine.setSaveDirectory` before `resume`,
+while nothing has touched the disk.
+
+- **That needs `lt_set_save_path` in the shim** (`move_storage` with
+  `dont_replace`). It is safe here precisely because the torrent hasn't written
+  anything; on a torrent with data it would really move files, and the app has
+  no path that does.
+- **Both the engine and the record have to learn the new folder.** The engine's
+  `saveDirectories` map is what snapshots report, so Finder reveals the right
+  place; `LibraryStore.updateSaveDirectory` is what survives a relaunch, since
+  `restoreResumeData` re-adds from the record. Miss the second and the folder
+  you picked lasts until you quit.
+- **"Remember this location" sets the default *and* turns the question off**
+  (`settings.asksForDownloadLocation`). Settings is the only way back on, which
+  is why that switch has to stay next to the folder it falls back to.
+- `.torrent` files go through the same card, so they get the same question —
+  but only when the flow is idle. Opening ten of them at once asks about the
+  first and sends the rest to the default, rather than queueing ten questions.
+- The inspector's **Location** group already existed and now earns its keep:
+  before this it said the same thing on every torrent in the library.
+
 ## Magnet links come from outside the app
 
 Clicking a magnet link in a browser is the main way anyone adds a torrent, and

@@ -10,6 +10,7 @@ final class SettingsStore: ObservableObject {
 
     enum Keys {
         static let downloadsFolder = "downloads.folder"
+        static let askForLocation = "downloads.askForLocation"
         static let seedPolicy = "seed.policy"
         /// Holds a byte count, despite the name. The key string is kept as-is so
         /// existing installs don't lose their budget; only the constant is
@@ -47,6 +48,15 @@ final class SettingsStore: ObservableObject {
 
     @Published var downloadsFolder: URL {
         didSet { persist(downloadsFolder.absoluteString, forKey: Keys.downloadsFolder) }
+    }
+    /// Whether each download gets to choose its own folder.
+    ///
+    /// On, the confirm card carries a destination you can change. Ticking
+    /// "Remember this location" there turns this off and makes that folder the
+    /// default — which is the only way it ever gets switched off from inside the
+    /// flow, so this switch is how you ask for the question back.
+    @Published var asksForDownloadLocation: Bool {
+        didSet { persist(asksForDownloadLocation, forKey: Keys.askForLocation) }
     }
     @Published var defaultSeedPolicy: SeedPolicy {
         didSet { persist(policyKey(defaultSeedPolicy), forKey: Keys.seedPolicy) }
@@ -175,6 +185,10 @@ final class SettingsStore: ObservableObject {
         self.downloadsFolder =
             value(Keys.downloadsFolder).flatMap(URL.init(string:)) ?? documents.appendingPathComponent("Current")
 
+        // On by default: a download that silently lands somewhere you didn't
+        // pick is the thing this setting exists to stop. One tick of "Remember
+        // this location" turns it off for good.
+        self.asksForDownloadLocation = value(Keys.askForLocation).map({ $0 == "1" }) ?? true
         self.defaultSeedPolicy = Self.policy(fromKey: value(Keys.seedPolicy))
         // Read back as bytes, because bytes are what `didSet` writes.
         //
