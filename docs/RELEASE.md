@@ -13,20 +13,18 @@ This is the runbook and the state of it. Tick things off as they land.
 
 ### 1. How old a Mac should this run on?
 
-**The app declares macOS 26 and only needs macOS 14.** That was measured, not
-guessed: it compiles clean targeting 14, and fails on 13 with 155 errors from
-SwiftUI APIs that arrived in 14 (`onChange(of:initial:)`, `focusEffectDisabled`,
-`TransitionPhase`).
+**Decided: macOS 26, for now.**
 
-macOS 26 shipped this year. Requiring it means most Macs in the world cannot run
-this, for no benefit anyone can point at. Dropping the floor to 14 is a one-line
-change in `Package.swift` and one in `Scripts/Info.plist`.
+Worth writing down what that costs, because the option stays open. The app
+*builds* clean targeting macOS 14 — measured, not guessed: zero errors at 14,
+and 155 at 13 from SwiftUI APIs that arrived in 14 (`onChange(of:initial:)`,
+`focusEffectDisabled`, `TransitionPhase`). So nothing in the code requires 26.
 
-The cost is honest: **compiling for 14 is not the same as running on 14.** It
-would need testing on a real Sonoma machine, and the window chrome and the menu
-bar panel are the two places most likely to behave differently.
-
-- [ ] Decide the floor. Recommendation: **macOS 14**, with a Sonoma test pass.
+macOS 26 shipped this year, so the floor is the audience limit: early adopters
+only. That is a defensible place to start a v1 — fewer OS versions to test
+against, and the newest platform behaviour to rely on — and it is reversible
+later at the cost of a real test pass on the older OS. Revisit when there is a
+reason to want the reach.
 
 ### 2. Apple Silicon only?
 
