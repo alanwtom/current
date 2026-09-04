@@ -8,16 +8,23 @@ enum StatusPanelMetrics {
     /// Narrow on purpose. This hangs off the menu bar over whatever app you
     /// were using, so it has to read as a panel belonging to the menu bar
     /// rather than a second window that turned up.
-    static let width: CGFloat = 324
+    static let width: CGFloat = 340
     /// A row's fixed height. Fixed for the usual reason — see the layout-churn
     /// section of AGENTS.md — but also because the panel's window frame is set
     /// once when it opens, and a row that grew would be clipped by it.
-    static let rowHeight: CGFloat = 54
+    static let rowHeight: CGFloat = 58
     /// The most transfers listed before the rest become a "+N more" line. Five
     /// is where the panel stops being glanceable and starts being the library.
     static let maxRows = 5
     /// Gap between the menu bar and the top of the panel.
     static let menuBarGap: CGFloat = 6
+    /// Transparent breathing room inside the window, around the card.
+    ///
+    /// A window clips its own content, so a shadow drawn at the card's edge is
+    /// a shadow drawn at the window's edge and gets cut in half. The margin is
+    /// what the shadow falls into. `StatusItemController` subtracts it when
+    /// placing the window, so the card still lands where the maths says.
+    static let shadowMargin: CGFloat = 22
 }
 
 // MARK: - Model
@@ -67,6 +74,10 @@ final class StatusPanelModel: ObservableObject {
     @Published private(set) var totalCount = 0
     /// True when there is something running that Pause All would act on.
     @Published private(set) var hasActive = false
+    /// The colour the menu bar icon is currently wearing, so the panel's own
+    /// mark can wear it too. Derived from the same `LibraryActivity` the icon
+    /// uses, rather than recomputed, so the two can't disagree.
+    @Published private(set) var dominantTint: Color = Theme.textTertiary
 
     private var frozenIDs: [TorrentID]?
     private weak var library: LibraryStore?
@@ -106,6 +117,14 @@ final class StatusPanelModel: ObservableObject {
             return false
         }.count
         hasActive = snapshots.contains { $0.state.isActive }
+
+        switch LibraryActivity.summarize(snapshots)?.dominant {
+        case .downloading: dominantTint = Theme.downloading
+        case .seeding: dominantTint = Theme.seeding
+        case .complete: dominantTint = Theme.complete
+        case .failed: dominantTint = Theme.failure
+        case nil: dominantTint = Theme.textTertiary
+        }
 
         let byID = Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let ids = frozenIDs ?? Array(Self.interesting(in: library).prefix(StatusPanelMetrics.maxRows)).map(\.id)
@@ -169,26 +188,50 @@ struct StatusPanelView: View {
     var onOpenApp: () -> Void
     var onSettings: () -> Void
     var onQuit: () -> Void
+    var onDismiss: () -> Void
 
     @State private var shown = false
 
     var body: some View {
+        card
+            .padding(StatusPanelMetrics.shadowMargin)
+            // The margin is part of the window, so it swallows clicks that look
+            // like they landed outside the panel. Giving it the dismiss action
+            // makes it behave the way it looks.
+            .background(
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { onDismiss() }
+            )
+    }
+
+    private var card: some View {
         VStack(spacing: 0) {
             header
+            Hairline()
             summaryCard
             transfers
             footer
         }
         .frame(width: StatusPanelMetrics.width)
-        .background(
-            RoundedRectangle(cornerRadius: Radius.xl, style: .continuous)
-                .fill(Theme.overlay)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.xl, style: .continuous)
-                .strokeBorder(Theme.stroke, lineWidth: Size.hairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Radius.xl, style: .continuous))
+        .background(surface)
+        .clipShape(shape)
+        // Border and highlight go *outside* the clip, or the shape clips its own
+        // edge to half a pixel and the whole thing loses its outline.
+        .overlay(shape.strokeBorder(Theme.stroke, lineWidth: Size.hairline))
+        .overlay(alignment: .top) {
+            // The specular line, stopped short of the curve — real light doesn't
+            // wrap a corner. Same trick every raised surface in the app uses.
+            Rectangle()
+                .fill(Theme.strokeHighlight)
+                .frame(height: Size.hairline)
+                .padding(.horizontal, Radius.xl)
+        }
+        // Wide and soft, thrown well below the panel. This is what separates a
+        // surface floating over another app from one pasted onto it, and it is
+        // the reason the window carries a transparent margin.
+        .shadow(color: Theme.shadowDeep, radius: 30, y: 12)
+        .shadow(color: Theme.shadow, radius: 4, y: 2)
         // Bubbles in like every other summoned surface. It can't use
         // `.popTransition()` — that needs a presenting container, and this
         // view's container is an `NSPanel` that AppKit has already put on
@@ -200,11 +243,33 @@ struct StatusPanelView: View {
         }
     }
 
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Radius.xl, style: .continuous)
+    }
+
+    /// Base fill plus a wash that fades out near the top. Flat fills are the
+    /// difference between a panel that looks drawn and one that looks lit.
+    private var surface: some View {
+        shape
+            .fill(Theme.overlay)
+            .overlay(
+                LinearGradient(
+                    colors: [Theme.sheen, .clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+                .clipShape(shape)
+            )
+    }
+
     // MARK: Header
 
     private var header: some View {
         HStack(spacing: Space.m) {
-            AppMark(size: 15, tint: Theme.accent)
+            // Wears the same state colour as the menu bar icon it hangs from,
+            // so the panel reads as that icon opening rather than a separate
+            // thing that happens to be nearby.
+            AppMark(size: 15, tint: model.dominantTint)
             Text("Current")
                 .typeStyle(Typo.heading)
                 .foregroundStyle(Theme.text)
@@ -212,21 +277,21 @@ struct StatusPanelView: View {
             Button(action: onAdd) {
                 Image(systemName: "plus")
             }
-            .iconButton(size: 24, glyph: 11)
+            .iconButton(size: 26, glyph: 12)
             .help("Add a magnet link")
             Button(action: onSettings) {
                 Image(systemName: "gearshape")
             }
-            .iconButton(size: 24, glyph: 11)
+            .iconButton(size: 26, glyph: 12)
             .help("Settings")
             Button(action: onOpenApp) {
                 Image(systemName: "macwindow")
             }
-            .iconButton(size: 24, glyph: 11)
+            .iconButton(size: 26, glyph: 12)
             .help("Open the window")
         }
         .padding(.horizontal, Space.xl)
-        .frame(height: 46)
+        .frame(height: 52)
     }
 
     // MARK: Summary
@@ -236,10 +301,17 @@ struct StatusPanelView: View {
     /// most opens are actually checking.
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: Space.l) {
-            HStack(spacing: Space.xxl) {
+            HStack(spacing: 0) {
                 rate(symbol: "arrow.down", value: model.downloadRate)
+                    .frame(maxWidth: .infinity)
+                // A hairline between the two, short of full height. Two numbers
+                // side by side with only whitespace between them read as one
+                // phrase; a rule makes them two readings.
+                Rectangle()
+                    .fill(Theme.stroke)
+                    .frame(width: Size.hairline, height: 22)
                 rate(symbol: "arrow.up", value: model.uploadRate)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity)
             }
 
             HStack(spacing: Space.m) {
@@ -257,18 +329,19 @@ struct StatusPanelView: View {
             }
         }
         .padding(Space.l)
-        .background(
-            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
-                .fill(Theme.fillSubtle)
-        )
+        // A well, not a raised card. This sits *inside* the panel, and a second
+        // raised surface stacked on the first is how a panel starts looking
+        // like a pile of boxes.
+        .insetCard(radius: Radius.l, fill: Theme.well)
         .padding(.horizontal, Space.l)
-        .padding(.bottom, Space.l)
+        .padding(.top, Space.l)
+        .padding(.bottom, Space.m)
     }
 
     private func rate(symbol: String, value: Double) -> some View {
         HStack(spacing: Space.s) {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .bold))
                 // Direction is what this glyph says, and it says it in grey.
                 // Painting it accent would put a second colour beside a number
                 // for no extra meaning.
@@ -279,6 +352,7 @@ struct StatusPanelView: View {
                 .numericTransition()
                 .foregroundStyle(Theme.text)
         }
+        .padding(.horizontal, Space.m)
     }
 
     private var statusLine: String {
@@ -313,6 +387,7 @@ struct StatusPanelView: View {
                     .typeStyle(Typo.overline)
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.horizontal, Space.xl)
+                    .padding(.top, Space.s)
                     .padding(.bottom, Space.s)
 
                 ForEach(model.rows) { row in
@@ -347,15 +422,24 @@ struct StatusPanelView: View {
         VStack(spacing: 0) {
             Hairline()
             HStack(spacing: Space.m) {
-                Button("Open Current", action: onOpenApp)
-                    .currentButton(.ghost, scale: .small)
+                Button(action: onOpenApp) {
+                    HStack(spacing: Space.s) {
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Open Current")
+                    }
+                }
+                .currentButton(.ghost, scale: .small)
                 Spacer(minLength: Space.m)
                 Button("Quit", action: onQuit)
                     .currentButton(.ghost, scale: .small)
             }
             .padding(.horizontal, Space.l)
-            .frame(height: 40)
+            .frame(height: 46)
         }
+        // Sits a shade darker than the panel so the actions read as a base the
+        // content rests on rather than two more rows of it.
+        .background(Theme.fillSubtle)
     }
 }
 
@@ -380,37 +464,47 @@ private struct StatusPanelRow: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
 
-                ProgressTrack(fraction: row.progress, tint: row.tint, reduceMotion: reduceMotion)
-                    .frame(height: 3)
+                ProgressTrack(
+                    fraction: row.progress,
+                    tint: row.tint,
+                    reduceMotion: reduceMotion,
+                    track: Theme.trackRaised
+                )
+                .frame(height: 5)
 
                 // Grey, all of it. These are numbers, and numbers in this app
                 // are never coloured — the row already says what it is with a
-                // tinted bar.
-                Text(meta)
-                    .typeStyle(Typo.caption)
-                    .tabularNumerics()
-                    .numericTransition()
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
+                // tinted bar. The percentage sits one step up the grey ramp
+                // because it's the number you actually came to read.
+                HStack(spacing: Space.s) {
+                    Text(percentText)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(detailText)
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .typeStyle(Typo.caption)
+                .tabularNumerics()
+                .numericTransition()
+                .lineLimit(1)
             }
 
             Button(action: onTogglePause) {
                 Image(systemName: row.isPaused ? "play.fill" : "pause.fill")
             }
-            .iconButton(size: 24, glyph: 10)
+            .iconButton(size: 26, glyph: 11)
             .help(row.isPaused ? "Resume" : "Pause")
 
             Button(action: onReveal) {
                 Image(systemName: "folder")
             }
-            .iconButton(size: 24, glyph: 10)
+            .iconButton(size: 26, glyph: 11)
             .opacity(isHovering ? 1 : 0)
             .help("Reveal in Finder")
         }
-        .padding(.horizontal, Space.xl)
+        .padding(.horizontal, Space.l)
         .frame(height: StatusPanelMetrics.rowHeight)
         .background(
-            RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
                 .fill(isHovering ? Theme.fillSubtle : .clear)
                 .padding(.horizontal, Space.m)
         )
@@ -424,8 +518,12 @@ private struct StatusPanelRow: View {
         .accessibilityLabel(row.name)
     }
 
-    private var meta: String {
-        var parts: [String] = ["\(Int((row.progress * 100).rounded()))%"]
+    private var percentText: String {
+        "\(Int((row.progress * 100).rounded()))%"
+    }
+
+    private var detailText: String {
+        var parts: [String] = []
         if row.isPaused {
             parts.append("Paused")
         } else if row.isSeeding {
@@ -435,7 +533,7 @@ private struct StatusPanelRow: View {
             if row.downloadRate > 1 { parts.append(ByteFormatting.rate(row.downloadRate)) }
             if let eta = row.etaSeconds { parts.append("\(ByteFormatting.eta(eta)) left") }
         }
-        return parts.joined(separator: " · ")
+        return parts.isEmpty ? "" : "· " + parts.joined(separator: " · ")
     }
 }
 

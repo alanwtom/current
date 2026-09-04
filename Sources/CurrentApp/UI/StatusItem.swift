@@ -201,8 +201,9 @@ final class StatusItemController {
         // Measured once, here. Letting the window track its content instead
         // would mean re-measuring on every engine tick, which is the exact
         // shape of the bug that has taken this app down twice.
+        let windowWidth = StatusPanelMetrics.width + StatusPanelMetrics.shadowMargin * 2
         hosting.setFrameSize(
-            NSSize(width: StatusPanelMetrics.width, height: hosting.fittingSize.height)
+            NSSize(width: windowWidth, height: hosting.fittingSize.height)
         )
         let size = hosting.frame.size
 
@@ -215,7 +216,10 @@ final class StatusItemController {
         panel.contentView = hosting
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // The card draws its own shadow into the window's transparent margin.
+        // AppKit's would sit on the window's square edge, so the two together
+        // gave a soft glow with a hard rectangle inside it.
+        panel.hasShadow = false
         panel.level = .statusBar
         panel.isMovable = false
         panel.hidesOnDeactivate = false
@@ -270,13 +274,19 @@ final class StatusItemController {
     /// from the other direction. The clamp is why centring is safe to ask for.
     private func origin(for size: NSSize, under button: NSStatusBarButton, in window: NSWindow) -> NSPoint {
         let buttonRect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        // The window is bigger than the card by the shadow margin on every
+        // side, so both axes cancel it out — otherwise the card would sit
+        // 22pt low and 22pt to the left of where the icon is.
+        let inset = StatusPanelMetrics.shadowMargin
         var x = buttonRect.midX - size.width / 2
-        let y = buttonRect.minY - size.height - StatusPanelMetrics.menuBarGap
+        let y = buttonRect.minY - size.height - StatusPanelMetrics.menuBarGap + inset
 
         if let screen = window.screen ?? NSScreen.main {
-            let margin: CGFloat = 8
-            let minX = screen.visibleFrame.minX + margin
-            let maxX = screen.visibleFrame.maxX - size.width - margin
+            // The card, not the window, is what has to stay on screen; the
+            // margin around it is empty and may hang off the edge.
+            let edge: CGFloat = 8
+            let minX = screen.visibleFrame.minX + edge - inset
+            let maxX = screen.visibleFrame.maxX - size.width - edge + inset
             x = min(max(x, minX), max(minX, maxX))
         }
         return NSPoint(x: x, y: y)
@@ -320,7 +330,8 @@ final class StatusItemController {
                 self?.activateWindow()
                 self?.app?.openSettings(tab: .general)
             },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            onDismiss: { [weak self] in self?.closePanel() }
         )
     }
 
