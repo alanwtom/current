@@ -26,15 +26,19 @@ public enum SeedPolicy: Hashable, Codable, Sendable {
     case archive
     /// Seed to the goal, then make the torrent eligible for cleanup.
     case temporary
-    /// User-defined goal.
-    case custom(SeedGoal)
+
+    // There was a `custom(SeedGoal)` case here, and nothing could ever select
+    // it: no picker offered it, and the only way to get one was to hand-edit
+    // the database. It was advertised in the README as a fifth policy for a
+    // year. `SeedGoal` stays — every policy still expresses itself as one —
+    // but the four named policies are now the whole set, which is what the app
+    // actually had.
 
     public var goal: SeedGoal {
         switch self {
         case .balanced, .helpful: return SeedGoal(targetRatio: 1.0, minimumSeedSeconds: 24 * 3600)
         case .archive: return SeedGoal(targetRatio: nil, minimumSeedSeconds: nil)
         case .temporary: return SeedGoal(targetRatio: 1.0, minimumSeedSeconds: nil)
-        case .custom(let goal): return goal
         }
     }
 
@@ -44,7 +48,6 @@ public enum SeedPolicy: Hashable, Codable, Sendable {
         case .helpful: return "Helpful"
         case .archive: return "Archive"
         case .temporary: return "Temporary"
-        case .custom: return "Custom"
         }
     }
 
@@ -58,14 +61,6 @@ public enum SeedPolicy: Hashable, Codable, Sendable {
             return "Keeps seeding indefinitely to preserve the swarm."
         case .temporary:
             return "Seeds until the goal is met, then becomes ready for cleanup."
-        case .custom(let goal):
-            var parts: [String] = []
-            if let r = goal.targetRatio { parts.append("a \(ByteFormatting.ratio(r)) ratio") }
-            if let t = goal.minimumSeedSeconds {
-                parts.append("\(ByteFormatting.duration(t)) of seed time")
-            }
-            if parts.isEmpty { return "Never stops automatically." }
-            return "Stops after " + parts.joined(separator: " and ") + "."
         }
     }
 
