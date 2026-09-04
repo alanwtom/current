@@ -39,8 +39,16 @@ final class CleanupCenter: ObservableObject {
     }
 
     /// Runs cleanup for the given candidates. Returns how much was reclaimed.
+    ///
+    /// `trigger` is written into every decision it records. Whether the app did
+    /// this on its own or was asked to is the first thing you want to know when
+    /// a download you were expecting to find is in the Trash, and once
+    /// automatic cleanup exists the log can't answer that without being told.
     @discardableResult
-    func performCleanup(_ candidates: [CleanupCandidate]) async -> Summary {
+    func performCleanup(
+        _ candidates: [CleanupCandidate],
+        trigger: String = "You asked for a cleanup"
+    ) async -> Summary {
         var reclaimed: Int64 = 0
         var cleaned = 0
 
@@ -61,6 +69,7 @@ final class CleanupCenter: ObservableObject {
                     torrentName: snapshot.name,
                     date: Date(),
                     reasons: [
+                        trigger,
                         "Moved to Trash — recoverable",
                         "Reclaimed \(ByteFormatting.bytes(candidate.reclaimableBytes))",
                     ]

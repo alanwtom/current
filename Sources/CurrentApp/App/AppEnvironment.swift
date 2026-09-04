@@ -72,6 +72,14 @@ final class AppEnvironment: ObservableObject {
         AppearanceApplier.apply(settings.appearance)
         let library = LibraryStore(engine: engine, database: database, persistsRecords: !simulate)
         self.library = library
+        // Makes the Seeding pane's default-policy picker mean something. Read
+        // through a closure rather than captured once, so changing it in
+        // Settings applies to the next torrent you add rather than the next
+        // time you launch.
+        let settingsStore = self.settings
+        library.defaultPolicyProvider = { [weak settingsStore] in
+            settingsStore?.defaultSeedPolicy ?? .defaultPolicy
+        }
         self.power = PowerMonitor()
 
         let cleanup = CleanupCenter(library: library, database: database)
@@ -85,7 +93,8 @@ final class AppEnvironment: ObservableObject {
             library: library,
             settings: settings,
             database: database,
-            power: power
+            power: power,
+            cleanup: cleanup
         )
 
         // Says so out loud when a magnet is abandoned. Two minutes after
@@ -114,6 +123,29 @@ final class AppEnvironment: ObservableObject {
                 actionTitle: "Try Again",
                 coalesceKey: "magnet.timeout",
                 action: { [weak self] in self?.beginAddMagnet() }
+            )
+        }
+
+        // Only fires when the app can't sort it out itself — see
+        // `enforceStorageBudget`. A toast as well as the notification, because
+        // the window may well be open and a banner you have to leave the app
+        // to see is a worse way to learn this.
+        automation.onStorageBudgetPressure = { [weak self] overBy in
+            guard let self else { return }
+            let message = "Using \(ByteFormatting.bytes(overBy)) more than your budget allows."
+            self.toasts.show(
+                .warning,
+                title: "Storage budget exceeded",
+                message: message,
+                actionTitle: "Review",
+                coalesceKey: "budget.pressure",
+                action: { [weak self] in self?.library.activeSection = .readyToClean }
+            )
+            guard self.settings.notifyOnBudgetPressure else { return }
+            self.postNotification(
+                identifier: "budget-pressure",
+                title: "Storage budget exceeded",
+                body: message
             )
         }
 
