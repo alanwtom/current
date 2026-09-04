@@ -173,10 +173,19 @@ showing state at a glance should not have to be *read*. The line to hold is
 colour as possible".
 
 **The exception is menus, and it is deliberate.** `Menu`, `.contextMenu` and the
-menu bar stay native. A menu has to be able to leave the window,
+app's menu bar menus stay native. A menu has to be able to leave the window,
 traverse by keyboard, and behave like every other menu on the machine; a
 hand-drawn one is strictly worse at all three. Native menus are also the one
 place `Divider()` and `.pickerStyle(.inline)` are still correct.
+
+**The status item's panel is not a menu, and that's why it's ours.**
+`StatusPanelView` is a real panel hanging under the menu bar icon: live
+progress bars, a per-transfer pause button, a rate readout. `NSMenu` cannot
+draw any of that — the version that tried was a column of disabled text items,
+one of which said "6 active", which is strictly less than the icon beside it
+already told you. The test for whether something may be hand-drawn here is not
+"does it hang off the menu bar" but "is it a list of commands". If it is, it's
+a menu and it stays native.
 
 ## Layout
 
@@ -266,8 +275,12 @@ It's gone, and adding it back means re-adding all of this:
   library's empty state said "drop a torrent here" and meant nothing.
 
 The at-a-glance-while-the-window-is-closed job belongs to the menu bar item
-(`StatusItemController`), which works on every Mac. Everything that needs an
-answer belongs in the window.
+(`StatusItemController`), which works on every Mac — and it now carries the
+quick controls too: rates, per-transfer progress, pause/resume, reveal. That is
+the *same* content the notch's hover card had, and it is fine here for the
+reason it wasn't there: the panel exists on every Mac, takes the keyboard, and
+is the only surface available when the window is closed. Everything that needs
+an *answer* still belongs in the window.
 
 ## Where a download goes
 
@@ -473,6 +486,21 @@ Rules that follow from this:
   highlight stayed on "All". It now takes `section` plus an `onSelect` closure
   and is `Equatable` on the section, which updates on real changes and on
   nothing else.
+- **A window that opens with live content measures itself once.** The menu bar
+  panel sets its frame from `fittingSize` at the moment it opens and never
+  again, and `StatusPanelModel` freezes *which* transfers it lists for as long
+  as it's on screen — only the numbers inside them move. Both halves are
+  needed. Which torrents count as "active" flickers constantly in normal
+  operation, so an unfrozen list would reshuffle and resize under a stationary
+  cursor, and a window tracking its content would renegotiate its frame every
+  second. The old notch card learned the first half the hard way; the panel
+  gets both for free by inheriting the pattern.
+- **Any change to window frames, column widths, or list content must be
+  soak-tested for 3 minutes** against `-simulate`, checking
+  `~/Library/Logs/DiagnosticReports/` for new `Current-*.ips` files. A build
+  that passes tests and looks fine for ten seconds tells you nothing here.
+  Resize the window across the compact thresholds while it soaks — idling at
+  one size exercises none of this.
 
 The custom shell helps here, and it is worth knowing why. `AppShell` sizes its
 columns with plain `frame(width:)` calls driven by app state, so a width only
