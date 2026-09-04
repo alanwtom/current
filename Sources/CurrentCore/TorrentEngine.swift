@@ -42,6 +42,15 @@ public protocol TorrentEngine: Actor {
     func remove(_ id: TorrentID, deleteFiles: Bool) async
 
     func setFilePriorities(_ id: TorrentID, _ priorities: [FilePriority]) async
+
+    /// Changes where a torrent's files will be written.
+    ///
+    /// Called on a torrent that has resolved its metadata but hasn't started —
+    /// the moment the app asks where a download should go — so in practice this
+    /// picks the location rather than moving anything. It is safe on a torrent
+    /// with data, which would genuinely be moved, but the app has no such path.
+    func setSaveDirectory(_ id: TorrentID, _ directory: URL) async
+
     func forceRecheck(_ id: TorrentID) async
 
     /// Serialised session state for restoring after relaunch.

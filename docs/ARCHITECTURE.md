@@ -99,6 +99,11 @@ one place: `MagnetFlowOverlayView`, a card at the top of the library. On
 metadata arrival the torrent is paused, all priorities default to selected;
 confirming applies priorities and resumes; cancelling removes quietly.
 
+Confirming is also where the download's folder is settled: the torrent was
+added to the default folder before anyone knew what it was, so
+`applyMagnetSelection` calls `setSaveDirectory` before `resume`, while nothing
+has been written yet.
+
 There used to be a second presentation — a borderless panel pinned to the
 camera housing, with the in-window card as its fallback on Macs with no notch —
 and the state machine existed partly to keep the two in agreement. The panel is

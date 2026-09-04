@@ -263,13 +263,34 @@ final class AppEnvironment: ObservableObject {
             toasts.show(.warning, title: "Couldn't read torrent file", message: url.lastPathComponent)
             return
         }
+        let name = url.deletingPathExtension().lastPathComponent
+        // A .torrent file is a download like any other, so it gets the same
+        // confirm card — which is what asks where it should go and which files
+        // to take. It carries its metadata with it, so the resolving stage it
+        // passes through is momentary.
+        //
+        // Only when nothing else is mid-flow, which is the guard that makes
+        // opening a folder of ten .torrent files sane: the first one asks, the
+        // rest go to the default folder rather than queueing ten questions.
+        let claimsFlow = magnetFlow.stage == .idle
+        if claimsFlow {
+            magnetFlow.beginResolving(nameHint: name)
+        }
         do {
             let id = try await engine.addTorrentFile(data, saveDirectory: settings.downloadsFolder)
-            library.registerAdded(id, name: url.deletingPathExtension().lastPathComponent, magnet: nil, saveDirectory: settings.downloadsFolder)
-            toasts.show(.info, title: "Added", message: url.deletingPathExtension().lastPathComponent)
+            library.registerAdded(id, name: name, magnet: nil, saveDirectory: settings.downloadsFolder)
+            if !claimsFlow {
+                toasts.show(.info, title: "Added", message: name)
+            }
         } catch let failure as EngineFailure where failure.kind == .duplicateTorrent {
+            // Both failure paths have to take the flow down with them. It was
+            // put into `.resolving` a moment ago for a torrent that now doesn't
+            // exist, and a card left spinning about nothing is the exact bug the
+            // magnet timeout already had to be fixed for.
+            if claimsFlow { magnetFlow.dismiss() }
             toasts.show(.info, title: "Already in your library", message: "This torrent was added earlier.")
         } catch {
+            if claimsFlow { magnetFlow.dismiss() }
             toasts.show(.warning, title: "Couldn't add torrent", message: error.localizedDescription)
         }
     }
@@ -285,11 +306,55 @@ final class AppEnvironment: ObservableObject {
         }
     }
 
+    // MARK: - Where a download goes
+
+    /// The folder the download being confirmed will land in.
+    ///
+    /// The per-download choice wins; otherwise it's the settings default, which
+    /// is also the folder the torrent was already added to.
+    var downloadDestination: URL {
+        magnetFlow.chosenDestination ?? settings.downloadsFolder
+    }
+
+    /// The folder chooser behind "Change…" on the confirm card.
+    ///
+    /// Deliberately the system's panel. This is the one interaction in the app
+    /// where drawing our own would be strictly worse: people need their
+    /// sidebar, their tags, their iCloud folders and the New Folder button, and
+    /// none of that is ours to reinvent. Same reason the menus stay native.
+    func chooseDownloadDestination() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Save Here"
+        panel.message = "Choose where this download should go."
+        panel.directoryURL = downloadDestination
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        magnetFlow.chosenDestination = url
+    }
+
     // MARK: - Selection confirm / cancel from the flow surface
 
     /// Applies the user's file selection and starts the download.
     func applyMagnetSelection(_ priorities: [FilePriority]) async {
         guard case .selecting(let id) = magnetFlow.stage else { return }
+
+        // Where it goes is settled here, not when it was added. At add time the
+        // magnet was an unresolved hash — there was nothing to decide against,
+        // so it went to the default folder. Now there's a name and a size on
+        // screen, and this is the last moment before anything touches the disk.
+        let destination = downloadDestination
+        if library.records[id]?.saveDirectory != destination {
+            await engine.setSaveDirectory(id, destination)
+            library.updateSaveDirectory(id, destination)
+        }
+        if magnetFlow.remembersDestination {
+            settings.downloadsFolder = destination
+            settings.asksForDownloadLocation = false
+        }
+
         library.setPriorities(priorities, for: id)
         magnetFlow.confirmSelection()
         await engine.resume(id)

@@ -81,6 +81,41 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(ByteFormatting.bytes(11_200_000_000, precision: 1), "10.4 GB")
     }
 
+    func testPathAbbreviatesTheHomeFolder() {
+        let home = "/Users/alan"
+        XCTAssertEqual(
+            PathFormatting.abbreviatingHome("/Users/alan/Downloads/Current", home: home),
+            "~/Downloads/Current"
+        )
+        XCTAssertEqual(PathFormatting.abbreviatingHome(home, home: home), "~")
+    }
+
+    /// A path outside the home folder keeps its head. On an external drive the
+    /// leading `/Volumes/...` is the part that tells you where you're writing,
+    /// so abbreviating there would remove the only useful bit.
+    func testPathOutsideHomeIsLeftAlone() {
+        let home = "/Users/alan"
+        XCTAssertEqual(
+            PathFormatting.abbreviatingHome("/Volumes/Archive/Films", home: home),
+            "/Volumes/Archive/Films"
+        )
+        // A different user whose name merely starts the same way is not home.
+        XCTAssertEqual(
+            PathFormatting.abbreviatingHome("/Users/alanna/Films", home: home),
+            "/Users/alanna/Films"
+        )
+    }
+
+    /// `URL.path` yields a trailing slash for some directory URLs and not
+    /// others, and the two spellings have to abbreviate the same way.
+    func testPathIgnoresTrailingSlashes() {
+        XCTAssertEqual(
+            PathFormatting.abbreviatingHome("/Users/alan/Movies/", home: "/Users/alan/"),
+            "~/Movies"
+        )
+        XCTAssertEqual(PathFormatting.abbreviatingHome("/", home: "/Users/alan"), "/")
+    }
+
     func testRateFormatting() {
         XCTAssertEqual(ByteFormatting.rate(0), "—")
         XCTAssertTrue(ByteFormatting.rate(18_700_000).hasSuffix("MB/s"))

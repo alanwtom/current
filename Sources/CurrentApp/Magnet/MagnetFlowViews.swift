@@ -39,11 +39,21 @@ struct ResolvingCard: View {
     }
 }
 
-/// The one decision the magnet flow asks for: everything, or a subset.
+/// The decisions the magnet flow asks for: which files, and where they go.
+///
+/// Both live on one card on purpose. A download's folder is only ever an
+/// interesting question next to what the download *is* — a name and a size —
+/// and splitting them would mean two surfaces and two clicks for something most
+/// people answer by accepting the default.
 struct SelectionSummaryCard: View {
     let name: String
     let fileCount: Int
     let totalBytes: Int64
+    /// Non-nil while the app is asking where downloads go. Nil hides the whole
+    /// block, which is what "Remember this location" buys you.
+    let destination: URL?
+    @Binding var remembersDestination: Bool
+    var onChooseDestination: () -> Void
     var onChooseFiles: () -> Void
     var onConfirm: () -> Void
     var onCancel: () -> Void
@@ -70,6 +80,10 @@ struct SelectionSummaryCard: View {
                 .help("Cancel")
             }
 
+            if let destination {
+                destinationBlock(destination)
+            }
+
             HStack(spacing: Space.m) {
                 Button("Choose files…") { onChooseFiles() }
                     .currentButton(.secondary, scale: .small)
@@ -83,6 +97,37 @@ struct SelectionSummaryCard: View {
             }
         }
         .padding(Space.xl)
+    }
+
+    private func destinationBlock(_ destination: URL) -> some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("SAVE TO")
+                .typeStyle(Typo.overline)
+                .foregroundStyle(Theme.textTertiary)
+
+            HStack(spacing: Space.m) {
+                Image(systemName: "folder")
+                    .font(.system(size: Size.iconSmall))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: Size.iconColumn)
+                // Truncated in the middle, because the end of a path is the
+                // part that identifies it — "…/Movies/Archive" tells you where
+                // you are and "/Users/alan/Docum…" tells you nothing.
+                Text(PathFormatting.friendly(destination))
+                    .typeStyle(Typo.label)
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(destination.path)
+                Spacer(minLength: Space.m)
+                Button("Change…") { onChooseDestination() }
+                    .currentButton(.secondary, scale: .small)
+            }
+
+            Toggle("Remember this location", isOn: $remembersDestination)
+                .currentCheckbox()
+                .help("Send every download here from now on. You can turn the question back on in Settings.")
+        }
     }
 }
 
@@ -162,6 +207,11 @@ struct MagnetFlowOverlayView: View {
                             name: metadata.displayName,
                             fileCount: metadata.files.count,
                             totalBytes: metadata.totalSize,
+                            destination: app.settings.asksForDownloadLocation
+                                ? app.downloadDestination
+                                : nil,
+                            remembersDestination: $flow.remembersDestination,
+                            onChooseDestination: { app.chooseDownloadDestination() },
                             onChooseFiles: { app.showMagnetFilePicker = true },
                             onConfirm: {
                                 Task {
