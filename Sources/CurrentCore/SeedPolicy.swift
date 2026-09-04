@@ -140,14 +140,22 @@ public enum SeedEvaluator {
         }
 
         // Goal is met. Helpful mode overrides stopping for rare swarms.
-        if case .helpful = policy, SwarmHealth(seeds: snapshot.swarm.connectedSeeds) == .rare {
+        //
+        // Only for a swarm we've actually measured: `unknown` deliberately
+        // doesn't qualify. Seeding indefinitely is a real cost to impose on
+        // someone, and "we have no information" is not a reason to impose it —
+        // which is what happened while rarity was inferred from the number of
+        // seeds we were connected to, because a paused torrent is connected to
+        // none.
+        let health = SwarmHealth(swarm: snapshot.swarm)
+        if case .helpful = policy, health == .rare {
+            let seeds = snapshot.swarm.swarmSeeds ?? snapshot.swarm.knownSeeds
             var kept = reasons
-            kept.append("Only \(snapshot.swarm.connectedSeeds) seed\(snapshot.swarm.connectedSeeds == 1 ? "" : "s") remain — Helpful mode kept this torrent active")
+            kept.append("Only \(seeds) seed\(seeds == 1 ? "" : "s") remain — Helpful mode kept this torrent active")
             return SeedDecision(shouldStop: false, goalMet: true, reasons: kept)
         }
 
-        if !reasons.contains(where: { $0.contains("Swarm") }),
-           SwarmHealth(seeds: snapshot.swarm.connectedSeeds) == .healthy {
+        if !reasons.contains(where: { $0.contains("Swarm") }), health == .healthy {
             reasons.append("Swarm is healthy")
         }
 

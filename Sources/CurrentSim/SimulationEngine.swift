@@ -28,6 +28,40 @@ public actor SimulationEngine: TorrentEngine {
         var priorities: [FilePriority]
         var resolveDelayRemaining: TimeInterval?
         var failure: EngineFailure?
+        /// The swarm as a tracker would report it — nil until one has.
+        ///
+        /// Separate from `seeds`, which is who we're connected to, because the
+        /// whole point of the distinction is that the two differ. Optional so
+        /// resume data written before this field existed still decodes: Swift's
+        /// synthesised `Codable` throws on a missing key for a non-optional,
+        /// default value or not.
+        var swarmSeeds: Int?
+        var swarmPeers: Int?
+    }
+
+    /// Swarm sizes handed out to simulated torrents, in order.
+    ///
+    /// **Deliberately spans the thresholds.** `SwarmHealth` calls under 3 rare
+    /// and 10-or-more healthy, so a simulator that only ever produced large
+    /// swarms could not draw the rare chip, the amber callout, the Helpful-mode
+    /// "kept this active" decision, or the cleanup exclusion that depends on
+    /// them — and `-simulate` is where every UI change in this app is supposed
+    /// to be checked. An earlier version multiplied the connection count by
+    /// twelve, which floored every torrent at healthy and made all of that
+    /// unreachable.
+    private static let swarmSizes = [1, 47, 2, 120, 6, 63, 4, 8]
+
+    private static func swarmSize(index: Int) -> Int {
+        swarmSizes[abs(index) % swarmSizes.count]
+    }
+
+    /// The number out of a simulated id (`sim0003` → 3).
+    ///
+    /// Keyed on the id rather than drawn at random so a torrent's swarm holds
+    /// still: the same demo library comes up the same way every launch, which
+    /// is the point of a simulator you take screenshots against.
+    private static func index(of id: TorrentID) -> Int {
+        Int(id.raw.drop(while: { !$0.isNumber })) ?? 0
     }
 
     private var records: [TorrentID: Record] = [:]
@@ -134,6 +168,11 @@ public actor SimulationEngine: TorrentEngine {
             }
             var record = restored.record
             record.state = .paused(.user)
+            if record.swarmSeeds == nil {
+                let size = Self.swarmSize(index: Self.index(of: record.id))
+                record.swarmSeeds = size
+                record.swarmPeers = size * 2 + 3
+            }
             records[record.id] = record
         }
 
@@ -207,6 +246,15 @@ public actor SimulationEngine: TorrentEngine {
                         updated.state = .downloading
                         updated.seeds = max(1, updated.seeds)
                         updated.peers = max(8, updated.peers)
+                        // The announce that resolved the torrent is also the
+                        // one that tells us how big the swarm is. Before this,
+                        // nobody has said — which is the state the real engine
+                        // reports as -1 and the app shows as "unknown".
+                        if updated.swarmSeeds == nil {
+                            let size = Self.swarmSize(index: Self.index(of: id))
+                            updated.swarmSeeds = size
+                            updated.swarmPeers = size * 2 + 3
+                        }
                         continuation.yield(.metadataReceived(id, updated.metadata!))
                     } else {
                         updated.resolveDelayRemaining = next
@@ -306,7 +354,22 @@ public actor SimulationEngine: TorrentEngine {
                 swarm: SwarmSummary(
                     connectedSeeds: record.seeds,
                     connectedPeers: record.peers,
-                    knownSeeds: record.seeds + 2
+                    // Also nothing until an announce. This is our peer list,
+                    // and before a tracker has answered we have not been told
+                    // about anybody — the real engine reports 0 here for the
+                    // same reason. Fabricating a couple of seeds meant the
+                    // fallback in `SwarmHealth` always had something to chew
+                    // on, so `.unknown` stayed unreachable even once the
+                    // tracker figures were modelled properly.
+                    knownSeeds: record.swarmSeeds == nil ? 0 : record.seeds + 2,
+                    // Straight from the record, not derived from the connection
+                    // count. A swarm's size and how much of it we happen to be
+                    // talking to are different numbers — that difference is the
+                    // entire reason these fields exist — and deriving one from
+                    // the other put every simulated torrent above the healthy
+                    // threshold.
+                    swarmSeeds: record.swarmSeeds,
+                    swarmPeers: record.swarmPeers
                 ),
                 addedAt: record.addedAt,
                 completedAt: record.completedAt,

@@ -377,6 +377,13 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                 row.connected_seeds = st.num_seeds;
                 row.connected_peers = st.num_peers;
                 row.known_seeds = st.list_seeds > st.num_seeds ? st.list_seeds : st.num_seeds;
+                // `num_complete` / `num_incomplete` are the tracker's scrape
+                // figures: how big the swarm actually is, rather than how much
+                // of it we happen to be talking to. libtorrent leaves them at
+                // -1 until something reports them, and that -1 is carried all
+                // the way to the UI on purpose — see the header.
+                row.swarm_seeds = st.num_complete;
+                row.swarm_peers = st.num_incomplete;
                 row.seed_seconds = static_cast<uint64_t>(st.seeding_duration.count());
                 row.active_seconds = static_cast<uint64_t>(st.active_duration.count());
                 row.has_metadata = st.has_metadata ? 1 : 0;
