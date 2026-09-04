@@ -99,9 +99,19 @@ every other modal surface now, and nothing waits on it: the field takes focus in
 `onAppear`, so the first keystroke lands during the entrance.
 
 **One state machine per flow.** `MagnetFlowCenter`
-(`resolving → selecting → starting → completed → idle`) drives **both** the notch
-panel and the in-window fallback, so the two presentations can't disagree. Don't
-give a surface its own copy of flow state.
+(`resolving → selecting → starting → completed → idle`) is the only place flow
+state lives, and `MagnetFlowOverlayView` is the only thing that draws it. Don't
+give a surface its own copy. It used to drive two presentations — this card and
+a panel pinned to the camera housing — which is where the rule came from; the
+panel is gone, but a second surface reading the stage is still how they start
+disagreeing.
+
+**Anything that asks the user a question asks it in the window.** That is the
+whole reason the notch panel was removed: a magnet's "which files?" card lived
+in a floating surface that couldn't be tab-navigated from the window, appeared
+only on Macs with a camera housing, and hovered over other apps to demand an
+answer about a library you couldn't see. Decisions belong next to the thing
+they change.
 
 **Nothing comes from the system's design.** No `NavigationSplitView`, no
 `.toolbar`, no `.inspector`, no `Settings` scene, no `List(selection:)`, no
@@ -163,10 +173,10 @@ showing state at a glance should not have to be *read*. The line to hold is
 colour as possible".
 
 **The exception is menus, and it is deliberate.** `Menu`, `.contextMenu` and the
-menu bar stay native. A menu has to be able to leave the window, traverse by
-keyboard, and behave like every other menu on the machine; a hand-drawn one is
-strictly worse at all three. Native menus are also the one place `Divider()` and
-`.pickerStyle(.inline)` are still correct.
+menu bar stay native. A menu has to be able to leave the window,
+traverse by keyboard, and behave like every other menu on the machine; a
+hand-drawn one is strictly worse at all three. Native menus are also the one
+place `Divider()` and `.pickerStyle(.inline)` are still correct.
 
 ## Layout
 
@@ -176,7 +186,7 @@ strictly worse at all three. Native menus are also the one place `Divider()` and
 | `Sources/LTShim/` | C++ shim exposing a minimal C API over libtorrent 2.x |
 | `Sources/CurrentEngine/` | `LibtorrentEngine` — the only thing that imports `LTShim` |
 | `Sources/CurrentSim/` | `SimulationEngine` — same protocol, deterministic |
-| `Sources/CurrentApp/` | SwiftUI/AppKit app: stores, notch controller, magnet flow, UI |
+| `Sources/CurrentApp/` | SwiftUI/AppKit app: stores, magnet flow, menu bar item, UI |
 | `Sources/CurrentApp/Design/` | **The design system.** `Theme` (colour), `Typo` (type), `Space`/`Radius`/`Size`/`Chrome`/`SettingsChrome` (metrics), `Motion`, `Interactions` (incl. `PopTransition`), `WindowChrome`, and `Controls/` (incl. `ModalSurface`, the app's own `.sheet`) |
 | `docs/ARCHITECTURE.md` | Layer diagram and rationale. Read before large changes. |
 
@@ -200,8 +210,7 @@ cards all use `PopTransition` (`.popTransition()`) driven by
 `Motion.pop(presenting:)`: from 92% with a little blur, springing a few percent
 past full size before it settles, and out again fast and flat. This is the third
 place allowed to overshoot and the only one that isn't a physical gesture —
-a summoned surface should pop. The notch panel is an `NSWindow` frame, so it
-can't use the spring; `Motion.popTiming` is a Bézier that overshoots to match.
+a summoned surface should pop.
 
 Two ways to get this wrong, both silent:
 
@@ -232,16 +241,33 @@ and wins the sequence, so the tap gesture outside it never fired. Rows hovered,
 showed their press, and did nothing. If a thing is clickable, it is a `Button`.
 
 Performance shape worth preserving: engine batches arrive at ~1 Hz and are
-coalesced, rows read only their own snapshot so list updates stay local, and the
-notch controller throttles library observation to 2 Hz.
+coalesced, rows read only their own snapshot so list updates stay local, and any
+view that needs live engine data reads it through a coalesced model.
 
-## Notch
+## There is no notch panel, and there shouldn't be one again
 
-`NotchWindowController` owns one borderless, non-activating panel pinned to the
-camera housing, with geometry from `auxiliaryTopLeftArea` / `auxiliaryTopRightArea`.
-When idle it shrinks to exactly the notch rectangle and draws nothing. **No notch
-means no panel** — the magnet flow presents in-window instead, so never assume the
-panel exists.
+The app used to own a borderless panel pinned to the camera housing: idle it
+collapsed into the notch and drew nothing, hover opened a card of active
+transfers with pause/reveal buttons, and the magnet flow — including the
+"which files?" decision — presented there instead of in the window.
+
+It's gone, and adding it back means re-adding all of this:
+
+- **Half the users never saw it.** It needed a camera housing, so the in-window
+  card had to exist anyway as a fallback. Two presentations of one flow, one of
+  which only some machines could render.
+- **It asked questions the keyboard couldn't answer.** A non-activating panel
+  doesn't take key focus, so Download / Choose files / Cancel were mouse-only,
+  which the keyboard-parity rule above forbids.
+- **It duplicated the library.** The hover card listed active transfers with
+  pause and reveal — the same facts and the same two actions the list, the row
+  context menu and the inspector already carry.
+- **It was a second drop target,** and for a while the only one, while the
+  library's empty state said "drop a torrent here" and meant nothing.
+
+The at-a-glance-while-the-window-is-closed job belongs to the menu bar item
+(`StatusItemController`), which works on every Mac. Everything that needs an
+answer belongs in the window.
 
 ## Magnet links come from outside the app
 
@@ -286,7 +312,7 @@ rarely the code:
 - A magnet that never resolves is removed after two minutes, and **says so** —
   a toast, plus the flow being taken down with it. It used to write a
   decision-log entry and nothing else, which from the outside is
-  indistinguishable from the app ignoring the link; worse, the notch panel went
+  indistinguishable from the app ignoring the link; worse, the flow card went
   on saying "Resolving magnet…" about a torrent that no longer existed.
 
 When testing this by hand, use a magnet with live trackers (Ubuntu's release
@@ -420,12 +446,6 @@ Rules that follow from this:
   highlight stayed on "All". It now takes `section` plus an `onSelect` closure
   and is `Equatable` on the section, which updates on real changes and on
   nothing else.
-- **Any change to window frames, column widths, or list content must be
-  soak-tested for 3 minutes** against `-simulate`, checking
-  `~/Library/Logs/DiagnosticReports/` for new `Current-*.ips` files. A build
-  that passes tests and looks fine for ten seconds tells you nothing here.
-  Resize the window across the compact thresholds while it soaks — idling at
-  one size exercises none of this.
 
 The custom shell helps here, and it is worth knowing why. `AppShell` sizes its
 columns with plain `frame(width:)` calls driven by app state, so a width only

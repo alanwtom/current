@@ -219,7 +219,7 @@ private func rgba(_ r: Int, _ g: Int, _ b: Int, _ alpha: Double) -> NSColor {
 // MARK: - AppKit access
 
 extension Theme {
-    /// For the handful of places that need a real `NSColor` — window background,
-    /// the notch panel, the status item.
+    /// For the handful of places that need a real `NSColor` — window
+    /// background, the status item.
     static func nsColor(_ color: Color) -> NSColor { NSColor(color) }
 }

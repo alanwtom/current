@@ -20,13 +20,11 @@ happening, and delightful when you interact with it.
 
 ## Highlights
 
-- **The magnet flow** — click a magnet link and the notch acknowledges it
-  ("Resolving magnet…"), expands smoothly when metadata arrives, shows the
-  file list, and collapses into live progress the moment you press
-  **Download 8.3 GB**. One continuous interaction instead of three dialogs.
-- **Notch experience** — optional, restrained. Idle means *nothing* on screen.
-  Activity appears as a subtle strip around the camera housing; hover expands;
-  click gives pause/reveal controls. Drag a `.torrent` or magnet onto it.
+- **The magnet flow** — click a magnet link and a card at the top of the
+  library acknowledges it ("Resolving magnet…"), grows into the file summary
+  when metadata arrives, and hands off to live progress the moment you press
+  **Download 8.3 GB**. One continuous interaction instead of three dialogs,
+  and it happens in the window, where the library it's about already is.
 - **Smart Seed** — five plain-language policies (Balanced, Helpful, Archive,
   Temporary, Custom). Helpful mode keeps rare torrents alive even after their
   goal is met. Every automated decision is explained in the Rules tab:

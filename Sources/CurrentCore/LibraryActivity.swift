@@ -4,10 +4,9 @@ import Foundation
 /// the queue is finished, how fast it's moving, and the single state that best
 /// describes right now.
 ///
-/// This lives in Core rather than in a view because two surfaces need it and
-/// they have different lifetimes — the menu bar item exists on every Mac, the
-/// notch panel only exists on machines that have a notch. Neither should own
-/// the arithmetic.
+/// This lives in Core rather than in a view because the surfaces that need it
+/// have different lifetimes — the menu bar item outlives the window, which can
+/// be closed while transfers keep running. Neither should own the arithmetic.
 public struct LibraryActivity: Equatable, Sendable {
 
     /// One state wins, ordered by what the user most needs to know. A failure

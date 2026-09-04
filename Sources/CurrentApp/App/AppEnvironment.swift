@@ -24,7 +24,6 @@ final class AppEnvironment: ObservableObject {
     let activity: ActivityModel
     let magnetFlow: MagnetFlowCenter
     let toasts: ToastCenter
-    let notch: NotchWindowController
     /// Menu bar item. Created after init because it needs `self` for actions.
     private(set) var statusItem: StatusItemController?
 
@@ -79,11 +78,7 @@ final class AppEnvironment: ObservableObject {
         self.cleanup = cleanup
         self.sidebarCounts = SidebarCounts(library: library, cleanup: cleanup)
         self.activity = ActivityModel(library: library)
-        let settingsRef = settings
-        self.notch = NotchWindowController(enabled: { [weak settingsRef] in
-            settingsRef?.isNotchEnabled ?? false
-        })
-        self.magnetFlow = MagnetFlowCenter(notchController: notch)
+        self.magnetFlow = MagnetFlowCenter()
         self.toasts = ToastCenter()
 
         self.automation = AutomationCoordinator(
@@ -101,7 +96,7 @@ final class AppEnvironment: ObservableObject {
             guard let self else { return }
 
             // Take the flow down with it. The coordinator removes the torrent,
-            // but nothing told the flow — so the notch panel sat there saying
+            // but nothing told the flow — so the card sat there saying
             // "Resolving magnet…" indefinitely, about a torrent that no longer
             // existed, and the only way out was quitting the app.
             if case .resolving = self.magnetFlow.stage {
@@ -192,7 +187,6 @@ final class AppEnvironment: ObservableObject {
         switch event {
         case .snapshots(let batch):
             library.applySnapshots(batch)
-            notch.refreshVisibility()
 
         case .metadataReceived(let id, let metadata):
             library.applyMetadata(metadata)
@@ -257,7 +251,6 @@ final class AppEnvironment: ObservableObject {
         do {
             let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder)
             library.registerAdded(id, name: hint, magnet: uri, saveDirectory: settings.downloadsFolder)
-            notch.refreshVisibility()
         } catch {
             magnetFlow.resolveFailed(message: error.localizedDescription)
             let failure = (error as? EngineFailure) ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
@@ -414,8 +407,8 @@ final class AppEnvironment: ObservableObject {
 
         // Bring the app forward and make sure there's a window to watch it in.
         // Clicking a magnet in a browser is a request to see something happen,
-        // and on a Mac with no notch the flow is drawn *in* the window — which
-        // may well be closed, since this app keeps running in the menu bar.
+        // and the flow is drawn *in* the window — which may well be closed,
+        // since this app keeps running in the menu bar.
         NSApp.activate(ignoringOtherApps: true)
         if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
             window.makeKeyAndOrderFront(nil)
@@ -472,37 +465,11 @@ final class AppEnvironment: ObservableObject {
 
     private var isFinishedSetup = false
 
-    /// Called once from the main window. Wires the notch surface and restores state.
+    /// Called once from the main window. Restores state and opens the door to
+    /// magnet links the system delivered before there was an engine.
     func finishSetup() async {
         guard !isFinishedSetup else { return }
         isFinishedSetup = true
-
-        notch.bind(center: magnetFlow, library: library)
-        notch.app = self
-        notch.onPause = { [weak self] id in
-            self?.library.togglePause(for: [id])
-        }
-        notch.onReveal = { [weak self] id in
-            self?.revealInFinder(id)
-        }
-        notch.onChooseFiles = { [weak self] in
-            guard let self else { return }
-            self.showMagnetFilePicker = true
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        notch.onConfirmSelection = { [weak self] _ in
-            guard let self, let summary = self.notch.selectionSummary else { return }
-            Task { await self.applyAllFilesSelection(for: summary.id) }
-        }
-        notch.onCancelSelection = { [weak self] in
-            guard let self else { return }
-            Task { await self.cancelMagnetSelection() }
-        }
-        notch.onDroppedItems = { [weak self] parsed in
-            MainActor.assumeIsolated {
-                self?.handleDroppedItems(parsed)
-            }
-        }
 
         AppDelegate.environment = self
 

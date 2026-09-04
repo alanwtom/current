@@ -16,7 +16,6 @@ final class SettingsStore: ObservableObject {
         /// honest about it.
         static let storageLimit = "storage.limit.gb"
         static let autoCleanup = "storage.autoCleanup"
-        static let notchEnabled = "notch.enabled"
         static let pauseOnBattery = "power.pauseOnBattery"
         static let limitOnBattery = "power.limitOnBattery"
         static let preventSleepWhileDownloading = "power.preventSleepWhileDownloading"
@@ -58,9 +57,6 @@ final class SettingsStore: ObservableObject {
     }
     @Published var isAutoCleanupEnabled: Bool {
         didSet { persist(isAutoCleanupEnabled, forKey: Keys.autoCleanup) }
-    }
-    @Published var isNotchEnabled: Bool {
-        didSet { persist(isNotchEnabled, forKey: Keys.notchEnabled) }
     }
     /// Light, dark, or follow the Mac. Applied immediately rather than on next
     /// launch — the Appearance pane is the one place where the setting *is* the
@@ -192,7 +188,6 @@ final class SettingsStore: ObservableObject {
         // taking the process down.
         self.storageLimitBytes = Self.sanitizedLimit(value(Keys.storageLimit))
         self.isAutoCleanupEnabled = value(Keys.autoCleanup).map({ $0 == "1" }) ?? false
-        self.isNotchEnabled = value(Keys.notchEnabled).map({ $0 == "1" }) ?? true
         // System on a fresh install: the app should look like it belongs on the
         // machine before it looks like it has an opinion.
         self.appearance = value(Keys.appearance).flatMap(AppearanceMode.init(rawValue:)) ?? .system

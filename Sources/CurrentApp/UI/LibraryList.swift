@@ -84,8 +84,10 @@ struct LibraryList: View {
             .overlay {
                 if isDropTargeted { dropHighlight }
             }
-            // The empty state has always said "drop a torrent here" — until now
-            // nothing in the window accepted one, and only the notch panel did.
+            // The empty state says "drop a torrent here", so the list has to
+            // mean it. This is the only drop target in the app now — there used
+            // to be a second one on the notch panel, which was the only one that
+            // worked while the empty state was telling you otherwise.
             .onDrop(of: [.fileURL, .url, .text, .plainText], isTargeted: dropTarget) { providers in
                 handleDrop(providers)
             }
