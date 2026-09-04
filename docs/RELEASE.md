@@ -106,7 +106,64 @@ setting against whether any code anywhere consumes it.
       Doing this by hand is how an unsigned or unstapled build gets published at
       midnight.
 
-## Phase 4 — What people see before they download
+## Phase 4 — The open-source side of v1.0
+
+The repository is already public and MIT licensed, so this is not "open
+sourcing" — it is making the open part hold up. Two different audiences arrive
+here and neither is served yet: someone deciding whether to download, and
+someone deciding whether to build it.
+
+- [ ] **Screenshots in the README.** The single highest-leverage item on this
+      page. The whole pitch is that this doesn't look like a stock Mac utility,
+      and there is currently no way to see that without compiling it. A
+      design-led app with no screenshots reads as abandoned.
+- [ ] **Third-party licence notices.** The bundle now redistributes libtorrent
+      (BSD-3-Clause) and OpenSSL (Apache-2.0). Both require their notices to
+      travel with a binary distribution. A `THIRD-PARTY-NOTICES.md` in the repo
+      and a copy in the app bundle covers it. This became a real obligation the
+      moment the bundling work made those libraries ship with the app, and it
+      is cheap.
+- [ ] **Make it buildable by someone who isn't you.** `Package.swift` hardcodes
+      `/opt/homebrew`, so the build fails on an Intel Mac and anywhere Homebrew
+      isn't at the default prefix. Read the prefix from `brew --prefix` or an
+      environment variable and fall back to the current default. Right now the
+      honest README line would be "builds on Apple Silicon with Homebrew at the
+      default location", which is a small audience for contributors.
+- [ ] **A README written for a person landing cold.** What it is, one
+      screenshot, requirements stated plainly (Apple Silicon, macOS 26),
+      download link, build instructions, licence. The current one opens with a
+      philosophy paragraph and a feature list.
+- [ ] **`SECURITY.md`.** This app parses untrusted files and talks to untrusted
+      peers over the network. A stated disclosure route is basic hygiene for
+      anything with a socket.
+- [ ] **`CHANGELOG.md`**, starting at 1.0.0.
+- [ ] **Tag `v1.0.0`** and cut a GitHub Release with the DMG and its checksum.
+      Nothing before the tag is a version; it's just `main`.
+- [ ] **Land or drop the in-flight swarm-health work** before tagging. A
+      half-finished feature sitting uncommitted at tag time is the kind of thing
+      that gets committed in a hurry and breaks the release build.
+- [ ] `CODE_OF_CONDUCT.md` and a PR template. Conventional, quick, and GitHub
+      asks for them.
+
+### Saying what this is
+
+Worth stating plainly on the README, because it is true and it is not true of
+every client: **Current ships no trackers, no indexes, and no content sources.**
+It has no search, it cannot find anything, and it does not suggest anything to
+download. It is a client for a protocol that people use lawfully every day —
+Linux images, Internet Archive collections, scientific datasets, game patches.
+
+That is a positioning decision as much as a factual one, and it matters beyond
+tone: hosting providers, package managers, press, and anyone deciding whether
+to link to the project all read it. The seeding defaults say the same thing —
+giving back a full share before stopping is what a good citizen of a swarm
+does, and it is worth being explicit that the app is built that way on purpose.
+
+None of this is legal advice, and none of it changes what a user does with the
+app. It changes what the project looks like to someone deciding whether to
+trust it.
+
+## Phase 5 — What people see before they download
 
 - [ ] Landing page or a README that opens with screenshots.
 - [ ] Release notes.
