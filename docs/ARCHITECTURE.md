@@ -12,7 +12,7 @@ presentation layer that never talks to the engine directly.
 │  Design/ — the design system every surface draws from    │
 │  AppShell · ChromeBar · SidebarView · LibraryList        │
 │  InspectorPanel · SettingsSurface · CommandPalette       │
-│  MagnetFlow surfaces · Toasts                            │
+│  MagnetFlow surfaces · Toasts · StatusItemController     │
 └──────────────┬─────────────────────────────┬─────────────┘
                │                             │
         LibraryStore (MainActor)      MagnetFlowCenter
@@ -109,6 +109,15 @@ camera housing, with the in-window card as its fallback on Macs with no notch �
 and the state machine existed partly to keep the two in agreement. The panel is
 gone. Anything that asks the user a question asks it in the window, where the
 answer can be reached by keyboard and sits next to the library it changes.
+
+### Menu bar
+
+`StatusItemController` owns an `NSStatusItem` directly (never `MenuBarExtra` —
+see the layout-churn section of `AGENTS.md`) and opens `StatusPanelView` in a
+borderless `NSPanel` centred under the icon. The panel is the app with the
+window closed: rates, active transfers with progress, per-transfer pause and
+reveal. It measures its frame once on open and freezes which transfers it
+lists, so nothing about it resizes while it's on screen.
 
 ## Performance notes
 

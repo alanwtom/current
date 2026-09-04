@@ -38,12 +38,13 @@ happening, and delightful when you interact with it.
   Keeping this torrent seeded helps preserve it." Never shame, never nag.
 - **Keyboard-first** — `⌘N` add magnet · `␣` pause/resume · `⌘⌫` remove ·
   `⌘F` search · `⌘K` command palette · arrows/⇧/⌘ for selection.
+- **Menu bar panel** — click the icon and a panel drops under it with combined
+  speeds, every active transfer's progress, and a pause button on each one.
+  Everything you'd reach for without opening the app, and nothing else.
 - **You choose where each download goes** — the confirm card offers a folder
   before anything starts, and remembers it if you say so. After that they go
   straight there, and the switch to start asking again is in Settings beside
   the folder itself.
-- **Menu bar** — aggregate speeds, pause/resume all, recent completions.
-  A quick-control surface, never a duplicate app.
 - **Private by construction** — no accounts, no analytics, no tracking.
   Torrent history stays local.
 
