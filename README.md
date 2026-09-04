@@ -4,7 +4,9 @@
 
 **A torrent client that behaves.**
 
-Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · macOS 26+
+Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · Apple Silicon · macOS 26+
+
+<img src="docs/images/library.png" alt="Current's library, with a torrent selected and its details panel open" width="900">
 
 </div>
 
@@ -17,6 +19,46 @@ glanceable activity, and fast intervention when something needs you.
 
 So Current is quiet when nothing is happening, informative when something is
 happening, and delightful when you interact with it.
+
+It draws its own window chrome and every one of its own controls. There is no
+`NavigationSplitView`, no toolbar, no stock switches — not for novelty, but
+because those are precisely the things that make an app look like a stock Mac
+utility, and none of them can be restyled far enough to stop.
+
+<table>
+<tr>
+<td width="52%" valign="top">
+
+**A magnet asks two questions, once**
+
+Click a link and a card appears at the top of the library: what it is, how big,
+which files, and **where it should go** — with the option to remember that
+answer and never be asked again.
+
+</td>
+<td valign="top">
+
+<img src="docs/images/magnet-flow.png" alt="The confirm card: file count, size, save location and a download button" width="420">
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**Everything you'd reach for, without opening the app**
+
+Click the menu bar icon for combined speeds, every active transfer's progress,
+and a pause button on each one. It's a real panel, not a menu — a list of
+commands couldn't draw any of this.
+
+</td>
+<td valign="top">
+
+<img src="docs/images/menu-bar.png" alt="The menu bar panel showing transfer speeds and per-torrent progress" width="300">
+
+</td>
+</tr>
+</table>
 
 ## Highlights
 
@@ -50,7 +92,10 @@ happening, and delightful when you interact with it.
 
 ## Building
 
-Requirements: macOS 26+, Xcode 26+, Homebrew.
+Requirements: macOS 26+, Apple Silicon, Xcode 26+, Homebrew.
+
+`Package.swift` currently hardcodes Homebrew's Apple Silicon prefix
+(`/opt/homebrew`), so an Intel Mac needs it edited before anything compiles.
 
 ```sh
 brew install libtorrent-rasterbar
