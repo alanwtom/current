@@ -234,7 +234,7 @@ struct LibraryRow: View {
                 .tabularNumerics()
                 .numericTransition()
                 .foregroundStyle(
-                    SwarmHealth(seeds: snapshot.swarm.connectedSeeds) == .rare
+                    SwarmHealth(swarm: snapshot.swarm) == .rare
                         ? Theme.warning
                         : Theme.textTertiary
                 )

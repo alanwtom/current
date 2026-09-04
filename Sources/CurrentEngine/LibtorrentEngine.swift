@@ -41,6 +41,11 @@ public actor LibtorrentEngine: TorrentEngine {
         var connectedSeeds: Int32
         var connectedPeers: Int32
         var knownSeeds: Int32
+        /// -1 from the shim when no tracker has reported; kept as -1 here and
+        /// turned into nil at the boundary below, so "unknown" survives the
+        /// trip instead of becoming a zero.
+        var swarmSeeds: Int32
+        var swarmPeers: Int32
         var seedSeconds: UInt64
         var activeSeconds: UInt64
         var hasMetadata: Bool
@@ -165,6 +170,8 @@ public actor LibtorrentEngine: TorrentEngine {
                     connectedSeeds: row.connected_seeds,
                     connectedPeers: row.connected_peers,
                     knownSeeds: row.known_seeds,
+                    swarmSeeds: row.swarm_seeds,
+                    swarmPeers: row.swarm_peers,
                     seedSeconds: row.seed_seconds,
                     activeSeconds: row.active_seconds,
                     hasMetadata: row.has_metadata != 0
@@ -263,7 +270,9 @@ public actor LibtorrentEngine: TorrentEngine {
                     swarm: SwarmSummary(
                         connectedSeeds: Int(row.connectedSeeds),
                         connectedPeers: Int(row.connectedPeers),
-                        knownSeeds: Int(row.knownSeeds)
+                        knownSeeds: Int(row.knownSeeds),
+                        swarmSeeds: row.swarmSeeds < 0 ? nil : Int(row.swarmSeeds),
+                        swarmPeers: row.swarmPeers < 0 ? nil : Int(row.swarmPeers)
                     ),
                     addedAt: addedDates[id] ?? Date(),
                     activeSeedSeconds: TimeInterval(row.seedSeconds),

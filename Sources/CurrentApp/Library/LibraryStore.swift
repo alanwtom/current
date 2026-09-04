@@ -223,7 +223,12 @@ final class LibraryStore: ObservableObject {
                     : existing.lastActivityAt
             }
 
-            if snapshot.progress >= 1 && snapshot.completedAt == nil {
+            // `totalBytes > 0` is load-bearing. libtorrent reports progress as a
+            // fraction of the bytes you *want*, so a torrent that wants nothing
+            // — no metadata yet, or every file deselected — is 100% done by that
+            // definition. The inspector then showed a "Completed" date against
+            // a download of 0 B of 0 B, which is a claim the app can't support.
+            if snapshot.progress >= 1, snapshot.totalBytes > 0, snapshot.completedAt == nil {
                 snapshot.completedAt = Date()
             }
 

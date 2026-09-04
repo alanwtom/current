@@ -97,7 +97,11 @@ struct InspectorPanel: View {
             HStack(spacing: Space.s) {
                 StatePill(state: app.failures[snapshot.id].map { TorrentState.failed($0) } ?? snapshot.state)
 
-                if SwarmHealth(seeds: snapshot.swarm.connectedSeeds) == .rare && !snapshot.state.isComplete {
+                // Only when a tracker has actually reported the swarm. This chip
+                // used to appear on anything paused or newly added, because
+                // rarity was inferred from how many seeds we were connected to
+                // — zero, in both cases.
+                if SwarmHealth(swarm: snapshot.swarm) == .rare && !snapshot.state.isComplete {
                     Chip(text: "Rare", symbol: "sparkles", tint: Theme.warning)
                 }
                 if snapshot.pinned {
@@ -249,16 +253,31 @@ private struct OverviewPane: View {
                 StatRow(label: "Uploaded", value: ByteFormatting.bytes(snapshot.uploadedBytes))
                 StatRow(label: "Share ratio", value: ByteFormatting.ratio(snapshot.shareRatio))
                 StatRow(label: "Peers connected", value: "\(snapshot.swarm.connectedPeers)")
+                // The swarm's own size, straight from the tracker — the figure
+                // a torrent page shows. Shown separately from "connected"
+                // because the two are different questions and reading one as
+                // the other is what made a 335-seed torrent look abandoned.
+                if let seeds = snapshot.swarm.swarmSeeds {
+                    StatRow(label: "Seeds in swarm", value: "\(seeds)")
+                }
+                if let peers = snapshot.swarm.swarmPeers {
+                    StatRow(label: "Peers in swarm", value: "\(peers)")
+                }
                 StatRow(label: "Added", value: snapshot.addedAt.formatted(date: .abbreviated, time: .shortened))
                 if let completed = snapshot.completedAt {
                     StatRow(label: "Completed", value: completed.formatted(date: .abbreviated, time: .shortened))
                 }
             }
 
-            SwarmHealthCard(
-                health: SwarmHealth(seeds: snapshot.swarm.connectedSeeds),
-                seeds: snapshot.swarm.connectedSeeds
-            )
+            // Nothing at all until a tracker has reported. A card explaining
+            // that we don't know is worse than no card.
+            let health = SwarmHealth(swarm: snapshot.swarm)
+            if health.isKnown {
+                SwarmHealthCard(
+                    health: health,
+                    seeds: snapshot.swarm.swarmSeeds ?? snapshot.swarm.knownSeeds
+                )
+            }
 
             saveLocation
         }

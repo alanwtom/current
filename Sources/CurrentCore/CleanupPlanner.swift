@@ -112,8 +112,14 @@ public enum CleanupPlanner {
                 exclusions.append(.seedGoalUnmet)
             }
 
-            let health = SwarmHealth(seeds: snapshot.swarm.connectedSeeds)
-            if health == .rare {
+            // A swarm we can't assess is excluded too, and that is on purpose:
+            // this gate decides what the app removes from disk on its own, and
+            // the conservative answer to "is this torrent rare?" when nobody
+            // has told us is *don't touch it*. It is the same behaviour as
+            // before by accident — every paused torrent used to read as rare —
+            // except now it is a decision rather than a measurement artefact.
+            let health = SwarmHealth(swarm: snapshot.swarm)
+            if health == .rare || health == .unknown {
                 exclusions.append(.rareSwarm)
             }
 
@@ -168,10 +174,21 @@ public enum CleanupPlanner {
         switch health {
         case .healthy:
             healthComponent = 1
-            reasons.append("Swarm is healthy (\(snapshot.swarm.connectedSeeds) seeds)")
+            // The swarm's own size, not our connection count — that's the
+            // number a tracker page shows, and the only one worth quoting.
+            if let seeds = snapshot.swarm.swarmSeeds {
+                reasons.append("Swarm is healthy (\(seeds) seeds)")
+            } else {
+                reasons.append("Swarm is healthy")
+            }
         case .moderate:
             healthComponent = 0.4
         case .rare:
+            healthComponent = 0
+        case .unknown:
+            // Never reached from `plan` — an unknown swarm is excluded by the
+            // gate above and never ranked. Scored neutrally so that a future
+            // caller can't get a silently flattering result.
             healthComponent = 0
         }
 

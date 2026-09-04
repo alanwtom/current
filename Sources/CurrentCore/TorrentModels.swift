@@ -168,14 +168,39 @@ public struct TorrentMetadata: Codable, Sendable {
 }
 
 public struct SwarmSummary: Equatable, Codable, Sendable {
+    /// Seeds this machine currently has an open connection to.
+    ///
+    /// **This is not the size of the swarm**, and the difference is the whole
+    /// reason the two fields below exist. A paused torrent is connected to
+    /// nothing, and a torrent that was just added hasn't connected yet; both
+    /// read zero here while the swarm may be enormous.
     public var connectedSeeds: Int
     public var connectedPeers: Int
+    /// Seeds in our peer list — known from a tracker reply or the DHT, whether
+    /// or not we're talking to them.
     public var knownSeeds: Int
+    /// How many seeds and peers the swarm actually has, as last reported by a
+    /// tracker or the DHT — the figures a torrent site shows beside a listing.
+    ///
+    /// `nil` means nobody has told us yet. It is an `Optional` rather than a
+    /// zero precisely so that "no information" can't be mistaken for "no
+    /// seeds", which is exactly the mistake that had the app calling a
+    /// 335-seed torrent rare because it happened to be paused.
+    public var swarmSeeds: Int?
+    public var swarmPeers: Int?
 
-    public init(connectedSeeds: Int, connectedPeers: Int, knownSeeds: Int) {
+    public init(
+        connectedSeeds: Int,
+        connectedPeers: Int,
+        knownSeeds: Int,
+        swarmSeeds: Int? = nil,
+        swarmPeers: Int? = nil
+    ) {
         self.connectedSeeds = connectedSeeds
         self.connectedPeers = connectedPeers
         self.knownSeeds = knownSeeds
+        self.swarmSeeds = swarmSeeds
+        self.swarmPeers = swarmPeers
     }
 
     public static let empty = SwarmSummary(connectedSeeds: 0, connectedPeers: 0, knownSeeds: 0)

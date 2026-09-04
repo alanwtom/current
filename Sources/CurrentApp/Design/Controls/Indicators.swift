@@ -354,16 +354,23 @@ struct SwarmHealthCard: View {
         case .healthy: return "person.3.fill"
         case .moderate: return "person.2.fill"
         case .rare: return "person.fill.badge.minus"
+        case .unknown: return "person.fill.questionmark"
         }
     }
 
     /// Amber rather than red for a rare swarm: it is a thing worth knowing and
     /// acting on, not a failure. Nothing is broken.
+    ///
+    /// An unmeasured swarm is grey, because colour in this app means a state and
+    /// "we don't know" isn't one. In practice the callout isn't shown at all
+    /// then — see `InspectorPanel` — but the case has to be neutral rather than
+    /// alarming for the day something does show it.
     private var color: Color {
         switch health {
         case .healthy: return Theme.complete
         case .moderate: return Theme.textSecondary
         case .rare: return Theme.warning
+        case .unknown: return Theme.textTertiary
         }
     }
 }

@@ -52,9 +52,19 @@ typedef struct {
     uint64_t total_uploaded;      /* payload bytes, all-time */
     double download_rate;         /* bytes/s */
     double upload_rate;           /* bytes/s */
-    int connected_seeds;
+    int connected_seeds;          /* seeds this machine has an open connection to */
     int connected_peers;
-    int known_seeds;
+    int known_seeds;              /* seeds in our peer list, connected or not */
+    /*
+     * The size of the whole swarm, as last reported by a tracker or the DHT —
+     * the same figures a torrent site shows next to a listing. **-1 means
+     * nobody has told us yet**, which is not the same as zero and must not be
+     * treated as it: a paused torrent has no connections and no announces, so
+     * every other count here reads zero while the swarm may have hundreds of
+     * seeds in it.
+     */
+    int swarm_seeds;
+    int swarm_peers;
     uint64_t seed_seconds;        /* time spent seeding, persisted */
     uint64_t active_seconds;      /* any activity, persisted */
     int has_metadata;
