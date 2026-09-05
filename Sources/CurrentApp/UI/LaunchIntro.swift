@@ -21,7 +21,7 @@ import AppKit
 /// **Nothing here exceeds ~300 ms.** The app's motion rule caps single movements
 /// at that, and the intro doesn't get an exemption — it is a *sequence* of
 /// token-length movements (each line draws in `standard`, the drop falls in
-/// `quick`), which is why the total lands near a second without any one gesture
+/// `standard`), which is why the total lands near a second without any one gesture
 /// feeling slow. There are no hand-typed durations below; every stage length is
 /// a `Motion` token.
 struct LaunchIntro: View {
@@ -51,8 +51,9 @@ struct LaunchIntro: View {
 
         TimelineView(.animation) { timeline in
             let elapsed = elapsed(at: timeline.date)
+            let frame = Frame(stages: stages, veil: veilColor, iconSize: iconSize)
             Canvas(opaque: false, rendersAsynchronously: false) { context, size in
-                draw(in: &context, size: size, elapsed: elapsed, stages: stages)
+                frame.draw(in: &context, size: size, elapsed: elapsed)
             }
         }
         // Fills the window, so the only thing that could change its size is the
@@ -104,42 +105,6 @@ struct LaunchIntro: View {
 
     // MARK: - Drawing
 
-    private func draw(
-        in context: inout GraphicsContext,
-        size: CGSize,
-        elapsed: TimeInterval,
-        stages: Stages
-    ) {
-        // Everything dissolves together at the end, including the veil.
-        let exit = 1 - easeOut(progress(elapsed, from: stages.fadeStart, over: stages.fade))
-
-        // The veil hides the window until the intro is done, so launch reads as
-        // one moment instead of "app appears, then something animates on top".
-        context.fill(
-            Path(CGRect(origin: .zero, size: size)),
-            with: .color(veilColor.opacity(exit))
-        )
-
-        let appear = easeOut(progress(elapsed, from: 0, over: stages.plateIn))
-        // The plate settles in from slightly small, and on the way out drifts
-        // slightly large — receding into the app rather than being switched off.
-        let scale = stages.reduceMotion
-            ? 1
-            : 0.94 + 0.06 * easeOut(progress(elapsed, from: 0, over: stages.plateSettle))
-                + 0.04 * (1 - exit)
-
-        var icon = context
-        icon.opacity = appear * exit
-        icon.translateBy(x: size.width / 2, y: size.height / 2)
-        // Negative y flips into the icon's bottom-left origin, so the row
-        // numbers below can be copied straight from make-icon.swift.
-        icon.scaleBy(x: iconSize / Mark.designSize * scale, y: -iconSize / Mark.designSize * scale)
-        icon.translateBy(x: -Mark.axis, y: -Mark.designSize / 2)
-
-        drawPlate(in: icon)
-        drawMark(in: icon, elapsed: elapsed, stages: stages)
-    }
-
     /// The app's own window surface, flattened to fixed components first.
     ///
     /// The resolve is load-bearing and has already cost one debugging session.
@@ -152,95 +117,215 @@ struct LaunchIntro: View {
         Color(Theme.chrome.resolve(in: environment))
     }
 
-    private func drawPlate(in context: GraphicsContext) {
-        var plate = context
-        // In this flipped space negative y is downward on screen, which is
-        // where a shadow belongs.
-        plate.addFilter(.shadow(color: .black.opacity(0.28), radius: 90, x: 0, y: -40))
-        plate.fill(
-            Mark.plate,
-            with: .linearGradient(
-                Gradient(colors: [Mark.plateTop, Mark.plateBottom]),
-                startPoint: CGPoint(x: 512, y: 924),
-                endPoint: CGPoint(x: 512, y: 100)
-            )
-        )
-        // Same soft light from above the icon has, so the plate doesn't read as
-        // flat paint.
-        plate.fill(
-            Mark.plate,
-            with: .radialGradient(
-                Gradient(colors: [.white.opacity(0.16), .white.opacity(0)]),
-                center: CGPoint(x: 512, y: 880),
-                startRadius: 0,
-                endRadius: 520
-            )
-        )
-    }
+}
 
-    private func drawMark(in context: GraphicsContext, elapsed: TimeInterval, stages: Stages) {
-        let shading = GraphicsContext.Shading.linearGradient(
-            Gradient(colors: [Mark.markTop, Mark.markBottom]),
-            startPoint: CGPoint(x: 512, y: 830),
-            endPoint: CGPoint(x: 512, y: 210)
-        )
+// MARK: - One frame
 
-        // Each line draws left to right, staggered top to bottom: the current
-        // arrives from above and narrows as it comes.
-        for (index, wave) in Mark.waves.enumerated() {
-            let drawn = stages.reduceMotion
+extension LaunchIntro {
+    /// The whole intro as a pure function of elapsed time.
+    ///
+    /// Split out of the view deliberately. An animation you can only judge by
+    /// launching the app and squinting at it is one that quietly drifts;
+    /// `LaunchIntroRenderingTests` can ask this for the exact frame at 0.7 s
+    /// and look at it. It also keeps the drawing honest about its inputs —
+    /// everything it needs is stored here, so a frame cannot depend on
+    /// anything but the clock.
+    struct Frame {
+        let stages: Stages
+        let veil: Color
+        let iconSize: CGFloat
+
+        // MARK: - Drawing
+
+        func draw(
+                in context: inout GraphicsContext,
+                size: CGSize,
+                elapsed: TimeInterval
+            ) {
+            // Everything dissolves together at the end, including the veil.
+            let exit = 1 - easeOut(progress(elapsed, from: stages.fadeStart, over: stages.fade))
+
+            // The veil hides the window until the intro is done, so launch reads as
+            // one moment instead of "app appears, then something animates on top".
+            context.fill(
+                Path(CGRect(origin: .zero, size: size)),
+                with: .color(veil.opacity(exit))
+            )
+
+            let appear = easeOut(progress(elapsed, from: 0, over: stages.plateIn))
+            // The plate settles in from slightly small, and on the way out drifts
+            // slightly large — receding into the app rather than being switched off.
+            let scale = stages.reduceMotion
                 ? 1
-                : easeOut(progress(
-                    elapsed,
-                    from: Double(index) * stages.waveStagger,
-                    over: stages.waveDraw
-                ))
-            guard drawn > 0 else { continue }
-            context.stroke(
-                drawn >= 1 ? wave.path : wave.path.trimmedPath(from: 0, to: drawn),
-                with: shading,
-                style: StrokeStyle(lineWidth: wave.weight, lineCap: .round, lineJoin: .round)
+                : 0.94 + 0.06 * easeOut(progress(elapsed, from: 0, over: stages.plateSettle))
+                    + 0.04 * (1 - exit)
+
+            var icon = context
+            icon.opacity = appear * exit
+            icon.translateBy(x: size.width / 2, y: size.height / 2)
+            // Negative y flips into the icon's bottom-left origin, so the row
+            // numbers below can be copied straight from make-icon.swift.
+            icon.scaleBy(x: iconSize / Mark.designSize * scale, y: -iconSize / Mark.designSize * scale)
+            icon.translateBy(x: -Mark.axis, y: -Mark.designSize / 2)
+
+            drawPlate(in: icon)
+            drawMark(in: icon, elapsed: elapsed, stages: stages)
+        }
+
+        func drawPlate(in context: GraphicsContext) {
+            var plate = context
+            // In this flipped space negative y is downward on screen, which is
+            // where a shadow belongs.
+            plate.addFilter(.shadow(color: .black.opacity(0.28), radius: 90, x: 0, y: -40))
+            plate.fill(
+                Mark.plate,
+                with: .linearGradient(
+                    Gradient(colors: [Mark.plateTop, Mark.plateBottom]),
+                    startPoint: CGPoint(x: 512, y: 924),
+                    endPoint: CGPoint(x: 512, y: 100)
+                )
+            )
+            // Same soft light from above the icon has, so the plate doesn't read as
+            // flat paint.
+            plate.fill(
+                Mark.plate,
+                with: .radialGradient(
+                    Gradient(colors: [.white.opacity(0.16), .white.opacity(0)]),
+                    center: CGPoint(x: 512, y: 880),
+                    startRadius: 0,
+                    endRadius: 520
+                )
             )
         }
 
-        // The drop falls the length of the stack and settles where the current
-        // has narrowed to a single point — the one file the streams add up to.
-        let fall = stages.reduceMotion
-            ? 1
-            : easeOut(progress(elapsed, from: stages.dropStart, over: stages.dropFall))
-        guard fall > 0 else { return }
+        func drawMark(in context: GraphicsContext, elapsed: TimeInterval, stages: Stages) {
+            let shading = GraphicsContext.Shading.linearGradient(
+                Gradient(colors: [Mark.markTop, Mark.markBottom]),
+                startPoint: CGPoint(x: 512, y: 830),
+                endPoint: CGPoint(x: 512, y: 210)
+            )
 
-        let centerY = Mark.dropStartY + (Mark.dropRestY - Mark.dropStartY) * fall
-        let diameter = Mark.dropSize * (0.5 + 0.5 * fall)
-        var drop = context
-        // Fades in over the first third of the fall, so it doesn't pop into
-        // existence on top of the lines it is meant to be gathering from.
-        drop.opacity = min(1, fall * 3)
-        drop.fill(
-            Path(ellipseIn: CGRect(
-                x: Mark.axis - diameter / 2,
-                y: centerY - diameter / 2,
-                width: diameter,
-                height: diameter
-            )),
-            with: shading
-        )
-    }
+            // Drawn *before* the waves, so the current paints over it.
+            //
+            // On top, the drop bulged out of the last line while it beaded up —
+            // for about a tenth of a second the narrowest wave looked like it
+            // had a growth on it. Behind, the same movement reads as the drop
+            // gathering underneath the current and sliding clear of it, which is
+            // what it is supposed to be. Nothing about the timing changed; only
+            // which shape is in front.
+            //
+            // The drop beads off the narrowest line and falls the short distance
+            // to where the current has come to a point — the one file the
+            // streams add up to.
+            //
+            // It used to fall the whole stack, 401 units of a 1024 space, inside
+            // one `Motion.quick`. Rendered frame by frame that is not a fall, it
+            // is a teleport: with `easeOut` on top, 63% of the journey happened
+            // in the first quarter of the time, so at 60fps you saw the drop
+            // about twice — once somewhere in the middle of the lines, once
+            // already arrived. Falling from the last line is 83 units, which is
+            // a distance you can actually watch something cross.
+            // `if`, not `guard ... return`: the drop is drawn first now, and an
+            // early return here would take the waves with it — the icon would
+            // stay empty until the drop's own stage began.
+            let fall = stages.reduceMotion
+                ? 1
+                : fallEase(progress(elapsed, from: stages.dropStart, over: stages.dropFall))
+            if fall > 0 {
 
-    // MARK: - Easing
+                // Beading up is its own, faster movement, finished before the fall
+                // is. Growing the whole way down read as the drop zooming toward the
+                // viewer rather than falling away from the current — the reference
+                // this was measured against never scales anything at all, and the
+                // moment a size change outlasts the movement it belongs to, it stops
+                // being weight and starts being a camera move.
+                let bead = stages.reduceMotion
+                    ? 1
+                    : easeOut(progress(elapsed, from: stages.dropStart, over: stages.dropBead))
 
-    /// 0…1 for `elapsed` moving through a stage. Stages are driven off one clock
-    /// rather than chained `withAnimation` calls, so a skip can move the whole
-    /// composition forward at once.
-    private func progress(_ elapsed: TimeInterval, from startsAt: TimeInterval, over duration: TimeInterval) -> Double {
-        guard duration > 0 else { return elapsed >= startsAt ? 1 : 0 }
-        return max(0, min(1, (elapsed - startsAt) / duration))
-    }
+                let centerY = Mark.dropStartY + (Mark.dropRestY - Mark.dropStartY) * fall
+                let diameter = Mark.dropSize * (0.62 + 0.38 * bead)
+                var drop = context
+                // Fades in over the first third of the fall, so it doesn't pop into
+                // existence on top of the lines it is meant to be gathering from.
+                //
+                // Multiplied into what it inherited, not assigned over it. Assigning
+                // discarded the icon's own `appear * exit` opacity, so at the end of
+                // the intro the plate and the waves dissolved on schedule and the
+                // drop did not — it sat there at full brightness, one bright dot
+                // alone on an empty window, and then vanished when the view was torn
+                // down. Every other element in here draws through the inherited
+                // opacity; this was the only one that overwrote it.
+                drop.opacity = context.opacity * min(1, bead * 2)
+                drop.fill(
+                    Path(ellipseIn: CGRect(
+                        x: Mark.axis - diameter / 2,
+                        y: centerY - diameter / 2,
+                        width: diameter,
+                        height: diameter
+                    )),
+                    with: shading
+                )
+            }
 
-    /// Matches the feel of the app's critically damped springs: quick departure,
-    /// no overshoot.
-    private func easeOut(_ t: Double) -> Double {
-        1 - pow(1 - t, 3)
+            // Each line draws left to right, staggered top to bottom: the current
+            // arrives from above and narrows as it comes.
+            for (index, wave) in Mark.waves.enumerated() {
+                let drawn = stages.reduceMotion
+                    ? 1
+                    : easeOut(progress(
+                        elapsed,
+                        from: Double(index) * stages.waveStagger,
+                        over: stages.waveDraw
+                    ))
+                guard drawn > 0 else { continue }
+                context.stroke(
+                    drawn >= 1 ? wave.path : wave.path.trimmedPath(from: 0, to: drawn),
+                    with: shading,
+                    style: StrokeStyle(lineWidth: wave.weight, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+
+        // MARK: - Easing
+
+        /// 0…1 for `elapsed` moving through a stage. Stages are driven off one clock
+        /// rather than chained `withAnimation` calls, so a skip can move the whole
+        /// composition forward at once.
+        func progress(_ elapsed: TimeInterval, from startsAt: TimeInterval, over duration: TimeInterval) -> Double {
+            guard duration > 0 else { return elapsed >= startsAt ? 1 : 0 }
+            return max(0, min(1, (elapsed - startsAt) / duration))
+        }
+
+        /// Matches the feel of the app's critically damped springs: quick departure,
+        /// no overshoot.
+        func easeOut(_ t: Double) -> Double {
+            1 - pow(1 - t, 3)
+        }
+
+        /// A fall. Gravity for most of the trip, with the last of the speed
+        /// spent on landing: velocity peaks around 70% of the way down and
+        /// reaches zero exactly at rest, so the drop neither bounces nor stops
+        /// dead.
+        ///
+        /// `easeOut` is right for everything else in here and exactly wrong for
+        /// this one movement — it decelerates the whole way, which is how
+        /// something is *placed*, not how something is dropped. A symmetric
+        /// ease-in-out fixes the direction but spends as long slowing down as
+        /// speeding up, which reads as the drop being lowered on a wire.
+        ///
+        /// Blended rather than switched between the two halves. A piecewise
+        /// version, accelerating to 85% and then braking, puts a step in the
+        /// velocity at the join; you see it as a flinch just before the drop
+        /// settles. This crossfades gravity into the landing with a cubic, so
+        /// the curve is smooth the whole way and still covers only ~31% of the
+        /// distance in the first half of the time.
+        func fallEase(_ t: Double) -> Double {
+            let gravity = t * t                  // accelerating downward
+            let landing = 1 - (1 - t) * (1 - t)  // cushioning to a stop
+            let blend = t * t * t                // the landing only takes over near the end
+            return gravity * (1 - blend) + landing * blend
+        }
     }
 }
 
@@ -249,8 +334,9 @@ struct LaunchIntro: View {
 extension LaunchIntro {
     /// The intro's schedule, assembled entirely from `Motion` tokens.
     ///
-    /// Full: lines draw (0 → .64), drop falls and lands (.64 → .82), the whole
-    /// icon holds for a beat, then dissolves — about 1.2s end to end.
+    /// Full: lines draw (0 → .64), the drop beads off the last one and falls
+    /// (.64 → .92), the whole icon holds for a beat, then dissolves — about
+    /// 1.3s end to end.
     ///
     /// Reduce Motion: nothing travels. The finished icon fades up, holds, fades
     /// out — under half a second, and the app's identity still registers.
@@ -258,7 +344,7 @@ extension LaunchIntro {
         let reduceMotion: Bool
 
         /// `CURRENT_INTRO_SLOWMO=6` stretches the whole intro so it can actually
-        /// be looked at — a 1.2s animation is impossible to screenshot or judge
+        /// be looked at — a 1.3s animation is impossible to screenshot or judge
         /// frame by frame at real speed. Affects nothing in a normal launch.
         private static let slowmo: Double = {
             guard let raw = ProcessInfo.processInfo.environment["CURRENT_INTRO_SLOWMO"],
@@ -271,7 +357,14 @@ extension LaunchIntro {
         var plateSettle: TimeInterval { scaled(Motion.standard) }
         var waveStagger: TimeInterval { scaled(Motion.instant) }
         var waveDraw: TimeInterval { scaled(Motion.standard) }
-        var dropFall: TimeInterval { scaled(Motion.quick) }
+        /// `standard`, not `quick`. The drop is the last thing that happens
+        /// before the icon dissolves, and the reference this was measured
+        /// against spends the same beat unhurried. It is still one token and
+        /// still under the app's ~300 ms ceiling for a single movement.
+        var dropFall: TimeInterval { scaled(Motion.standard) }
+        /// The bead finishes well before the fall does, so the drop is at full
+        /// size for most of its travel.
+        var dropBead: TimeInterval { scaled(Motion.quick) }
         var hold: TimeInterval { scaled(Motion.instant) }
         var fade: TimeInterval { scaled(reduceMotion ? Motion.quick : Motion.standard) }
 
@@ -313,8 +406,11 @@ private enum Mark {
     static let dropSize: CGFloat = 78
     /// The icon's drop sits at rect y 267; this is its centre.
     static let dropRestY: CGFloat = 267 + dropSize / 2
-    /// It starts at the top line, so the fall travels the whole narrowing stack.
-    static let dropStartY: CGFloat = 707
+    /// It beads off the *last* line — the narrowest one — rather than the top
+    /// of the stack. Falling from the top meant crossing every wave on the way
+    /// down, which both read as the drop passing in front of the current and
+    /// gave it four times the distance to cover in one token's worth of time.
+    static let dropStartY: CGFloat = rows[rows.count - 1].y
 
     static let waves: [(path: Path, weight: CGFloat)] = rows.map { row in
         var path = Path()
