@@ -36,11 +36,9 @@ Intel too, which is real work for a shrinking audience.
 
 ### 3. Apple Developer Program — $99/year
 
-There is no way around this. Unsigned, un-notarised apps show a dialog telling
-the user the app is damaged and should be moved to the Trash. Most people stop
-there, and the ones who don't have to be talked through right-click → Open.
-
-- [ ] Enrol. Everything in Phase 1 is blocked on it.
+**Already have it.** Team 8JG887CZZ6. This was a non-question that looked like
+a blocker for a while: the account existed the whole time, and what was
+actually missing was one certificate type.
 
 ### 4. Where the download lives
 
@@ -85,18 +83,22 @@ Homebrew on it, which is still worth testing before anyone else downloads this.
 
 ## Phase 2 — Stop shipping switches that lie
 
-Three settings are drawn, saved, and read by nothing. Found by checking every
-setting against whether any code anywhere consumes it.
+Done. Four, in the end, not three — the sweep that found the first three found
+a fourth of the same kind.
 
-- [ ] **Automatic cleanup.** The switch does nothing. Cleanup only ever runs
-      when triggered by hand, so the automatic half of a headline feature does
-      not exist. Either wire it into the 15-second automation tick or take the
-      switch out and stop advertising it.
-- [ ] **Prevent sleep while downloading.** Does nothing. Needs a real power
-      assertion held while transfers are active and released when they stop.
-- [ ] **Storage budget notifications.** Never fire.
-- [ ] **Re-run the sweep** after fixing these, and keep running it. A setting
-      with no reader is invisible in review and obvious to a user.
+- [x] **Automatic cleanup**, now on the automation tick and only with a budget
+      set. "No budget" means "everything eligible" to the manual command, which
+      is right when a person asked and catastrophic on a timer.
+- [x] **Prevent sleep while downloading**, now a real idle-sleep assertion,
+      confirmed with `pmset` in both directions. It deliberately doesn't fight
+      the lid.
+- [x] **Storage budget notifications**, now fired only when the app can't fix
+      the problem itself, once per crossing.
+- [x] **Default seed policy** — the picker saved your choice and every torrent
+      came out Balanced regardless.
+- [x] **The sweep is worth re-running** after any settings change. It is a
+      one-liner: every setting, checked against whether anything outside the
+      settings pane reads it.
 
 ## Phase 3 — Be able to fix things after release
 
@@ -120,10 +122,9 @@ sourcing" — it is making the open part hold up. Two different audiences arrive
 here and neither is served yet: someone deciding whether to download, and
 someone deciding whether to build it.
 
-- [ ] **Screenshots in the README.** The single highest-leverage item on this
-      page. The whole pitch is that this doesn't look like a stock Mac utility,
-      and there is currently no way to see that without compiling it. A
-      design-led app with no screenshots reads as abandoned.
+- [x] **Screenshots in the README.** Three, taken against `-simulate` so they
+      can be reproduced: the library, the card a magnet raises, the menu bar
+      panel.
 - [ ] **Third-party licence notices.** The bundle now redistributes libtorrent
       (BSD-3-Clause) and OpenSSL (Apache-2.0). Both require their notices to
       travel with a binary distribution. A `THIRD-PARTY-NOTICES.md` in the repo
@@ -136,10 +137,10 @@ someone deciding whether to build it.
       environment variable and fall back to the current default. Right now the
       honest README line would be "builds on Apple Silicon with Homebrew at the
       default location", which is a small audience for contributors.
-- [ ] **A README written for a person landing cold.** What it is, one
-      screenshot, requirements stated plainly (Apple Silicon, macOS 26),
-      download link, build instructions, licence. The current one opens with a
-      philosophy paragraph and a feature list.
+- [ ] **A README written for a person landing cold.** Screenshots and the
+      Apple Silicon requirement are in. Still missing: a download link, and an
+      opening that leads with what the app is rather than a philosophy
+      paragraph.
 - [ ] **`SECURITY.md`.** This app parses untrusted files and talks to untrusted
       peers over the network. A stated disclosure route is basic hygiene for
       anything with a socket.
