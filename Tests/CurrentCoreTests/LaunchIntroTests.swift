@@ -82,49 +82,89 @@ final class LaunchIntroTests: XCTestCase {
         )
     }
 
-    /// Finds the bottom edge of the drop: it is the lowest thing drawn, so
-    /// scanning up from the base of the image finds it before anything else.
-    /// Returns a fraction of the image height, or nil if nothing is lit.
-    private func dropBottomEdge(_ rep: NSBitmapImageRep) -> Double? {
-        let w = rep.pixelsWide, h = rep.pixelsHigh
-        for y in stride(from: h - 1, through: 0, by: -1) {
-            for x in stride(from: Int(Double(w) * 0.44), to: Int(Double(w) * 0.56), by: 1) {
+    /// How much of a region is lit, as a pixel count — enough to tell a
+    /// half-built mark from a finished one.
+    private func inkPixels(_ rep: NSBitmapImageRep, in unit: CGRect) -> Int {
+        let w = Double(rep.pixelsWide), h = Double(rep.pixelsHigh)
+        var lit = 0
+        for y in stride(from: Int(unit.minY * h), to: Int(unit.maxY * h), by: 1) {
+            for x in stride(from: Int(unit.minX * w), to: Int(unit.maxX * w), by: 1) {
                 if let c = rep.colorAt(x: x, y: y), Double(c.brightnessComponent) > 0.5 {
-                    return Double(y) / Double(h)
+                    lit += 1
                 }
             }
         }
-        return nil
+        return lit
     }
 
-    /// The drop has to accelerate, not front-load its journey.
+    /// The drop builds up over its own stage instead of appearing complete.
     ///
-    /// The old version used `easeOut` — fastest at the instant it starts, then
-    /// crawling — which is how something decelerating to a halt moves, not
-    /// something falling. Combined with a 401-unit journey inside one
-    /// `Motion.quick`, it put 63% of the distance in the first quarter of the
-    /// time, so at 60fps the drop appeared roughly twice and read as a
-    /// teleport. Measuring the position rather than the brightness is the point
-    /// of this test: an earlier version watched one spot and happily passed
-    /// with the bad easing restored.
-    func testTheDropAcceleratesRatherThanFrontLoadingItsFall() throws {
+    /// Two earlier versions are worth remembering, because both read fine in
+    /// the code and wrong on screen. It first *flew* in — born up in the stack
+    /// and falling to rest — which at speed teleported: 63% of the journey
+    /// inside the first quarter of the time, so you saw it about twice at
+    /// 60fps. Eased properly it was still one object moving through an
+    /// otherwise still composition, pulling the eye exactly when the mark
+    /// should have been settling. Then it was literally traced, as a trimmed
+    /// circular stroke like the four lines — which cannot work, for a reason
+    /// that is easy to rediscover and hard to see coming: a dot's finished
+    /// shape *is* a single round cap, so the stroke paints most of it on the
+    /// first frame, and flattening the cap to stop that turns the sweep into a
+    /// pie chart with hard radial edges.
+    ///
+    /// So it grows. What is guarded is the property all three versions had to
+    /// satisfy and only this one does cleanly: partway through its own stage,
+    /// the dot is visibly unfinished.
+    func testTheDropBuildsUpRatherThanAppearing() throws {
         let stages = LaunchIntro.Stages(reduceMotion: false)
-        let at = { (f: Double) in stages.dropStart + stages.dropFall * f }
+        let at = { (f: Double) in stages.dropStart + stages.dropDraw * f }
 
-        let start = try XCTUnwrap(dropBottomEdge(try render(elapsed: at(0.02))))
-        let half = try XCTUnwrap(dropBottomEdge(try render(elapsed: at(0.5))))
-        let end = try XCTUnwrap(dropBottomEdge(try render(elapsed: at(1.0))))
+        // The wave above bleeds into the region, so measure the dot against the
+        // frame just before it starts rather than against zero. Without this,
+        // the numbers being compared are more tail than dot: measured, the tail
+        // is 193 lit pixels and the finished dot another 334.
+        let baseline = inkPixels(try render(elapsed: at(0)), in: dropRegion)
+        let dot = { (f: Double) in
+            try self.inkPixels(self.render(elapsed: at(f)), in: self.dropRegion) - baseline
+        }
 
-        let total = end - start
-        XCTAssertGreaterThan(total, 0.01, "the drop should visibly travel downward")
+        let early = try dot(0.25)
+        let done = try dot(1.0)
 
-        let coveredByHalfway = (half - start) / total
-        // easeInOut is symmetric and covers half the ground in half the time.
-        // easeOut covers 87% of it, which is the shape being guarded against.
-        XCTAssertLessThan(
-            coveredByHalfway, 0.62,
-            "halfway through the fall the drop had already covered \(Int(coveredByHalfway * 100))% of the distance — that is a decelerating slide, not a fall"
+        // Fails both ways that matter: a dot that never draws, and one that was
+        // already whole before its stage began — then it adds nothing during it.
+        XCTAssertGreaterThan(
+            done, 200,
+            "the drop added almost nothing over its own stage — it either never drew, or it was already complete when the stage started"
         )
+        XCTAssertGreaterThan(early, 0, "the drop should have started a quarter of the way through")
+        XCTAssertLessThan(
+            Double(early), Double(done) * 0.6,
+            "a quarter of the way in the drop was already \(Int(Double(early) / Double(done) * 100))% of its final size — it is appearing, not building up"
+        )
+        XCTAssertGreaterThan(try dot(0.6), early, "the drop should still be growing at 60%")
+    }
+
+    /// Nothing travels. The dot ends up where the icon says it goes and was
+    /// never anywhere else — a falling dot would light pixels above its resting
+    /// place partway through. This is what stops the flown-in version coming
+    /// back; growing from the centre can never trip it.
+    func testTheDropNeverAppearsAboveItsRestingPlace() throws {
+        let stages = LaunchIntro.Stages(reduceMotion: false)
+        // The gap between the last wave and the drop: empty in a finished icon.
+        let gap = CGRect(x: 0.44, y: 0.515, width: 0.12, height: 0.035)
+        let finished = inkPixels(try render(elapsed: stages.fadeStart), in: gap)
+
+        for fraction in [0.2, 0.4, 0.6, 0.8] {
+            let mid = inkPixels(
+                try render(elapsed: stages.dropStart + stages.dropDraw * fraction),
+                in: gap
+            )
+            XCTAssertLessThanOrEqual(
+                mid, finished + 12,
+                "at \(Int(fraction * 100))% the drop was lighting the gap above its resting place"
+            )
+        }
     }
 
     /// Reduce Motion gets the finished icon, immediately, with nothing
