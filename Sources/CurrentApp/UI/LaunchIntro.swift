@@ -20,10 +20,10 @@ import AppKit
 ///
 /// **Nothing here exceeds ~300 ms.** The app's motion rule caps single movements
 /// at that, and the intro doesn't get an exemption — it is a *sequence* of
-/// token-length movements (each line draws in `standard`, the drop falls in
-/// `standard`), which is why the total lands near a second without any one gesture
-/// feeling slow. There are no hand-typed durations below; every stage length is
-/// a `Motion` token.
+/// token-length movements (each line draws in `standard`, and so does the drop),
+/// which is why the total lands near a second without any one gesture feeling
+/// slow. There are no hand-typed durations below; every stage length is a
+/// `Motion` token.
 struct LaunchIntro: View {
     /// Called once the intro is finished, whether it played out or was skipped.
     let onFinished: () -> Void
@@ -223,49 +223,55 @@ extension LaunchIntro {
                 )
             }
 
-            // The drop is the fifth stroke and it arrives on the same beat as
-            // the four lines — one stagger step later, the same easing, the
-            // same span. It grows from nothing rather than travelling.
+            // The drop is the last thing the mark does, and it is drawn on
+            // rather than placed: a rounded frontier crosses it from the top
+            // down and ink is laid behind, the way the leading edge of each
+            // line above lays down the line.
             //
-            // Two other ways of doing this were tried and both are worse. Flown
-            // in — born up in the stack and falling to rest — it was one object
-            // moving through an otherwise still composition, and it pulled the
-            // eye at the moment the mark should simply be finishing. Literally
-            // traced, as a trimmed circular stroke, it cannot work: a dot's
-            // finished shape *is* a single round cap, so the stroke paints most
-            // of it on the first frame; cutting the cap flat to stop that turns
-            // the sweep into a pie chart with hard radial edges. The lines get
-            // away with a round cap because a cap is a small fraction of a long
-            // line. A dot has no length to hide it in.
+            // Downward, not left to right, even though the lines draw left to
+            // right — and that is the one decision here worth defending. Three
+            // things settled it, all of them measured at the size this is
+            // actually seen at, which is a dot about 10pt across:
             //
-            // Growing is the honest analogue: a line extends, a dot expands.
+            // * **The top edge is what makes it read as drawn.** From the
+            //   first frame the dot's top arc is finished and in its final
+            //   place, tucked under the last line, and only the frontier
+            //   moves. That anchor is the whole difference between drawing and
+            //   scaling; a sweep across the other axis is symmetric top to
+            //   bottom, nothing is pinned, and at this size it just reads as
+            //   the dot stretching sideways — barely better than the version
+            //   that grew from nothing, which was rejected.
+            // * **It says what the mark says.** Four lines of a current step
+            //   down the icon and the drop is what they add up to. Ink
+            //   arriving from above is that sentence; ink arriving from the
+            //   side is a fifth line that happens to be round.
+            // * **Ten points is not much room to travel.** A left-to-right
+            //   frontier crosses 10pt and you cannot see which way it went. A
+            //   line crosses five times that, which is why the same gesture
+            //   works there and not here.
             //
-            // It also fills straight into `context` rather than a copy of it.
-            // The flown-in version took a copy so it could fade itself in, set
-            // that copy's opacity instead of multiplying into the inherited
-            // one, and so ignored the icon's own dissolve: at the end of the
-            // intro the plate and the waves faded on schedule and the drop sat
-            // there at full brightness, one bright dot alone on an empty
-            // window, until the view was torn down. Nothing here needs its own
-            // opacity now, so there is nothing left to get wrong.
-            let drawn = stages.reduceMotion
+            // Ways of doing this that look right in code and wrong on screen,
+            // recorded so they don't get retried:
+            //
+            // * **Tracing the outline** like a line is traced. A dot's
+            //   finished shape *is* one round line cap, so a trimmed stroke
+            //   paints most of it on the first frame; squaring the cap off to
+            //   stop that turns the sweep into a pie chart with hard radial
+            //   edges. A line gets away with a round cap because a cap is a
+            //   small part of a long line. A dot has no length to hide it in.
+            // * **Tracing the outline and then flooding it.** Genuinely lovely
+            //   magnified — but at true size the closing hole is a dark speck
+            //   in the middle of the dot for about half the stage, and that
+            //   reads as a rendering fault, or as a spinner, which is the last
+            //   thing to evoke while an app is launching.
+            // * **Falling into place** from up in the stack. One object moving
+            //   through an otherwise still composition, pulling the eye at the
+            //   moment the mark should be settling.
+            let raw = stages.reduceMotion
                 ? 1
-                : easeOut(progress(
-                    elapsed,
-                    from: stages.dropStart,
-                    over: stages.dropDraw
-                ))
-            if drawn > 0 {
-                let diameter = Mark.dropSize * drawn
-                context.fill(
-                    Path(ellipseIn: CGRect(
-                        x: Mark.axis - diameter / 2,
-                        y: Mark.dropRestY - diameter / 2,
-                        width: diameter,
-                        height: diameter
-                    )),
-                    with: shading
-                )
+                : progress(elapsed, from: stages.dropStart, over: stages.dropDraw)
+            if raw > 0 {
+                Mark.drawDrop(crossed: Mark.dropCrossing(raw), in: context, with: shading)
             }
         }
 
@@ -316,9 +322,10 @@ extension LaunchIntro {
         var plateSettle: TimeInterval { scaled(Motion.standard) }
         var waveStagger: TimeInterval { scaled(Motion.instant) }
         var waveDraw: TimeInterval { scaled(Motion.standard) }
-        /// The drop draws on over the same span a line does, one stagger step
-        /// after the last of them — it is the fifth stroke, so it keeps the
-        /// same rhythm rather than having a schedule of its own.
+        /// The drop inks in over the same span a line draws in, one stagger
+        /// step after the last of them — it is the fifth stroke of the same
+        /// mark, so it keeps the rhythm rather than having a schedule of its
+        /// own. The *curve* it uses is its own; see `Mark.dropCrossing`.
         var dropDraw: TimeInterval { waveDraw }
         var hold: TimeInterval { scaled(Motion.instant) }
         var fade: TimeInterval { scaled(reduceMotion ? Motion.quick : Motion.standard) }
@@ -361,6 +368,81 @@ private enum Mark {
     static let dropSize: CGFloat = 78
     /// The icon's drop sits at rect y 267; this is its centre.
     static let dropRestY: CGFloat = 267 + dropSize / 2
+
+    static let dropCircle = Path(ellipseIn: CGRect(
+        x: axis - dropSize / 2,
+        y: dropRestY - dropSize / 2,
+        width: dropSize,
+        height: dropSize
+    ))
+
+    /// The nib that inks the drop in, as a radius.
+    ///
+    /// Twice the drop's own radius, and both the floor and the shape of that
+    /// number matter. It can't go below the drop's radius at all: a narrower
+    /// nib can never reach the drop's left and right extremes, so those corners
+    /// would stay unpainted forever. And at exactly the drop's radius the
+    /// leading edge curves as hard as the drop does, which makes every
+    /// in-between frame a symmetric pointed lens growing out of the middle —
+    /// scaling with a mask over it, and with cusps that look nothing like the
+    /// round-capped strokes the rest of the mark is made of. Much larger and
+    /// the edge straightens into a ruled line, and a flat front descending
+    /// through a circle reads as a water level rising, not as a nib.
+    private static let dropNib: CGFloat = dropSize
+    private static let dropRadius: CGFloat = dropSize / 2
+
+    /// How far the nib has crossed the drop, 0…1, for a stage 0…1.
+    ///
+    /// Two departures from the `easeOut` everything else here uses, both
+    /// measured rather than guessed:
+    ///
+    /// It's a **square**, not a cube. Under the cubic the frontier had crossed
+    /// the drop by 56% of the stage, and the last third was pixel-for-pixel
+    /// identical frames — dead air, and dead air on the finale, with nothing
+    /// else left on screen to look at. Squaring spreads the same movement to
+    /// about 87%, so the drop is still filling when the icon is nearly ready to
+    /// dissolve.
+    ///
+    /// And it **starts a sliver in**. A frontier that begins exactly at the
+    /// drop's top edge spends its first frame or two as a hairline the full
+    /// width of the drop — pinned under the last line, where it reads as a
+    /// fifth stub of current rather than as the drop starting. Six percent in,
+    /// the first thing on screen is a small cap with some body to it. It is
+    /// about 3% of the drop's area, which is a pen touching down, not a shape
+    /// appearing.
+    static func dropCrossing(_ stage: Double) -> Double {
+        let eased = 1 - pow(1 - stage, 2)
+        return 0.06 + 0.94 * eased
+    }
+
+    /// Inks the drop in as far as `crossed`, by running the nib down through it
+    /// and clipping to its outline.
+    ///
+    /// The clip is what makes this work rather than being another moving
+    /// object: unclipped, this is a disc sailing down the icon. Clipped, the
+    /// only thing that ever appears is drop-shaped, and all the movement is the
+    /// boundary between inked and not.
+    static func drawDrop(
+        crossed: Double,
+        in context: GraphicsContext,
+        with shading: GraphicsContext.Shading
+    ) {
+        var inked = context
+        inked.clip(to: dropCircle)
+
+        // The nib starts tangent above the drop and finishes where its trailing
+        // edge clears the bottom, so `crossed` at 0 paints nothing at all and
+        // at 1 paints the drop exactly — no early saturation, no leftover.
+        var stroke = Path()
+        stroke.move(to: CGPoint(x: axis, y: dropRestY + dropRadius + dropNib))
+        stroke.addLine(to: CGPoint(x: axis, y: dropRestY - dropRadius + dropNib))
+
+        inked.stroke(
+            stroke.trimmedPath(from: 0, to: crossed),
+            with: shading,
+            style: StrokeStyle(lineWidth: dropNib * 2, lineCap: .round)
+        )
+    }
 
     static let waves: [(path: Path, weight: CGFloat)] = rows.map { row in
         var path = Path()
