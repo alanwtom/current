@@ -57,24 +57,31 @@ Nothing here is optional; this is the difference between a build and a product.
 
 - [x] **Self-contained bundle.** Done. Every library the app needs travels
       inside it, and the build fails if that ever stops being true.
-- [ ] **Developer ID certificate.** Create a *Developer ID Application*
-      certificate. Not "Mac App Distribution" — that one is for the App Store
-      and will not work here.
-- [ ] **Hardened runtime.** Required for notarisation. Sign every bundled
-      library first, then the app, with `--options runtime --timestamp`. The
-      libraries are signed with the same identity, so library validation should
-      not need disabling — if notarisation complains, that is the thing to look
-      at first.
-- [ ] **Notarise and staple.** `notarytool submit --wait`, then `stapler
-      staple`. Stapling matters: without it, a Mac that is offline on first
-      launch cannot verify the app and refuses to open it.
-- [ ] **Package as a DMG** with the app and a shortcut to Applications, so the
-      install is a drag. Running the app from inside the DMG is a classic
-      support problem; the window layout should make it obvious not to.
+- [x] **Developer ID certificate.** Done — a Developer ID Application G2
+      certificate for team 8JG887CZZ6, valid to 2031. Not "Apple Distribution",
+      which is the App Store one and does not work here; that confusion cost an
+      afternoon.
+- [x] **Hardened runtime.** Done in `Scripts/release.sh`. Libraries are signed
+      before the bundle; the reverse invalidates the outer signature and shows
+      up later as a confusing notary rejection. Library validation needed no
+      disabling — the bundled libraries carry the same team identity.
+- [x] **Notarise and staple.** Done, for the app *and* the disk image — a
+      stapled app inside an unnotarised image still warns on the download,
+      which is the first thing anyone sees. Credentials live in a keychain
+      profile, never in the repo.
+- [x] **Package as a DMG** with an Applications symlink so the install is a
+      drag. Not yet done: a background image and window layout that make it
+      obvious not to run the app from inside the image.
 - [ ] **Version numbering.** `Info.plist` is hardcoded to 1.0.0 build 1. The
       build should take the version from the git tag and the build number from
       something that always increases, or the updater in Phase 3 cannot tell
       two releases apart.
+
+**Verified, not assumed.** A copy of the finished image carrying the
+quarantine flag a browser attaches comes back from Gatekeeper as
+`accepted — source=Notarized Developer ID`. Every build before this one was
+`rejected`. The remaining unknown is a Mac that has never had Xcode or
+Homebrew on it, which is still worth testing before anyone else downloads this.
 
 ## Phase 2 — Stop shipping switches that lie
 
