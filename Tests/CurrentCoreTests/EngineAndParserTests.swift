@@ -4,36 +4,48 @@ import XCTest
 
 final class SimulationEngineTests: XCTestCase {
 
+    /// Driven by explicit `step()` calls rather than by sleeping.
+    ///
+    /// This used to start a detached task watching the event stream, sleep
+    /// 330 ms of wall clock, and assert that metadata had turned up. That is a
+    /// race with the background ticker and the scheduler, and it lost on CI —
+    /// a docs-only commit failed here on code that had passed twice already.
+    /// A test that fails for reasons unrelated to its subject is worse than no
+    /// test: it trains you to re-run the job instead of reading it, and the one
+    /// time it means something you'll shrug and hit retry.
+    ///
+    /// `step()` advances the simulation by exactly one tick, so the timing is
+    /// arithmetic instead of a gamble.
     func testMagnetResolvesThenDownloads() async throws {
         let engine = SimulationEngine(
             tickInterval: 0.05,
             baseSpeed: 50_000_000,
             resolveDelay: 0.1
         )
-
-        let monitorBox = MetadataBox()
-        let monitor = Task.detached { [weak engine] in
-            guard let stream = await engine?.events else { return }
-            for await event in stream {
-                if case .metadataReceived(_, let meta) = event {
-                    await MainActor.run { monitorBox.value = meta }
-                    break
-                }
-            }
-        }
+        let stream = await engine.events
 
         let id = try await engine.addMagnet(
             "magnet:?xt=urn:btih:abcdef&dn=Test%20Torrent",
             saveDirectory: FileManager.default.temporaryDirectory
         )
 
-        // Still resolving before the delay elapses.
-        try await Task.sleep(nanoseconds: 30_000_000)
-        _ = engine
+        // A 0.1 s resolve delay at 0.05 s per tick needs two ticks; a few more
+        // so the torrent is properly downloading by the end.
+        for _ in 0..<5 { await engine.step() }
 
-        try await Task.sleep(nanoseconds: 300_000_000)
-        monitor.cancel()
-        XCTAssertNotNil(monitorBox.value)
+        // Events are buffered, so they are all waiting by now. Bounded so a
+        // missing event fails the test rather than hanging the suite.
+        var metadata: TorrentMetadata?
+        var inspected = 0
+        for await event in stream {
+            if case .metadataReceived(_, let received) = event {
+                metadata = received
+                break
+            }
+            inspected += 1
+            if inspected > 30 { break }
+        }
+        XCTAssertNotNil(metadata, "the magnet never reported its metadata")
 
         // Pause/resume round trip.
         await engine.pause(id)
@@ -152,9 +164,4 @@ final class DropParserTests: XCTestCase {
     func testNameHintSurvivesBadEncoding() {
         XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=100%+Complete"), "100% Complete")
     }
-}
-
-
-final class MetadataBox: @unchecked Sendable {
-    var value: TorrentMetadata?
 }
