@@ -205,69 +205,6 @@ extension LaunchIntro {
                 endPoint: CGPoint(x: 512, y: 210)
             )
 
-            // Drawn *before* the waves, so the current paints over it.
-            //
-            // On top, the drop bulged out of the last line while it beaded up —
-            // for about a tenth of a second the narrowest wave looked like it
-            // had a growth on it. Behind, the same movement reads as the drop
-            // gathering underneath the current and sliding clear of it, which is
-            // what it is supposed to be. Nothing about the timing changed; only
-            // which shape is in front.
-            //
-            // The drop beads off the narrowest line and falls the short distance
-            // to where the current has come to a point — the one file the
-            // streams add up to.
-            //
-            // It used to fall the whole stack, 401 units of a 1024 space, inside
-            // one `Motion.quick`. Rendered frame by frame that is not a fall, it
-            // is a teleport: with `easeOut` on top, 63% of the journey happened
-            // in the first quarter of the time, so at 60fps you saw the drop
-            // about twice — once somewhere in the middle of the lines, once
-            // already arrived. Falling from the last line is 83 units, which is
-            // a distance you can actually watch something cross.
-            // `if`, not `guard ... return`: the drop is drawn first now, and an
-            // early return here would take the waves with it — the icon would
-            // stay empty until the drop's own stage began.
-            let fall = stages.reduceMotion
-                ? 1
-                : fallEase(progress(elapsed, from: stages.dropStart, over: stages.dropFall))
-            if fall > 0 {
-
-                // Beading up is its own, faster movement, finished before the fall
-                // is. Growing the whole way down read as the drop zooming toward the
-                // viewer rather than falling away from the current — the reference
-                // this was measured against never scales anything at all, and the
-                // moment a size change outlasts the movement it belongs to, it stops
-                // being weight and starts being a camera move.
-                let bead = stages.reduceMotion
-                    ? 1
-                    : easeOut(progress(elapsed, from: stages.dropStart, over: stages.dropBead))
-
-                let centerY = Mark.dropStartY + (Mark.dropRestY - Mark.dropStartY) * fall
-                let diameter = Mark.dropSize * (0.62 + 0.38 * bead)
-                var drop = context
-                // Fades in over the first third of the fall, so it doesn't pop into
-                // existence on top of the lines it is meant to be gathering from.
-                //
-                // Multiplied into what it inherited, not assigned over it. Assigning
-                // discarded the icon's own `appear * exit` opacity, so at the end of
-                // the intro the plate and the waves dissolved on schedule and the
-                // drop did not — it sat there at full brightness, one bright dot
-                // alone on an empty window, and then vanished when the view was torn
-                // down. Every other element in here draws through the inherited
-                // opacity; this was the only one that overwrote it.
-                drop.opacity = context.opacity * min(1, bead * 2)
-                drop.fill(
-                    Path(ellipseIn: CGRect(
-                        x: Mark.axis - diameter / 2,
-                        y: centerY - diameter / 2,
-                        width: diameter,
-                        height: diameter
-                    )),
-                    with: shading
-                )
-            }
-
             // Each line draws left to right, staggered top to bottom: the current
             // arrives from above and narrows as it comes.
             for (index, wave) in Mark.waves.enumerated() {
@@ -283,6 +220,51 @@ extension LaunchIntro {
                     drawn >= 1 ? wave.path : wave.path.trimmedPath(from: 0, to: drawn),
                     with: shading,
                     style: StrokeStyle(lineWidth: wave.weight, lineCap: .round, lineJoin: .round)
+                )
+            }
+
+            // The drop is the fifth stroke and it arrives on the same beat as
+            // the four lines — one stagger step later, the same easing, the
+            // same span. It grows from nothing rather than travelling.
+            //
+            // Two other ways of doing this were tried and both are worse. Flown
+            // in — born up in the stack and falling to rest — it was one object
+            // moving through an otherwise still composition, and it pulled the
+            // eye at the moment the mark should simply be finishing. Literally
+            // traced, as a trimmed circular stroke, it cannot work: a dot's
+            // finished shape *is* a single round cap, so the stroke paints most
+            // of it on the first frame; cutting the cap flat to stop that turns
+            // the sweep into a pie chart with hard radial edges. The lines get
+            // away with a round cap because a cap is a small fraction of a long
+            // line. A dot has no length to hide it in.
+            //
+            // Growing is the honest analogue: a line extends, a dot expands.
+            //
+            // It also fills straight into `context` rather than a copy of it.
+            // The flown-in version took a copy so it could fade itself in, set
+            // that copy's opacity instead of multiplying into the inherited
+            // one, and so ignored the icon's own dissolve: at the end of the
+            // intro the plate and the waves faded on schedule and the drop sat
+            // there at full brightness, one bright dot alone on an empty
+            // window, until the view was torn down. Nothing here needs its own
+            // opacity now, so there is nothing left to get wrong.
+            let drawn = stages.reduceMotion
+                ? 1
+                : easeOut(progress(
+                    elapsed,
+                    from: stages.dropStart,
+                    over: stages.dropDraw
+                ))
+            if drawn > 0 {
+                let diameter = Mark.dropSize * drawn
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: Mark.axis - diameter / 2,
+                        y: Mark.dropRestY - diameter / 2,
+                        width: diameter,
+                        height: diameter
+                    )),
+                    with: shading
                 )
             }
         }
@@ -303,29 +285,6 @@ extension LaunchIntro {
             1 - pow(1 - t, 3)
         }
 
-        /// A fall. Gravity for most of the trip, with the last of the speed
-        /// spent on landing: velocity peaks around 70% of the way down and
-        /// reaches zero exactly at rest, so the drop neither bounces nor stops
-        /// dead.
-        ///
-        /// `easeOut` is right for everything else in here and exactly wrong for
-        /// this one movement — it decelerates the whole way, which is how
-        /// something is *placed*, not how something is dropped. A symmetric
-        /// ease-in-out fixes the direction but spends as long slowing down as
-        /// speeding up, which reads as the drop being lowered on a wire.
-        ///
-        /// Blended rather than switched between the two halves. A piecewise
-        /// version, accelerating to 85% and then braking, puts a step in the
-        /// velocity at the join; you see it as a flinch just before the drop
-        /// settles. This crossfades gravity into the landing with a cubic, so
-        /// the curve is smooth the whole way and still covers only ~31% of the
-        /// distance in the first half of the time.
-        func fallEase(_ t: Double) -> Double {
-            let gravity = t * t                  // accelerating downward
-            let landing = 1 - (1 - t) * (1 - t)  // cushioning to a stop
-            let blend = t * t * t                // the landing only takes over near the end
-            return gravity * (1 - blend) + landing * blend
-        }
     }
 }
 
@@ -357,22 +316,18 @@ extension LaunchIntro {
         var plateSettle: TimeInterval { scaled(Motion.standard) }
         var waveStagger: TimeInterval { scaled(Motion.instant) }
         var waveDraw: TimeInterval { scaled(Motion.standard) }
-        /// `standard`, not `quick`. The drop is the last thing that happens
-        /// before the icon dissolves, and the reference this was measured
-        /// against spends the same beat unhurried. It is still one token and
-        /// still under the app's ~300 ms ceiling for a single movement.
-        var dropFall: TimeInterval { scaled(Motion.standard) }
-        /// The bead finishes well before the fall does, so the drop is at full
-        /// size for most of its travel.
-        var dropBead: TimeInterval { scaled(Motion.quick) }
+        /// The drop draws on over the same span a line does, one stagger step
+        /// after the last of them — it is the fifth stroke, so it keeps the
+        /// same rhythm rather than having a schedule of its own.
+        var dropDraw: TimeInterval { waveDraw }
         var hold: TimeInterval { scaled(Motion.instant) }
         var fade: TimeInterval { scaled(reduceMotion ? Motion.quick : Motion.standard) }
 
         var dropStart: TimeInterval {
-            reduceMotion ? 0 : Double(Mark.waves.count - 1) * waveStagger + waveDraw
+            reduceMotion ? 0 : Double(Mark.waves.count) * waveStagger
         }
         var fadeStart: TimeInterval {
-            reduceMotion ? plateIn + hold : dropStart + dropFall + hold
+            reduceMotion ? plateIn + hold : dropStart + dropDraw + hold
         }
         var total: TimeInterval { fadeStart + fade }
     }
@@ -406,11 +361,6 @@ private enum Mark {
     static let dropSize: CGFloat = 78
     /// The icon's drop sits at rect y 267; this is its centre.
     static let dropRestY: CGFloat = 267 + dropSize / 2
-    /// It beads off the *last* line — the narrowest one — rather than the top
-    /// of the stack. Falling from the top meant crossing every wave on the way
-    /// down, which both read as the drop passing in front of the current and
-    /// gave it four times the distance to cover in one token's worth of time.
-    static let dropStartY: CGFloat = rows[rows.count - 1].y
 
     static let waves: [(path: Path, weight: CGFloat)] = rows.map { row in
         var path = Path()
