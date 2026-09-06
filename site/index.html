@@ -798,30 +798,21 @@
 .cd-magnet-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
 .cd-magnet-foot .cd-btn-primary { margin-left: auto; }
 
-/* ---- the teaching layer ------------------------------------------------- */
+/* ---- the teaching layer -------------------------------------------------
+   It used to print what the demo had just done under the window, in a line
+   starting "This is the real interface, not a picture." A demo that has to
+   tell you it is real isn't one, and the sentence sat there explaining a
+   thing you could simply click.
+
+   The element stays, unseen. It is the live region that speaks each action
+   aloud to a screen reader, and that is the one audience the caption was
+   genuinely for — someone who can't see the row change colour still needs
+   to be told the torrent paused.
+   ---------------------------------------------------------------------- */
 .cd-caption {
-  display: flex; align-items: flex-start; gap: 9px;
-  margin: 12px 4px 0;
-  min-height: 32px;
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; clip-path: inset(50%);
 }
-.cd-caption-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex: none;
-  background: var(--cd-accent); margin-top: 6px;
-  transition: background var(--cd-quick) var(--cd-ease);
-}
-.cd-caption-text {
-  font-size: 12.5px; line-height: 1.45; color: var(--cd-secondary);
-  max-width: 74ch;
-}
-.cd-caption-text strong { color: var(--cd-text); font-weight: 600; }
-.cd-caption-text kbd {
-  font-family: var(--cd-font); font-size: 11px;
-  padding: 1px 5px; border-radius: 4px;
-  background: var(--cd-fill-2); border: 1px solid rgba(255,255,255,.07);
-  color: var(--cd-text);
-}
-.cd-caption.is-flash .cd-caption-text { animation: cd-capin var(--cd-quick) var(--cd-ease) 1; }
-@keyframes cd-capin { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 
 /* the autoplay's ghost pointer: transform-only, never hit-tested */
 .cd-ghost {
@@ -895,7 +886,10 @@
 
   /* The window sits in its own pool of light, so it reads as an object on the
      page rather than a rectangle cut out of it. */
-  .demo-host{position:relative}
+  /* The bottom margin was the caption's, before it was removed — without it
+     the window's edge sits 60px from the next section, which is the same gap
+     used between two paragraphs and too tight under an object this size. */
+  .demo-host{position:relative; margin-bottom:var(--s7)}
   .demo-host::before{
     content:""; position:absolute; inset:-8% -5% -14%; z-index:-1; pointer-events:none;
     background:radial-gradient(58% 58% at 50% 42%,rgba(63,169,255,.24),transparent 70%);
@@ -1037,7 +1031,6 @@
 
   <!-- the demo narrates itself here -->
   <p class="cd-caption" id="cd-caption" aria-live="polite">
-    <span class="cd-caption-dot" id="cd-caption-dot" aria-hidden="true"></span>
     <span class="cd-caption-text" id="cd-caption-text"></span>
   </p>
 </div>

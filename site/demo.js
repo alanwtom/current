@@ -145,7 +145,9 @@
   function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
 
   /* ---- caption: the demo explaining itself ------------------------------ */
-  var capEl = $("cd-caption"), capText = $("cd-caption-text"), capDot = $("cd-caption-dot");
+  // Unseen since the visible caption was removed — this is now purely the
+  // live region that reads each action out to a screen reader.
+  var capEl = $("cd-caption"), capText = $("cd-caption-text");
   var HINT = 'This is the real interface, not a picture. <strong>Pick a section</strong>, ' +
              '<strong>click a torrent</strong>, hover a row’s circle to <strong>pause</strong> it, ' +
              'or press <strong>+</strong> to add one. <kbd>Tab</kbd> and <kbd>↑↓</kbd> work too.';
