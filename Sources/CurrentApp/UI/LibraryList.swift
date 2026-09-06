@@ -213,8 +213,8 @@ struct LibraryList: View {
     private var dropHighlight: some View {
         RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
             .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-            .padding(Space.s)
-            .background(Theme.accentSoft.opacity(0.5).padding(Space.s))
+            .padding(Space.m)
+            .background(Theme.accentSoft.opacity(0.5).padding(Space.m))
             .overlay {
                 VStack(spacing: Space.m) {
                     Image(systemName: "arrow.down.circle.fill")

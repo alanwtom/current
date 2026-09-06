@@ -133,7 +133,7 @@ struct SidebarView: View, Equatable {
                 .typeStyle(Typo.overline)
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, Space.m)
-                .padding(.bottom, Space.s)
+                .padding(.bottom, Space.m)
 
             ForEach(sections, id: \.self) { item in
                 row(item)
@@ -162,7 +162,7 @@ struct SidebarView: View, Equatable {
                     .typeStyle(Typo.label)
                     .foregroundStyle(isSelected ? Theme.text : Theme.textSecondary)
                     .lineLimit(1)
-                Spacer(minLength: Space.s)
+                Spacer(minLength: Space.m)
                 badge(count)
             }
             .padding(.horizontal, Space.m)
@@ -234,7 +234,7 @@ struct StorageMeter: View {
                 Button {
                     app.openSettings(tab: .storage)
                 } label: {
-                    HStack(spacing: Space.s) {
+                    HStack(spacing: Space.m) {
                         Image(systemName: "internaldrive")
                             .font(.system(size: Size.iconSmall, weight: .medium))
                         Text(ByteFormatting.bytes(usedBytes))
@@ -258,7 +258,7 @@ struct StorageMeter: View {
         let over = fraction >= 1
         let near = fraction >= 0.9
 
-        return VStack(alignment: .leading, spacing: Space.s) {
+        return VStack(alignment: .leading, spacing: Space.m) {
             HStack(spacing: Space.xs) {
                 Text("Storage")
                     .foregroundStyle(Theme.textTertiary)
@@ -280,7 +280,7 @@ struct StorageMeter: View {
             .frame(height: Size.track)
 
             if near || over {
-                HStack(spacing: Space.s) {
+                HStack(spacing: Space.m) {
                     Text(over ? "Over budget" : "Almost full")
                         .typeStyle(Typo.caption)
                         .foregroundStyle(over ? Theme.failure : Theme.warning)

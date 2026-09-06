@@ -129,7 +129,7 @@ struct ChromeBar: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                HStack(spacing: Space.s) {
+                HStack(spacing: Space.m) {
                     Text(store.activeSection.title)
                         .typeStyle(Typo.label)
                         .foregroundStyle(Theme.text)

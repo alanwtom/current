@@ -94,7 +94,7 @@ struct FileTreeEditor: View {
                     }
                 }
                 .padding(.vertical, Space.xs)
-                .padding(.horizontal, Space.s)
+                .padding(.horizontal, Space.m)
             }
             .scrollIndicators(.automatic)
             .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: rows.map(\.id))
@@ -336,8 +336,8 @@ private struct NodeRow: View {
         }
         // Indented from the chevron's own column, so a nested file lines up
         // under its folder's name rather than under its disclosure arrow.
-        .padding(.leading, CGFloat(depth) * 16 + Space.s)
-        .padding(.trailing, Space.s)
+        .padding(.leading, CGFloat(depth) * 16 + Space.m)
+        .padding(.trailing, Space.m)
         .frame(height: 28)
         .background(
             RoundedRectangle(cornerRadius: Radius.s, style: .continuous)

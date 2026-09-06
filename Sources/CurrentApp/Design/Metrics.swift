@@ -1,25 +1,34 @@
 import SwiftUI
 
-/// The spacing scale. Every gap and every padding in the app is one of these.
+/// The spacing scale, on an 8pt base grid.
 ///
-/// Eight values on a 4pt grid with a 2 for hairline gaps. The constraint is the
-/// feature: hand-typed padding is how an interface ends up with 11pt here and
-/// 13pt there, which nobody can name but everybody can feel. If a layout seems
-/// to need a value that isn't here, the layout is usually wrong.
+/// **8 is the base unit; 4 is the only subdivision.** Layout spacing — gaps
+/// between things, padding inside surfaces — is a multiple of 8. Component
+/// *sizing* (see `Size`) is allowed the 4pt half-step, because a 28pt control
+/// is a real height and a 32pt one is a chunky one; that split is how 8pt
+/// systems are actually used rather than a compromise.
+///
+/// Six values, and the constraint is the feature: hand-typed padding is how an
+/// interface ends up with 11pt here and 13pt there, which nobody can name but
+/// everybody can feel. If a layout seems to need a value that isn't here, the
+/// layout is usually wrong.
+///
+/// This scale used to carry a `hair` of 2 and an `s` of 6, and neither sat on
+/// any grid. They were the two most-used values in the app after `m`, so the
+/// app was, in practice, off-grid nearly everywhere: 41 gaps at 6pt and four at
+/// 2pt. They are folded into 4 and 8 now.
 enum Space {
-    /// Icon-to-label inside a tight pill.
-    static let hair: CGFloat = 2
+    /// The half-step. Icon-to-label inside a tight pill, a badge's inset.
     static let xs: CGFloat = 4
-    static let s: CGFloat = 6
-    /// The default gap between related controls.
+    /// **The base unit.** The default gap between related controls.
     static let m: CGFloat = 8
     static let l: CGFloat = 12
     /// Between groups.
     static let xl: CGFloat = 16
     /// Surface padding — a card's inside edge, a pane's margin.
-    static let xxl: CGFloat = 20
+    static let xxl: CGFloat = 24
     /// Between unrelated sections.
-    static let xxxl: CGFloat = 28
+    static let xxxl: CGFloat = 32
 }
 
 /// Corner radii.
@@ -52,23 +61,34 @@ enum Radius {
 /// when its label changes — and in this app a control whose height changes on
 /// an engine tick can take the whole window down with it. See the layout-churn
 /// section of AGENTS.md.
+/// Control sizes, on the grid's 4pt half-step.
+///
+/// Sizing gets the half-step where spacing does not, and that split is how 8pt
+/// systems are actually used: a 28pt control is a real height and a 32pt one is
+/// a chunky one, so forcing every control onto multiples of 8 would coarsen the
+/// app rather than order it. Layout — the gaps *between* these things — stays
+/// on 8.
+///
+/// Three values here are deliberate exceptions and each has a reason that
+/// outranks the grid. They are called out where they are defined.
 enum Size {
     /// Inline chips and the smallest icon buttons.
-    static let controlS: CGFloat = 22
+    static let controlS: CGFloat = 24
     /// The default: buttons, fields, menu triggers.
     static let controlM: CGFloat = 28
     /// Primary actions and the search field.
     static let controlL: CGFloat = 32
 
-    /// Square icon buttons in the chrome bar.
-    static let iconButton: CGFloat = 26
+    /// Square icon buttons in the chrome bar. Matches `controlM` so an icon
+    /// button and a text button in the same row are the same height.
+    static let iconButton: CGFloat = 28
     /// Glyphs inside those buttons.
     static let icon: CGFloat = 13
     /// Sidebar and menu row glyphs.
     static let iconSmall: CGFloat = 12
 
-    /// The fixed column a row's glyph sits in — sidebar rows, settings rail
-    /// rows, palette rows. Every label in a list starts at the far side of it,
+    /// **Off the grid on purpose.** The fixed column a row's glyph sits in —
+    /// sidebar rows, settings rail rows, palette rows. Every label in a list starts at the far side of it,
     /// which is the only reason a column of mixed symbols reads as a column.
     ///
     /// **18 because that is measured, not chosen.** SF Symbols are not square
@@ -87,11 +107,17 @@ enum Size {
     /// A library row at its normal height. Fixed on purpose — rows carry live
     /// numbers, and a row that grows by a point when an ETA appears makes the
     /// list re-measure every second.
+    ///
+    /// **Off the grid on purpose,** and the second of the three exceptions. 56
+    /// is the grid's answer and it does fit, but a row holds two lines of type
+    /// and a 4pt meter, and the two points are the difference between the
+    /// descenders of the sub-line clearing the row's fill and grazing it. The
+    /// content was measured against this height rather than the reverse.
     static let row: CGFloat = 58
     /// The same row in the compact layout, with the detail line dropped.
     static let rowCompact: CGFloat = 40
     /// Sidebar rows.
-    static let sidebarRow: CGFloat = 30
+    static let sidebarRow: CGFloat = 32
 
     /// Progress bar thickness. Four rather than three: at 3pt a full-width bar
     /// on a dark row reads as a divider between rows rather than as a bar
@@ -143,7 +169,16 @@ enum Chrome {
     /// The gap a modal card keeps from the window's edges, and the size below
     /// which it stops shrinking (until the window itself is smaller, at which
     /// point matching the window beats hanging over the side of it).
-    static let modalMargin: CGFloat = Space.xxl
+    ///
+    /// **Not the same number as `SettingsChrome.inset`, and it used to be by
+    /// accident.** One is the gap outside a card, the other the margin inside
+    /// it; they were both `Space.xxl` only because that value happened to suit
+    /// both. When the scale moved onto the 8pt grid and `xxl` went 20 to 24,
+    /// this quietly took 8pt off the card's width — and in a 380pt window,
+    /// which the app supports, that pushed the settings pane under the width
+    /// where a download path stops wrapping one character per line.
+    /// `WindowLayoutTests` caught it.
+    static let modalMargin: CGFloat = Space.xl
     static let modalMinSize = CGSize(width: 320, height: 220)
 
     /// The smallest the window can be dragged to.
@@ -220,10 +255,15 @@ enum SettingsChrome {
 
     /// Shared by both columns, which is what puts the two titles on one line.
     ///
-    /// 60 rather than a derived sum, to stay on the 4pt grid: a 16pt semibold
-    /// title measures 18.84pt tall, so it centres with 20.58pt above it — the
-    /// card's own inset to within half a point.
-    static let headerHeight: CGFloat = 60
+    /// 64, which is eight times the base unit. A 16pt semibold title measures
+    /// 18.84pt tall, so it centres with 22.6pt above and below — 1.4pt inside
+    /// the card's own 24pt inset, and the closest the grid gets. The exact
+    /// derived height would be 66.8, which is on no grid at all.
+    ///
+    /// This was 60 when the inset was 20. Both moved together, and they have to:
+    /// the whole point of the number is that the header's title lines up with
+    /// the content below it.
+    static let headerHeight: CGFloat = 64
 
     /// A rail row's fill, deliberately `Space.m` wider than the margin on each
     /// side. The row's own padding then puts the icon column back on `inset`,

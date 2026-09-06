@@ -204,6 +204,62 @@ owns presentation state), `AutomationCoordinator` (15 s tick — seed goals, bat
 pause/resume, stalled magnets), `CleanupCenter` (recomputes plans, performs
 reversible cleanup).
 
+## The grid
+
+Every panel and screen is laid out on **an 8pt base grid with a single 4pt
+half-step**, and the split between the two is not a fudge — it is how these
+systems are used:
+
+- **Spacing snaps to 8.** Gaps between things, padding inside surfaces. The
+  scale is `Space`: **4 / 8 / 12 / 16 / 24 / 32**, and that is all of it.
+- **Component sizing gets the 4pt half-step.** `Size.controlS/M/L` are 24 / 28 /
+  32. Forcing controls onto multiples of 8 would coarsen the app rather than
+  order it; a 28pt button is a real height.
+
+`Space` used to carry a `hair` of 2 and an `s` of 6. Neither sat on any grid,
+and between them they were 45 of the app's gaps — so the app was off-grid nearly
+everywhere while having a scale that claimed otherwise. They are folded into 4
+and 8.
+
+**Type is four sizes and three weights: 11 / 13 / 16 / 22.** Where two styles
+share a size they are told apart by weight — `body`, `label` and `heading` are
+all 13 at regular, medium and semibold; `overline` and `caption` are both 11,
+and the overline is told apart by caps and tracking. The scale used to run
+10 / 11 / 12.5 / 13 / 16 / 22, and three of those steps sat inside two points of
+each other, which is not a hierarchy: nobody can see the difference, so it does
+no work while still costing a decision every time something is written.
+
+**No more than three sizes and three weights in one component.** This is the
+rule worth keeping, because it is the one that makes hierarchy legible. All
+fourteen screens hold to it; four of them did not before. When you add a
+component, count.
+
+**Radii nest concentrically: an inner radius is the outer radius minus the gap
+between them.** A 12pt card with 8pt padding wants 4pt corners inside it, or the
+two curves fight. `Chrome.contentInset` is 10 for exactly this reason — it is
+`Radius.window`, so the library's well is concentric with the window's own
+corner.
+
+### The exceptions, and why they outrank the grid
+
+Three numbers are deliberately off it. Each is measured against something
+physical, and a future tidy-up that snaps them will break something:
+
+- **`Size.iconColumn` = 18.** Sized to the widest SF Symbol the app puts in a
+  row. 16 clipped `internaldrive`; SwiftUI frames don't clip, so it spilled.
+- **`Size.row` = 58.** 56 fits, but the two points are the difference between
+  the sub-line's descenders clearing the row fill and grazing it.
+- **`Chrome.barHeight` = 44.** The three window buttons are centred on half of
+  it. It answers to AppKit, not to the grid.
+
+And one trap that already cost a test failure: **`Chrome.modalMargin` is not
+`SettingsChrome.inset`.** One is the gap outside a card, the other the margin
+inside it. They were the same token by coincidence, so when the scale moved and
+that token went 20 to 24, it silently took 8pt off the settings card — which in
+the 380pt window the app supports pushed the pane under the width where a
+download path stops wrapping one character per line. `WindowLayoutTests` caught
+it. They are separate values now.
+
 ## Motion and numbers
 
 Durations live in `Motion` (`Design/Motion.swift`) — `instant` .12 / `quick` .18

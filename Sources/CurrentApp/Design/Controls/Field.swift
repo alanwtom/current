@@ -27,7 +27,7 @@ struct CurrentField<Trailing: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        HStack(spacing: Space.m) {
             if let symbol {
                 Image(systemName: symbol)
                     .font(.system(size: Size.iconSmall, weight: .medium))

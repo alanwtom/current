@@ -38,7 +38,7 @@ struct ConfirmDialog: View {
                 .onTapGesture(perform: onCancel)
 
             VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: Space.s) {
+                VStack(alignment: .leading, spacing: Space.m) {
                     Text(title)
                         .typeStyle(Typo.title)
                         .foregroundStyle(Theme.text)
@@ -98,7 +98,7 @@ private struct DialogLabel: View {
     let key: String?
 
     var body: some View {
-        HStack(spacing: Space.s) {
+        HStack(spacing: Space.m) {
             Text(title)
             if let key {
                 Text(key)

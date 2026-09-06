@@ -133,7 +133,7 @@ struct SelectionSummaryCard: View {
 
 struct StartingIndicator: View {
     var body: some View {
-        HStack(spacing: Space.s) {
+        HStack(spacing: Space.m) {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.accent)
@@ -142,7 +142,7 @@ struct StartingIndicator: View {
                 .foregroundStyle(Theme.text)
         }
         .padding(.horizontal, Space.xl)
-        .padding(.vertical, Space.s)
+        .padding(.vertical, Space.m)
     }
 }
 

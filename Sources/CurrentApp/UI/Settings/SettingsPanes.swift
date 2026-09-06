@@ -55,7 +55,7 @@ struct AppearancePane: View {
                             .strokeBorder(Theme.stroke, lineWidth: Size.hairline)
                     )
 
-                HStack(spacing: Space.s) {
+                HStack(spacing: Space.m) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : mode.symbol)
                         .font(.system(size: Size.iconSmall, weight: .medium))
                         .foregroundStyle(isSelected ? Theme.accent : Theme.textTertiary)

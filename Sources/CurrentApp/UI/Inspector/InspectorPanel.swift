@@ -94,7 +94,7 @@ struct InspectorPanel: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: Space.s) {
+            HStack(spacing: Space.m) {
                 StatePill(state: app.failures[snapshot.id].map { TorrentState.failed($0) } ?? snapshot.state)
 
                 // Only when a tracker has actually reported the swarm. This chip
@@ -201,9 +201,9 @@ private struct Group_<Content: View>: View {
                 Text(title.uppercased())
                     .typeStyle(Typo.overline)
                     .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, Space.hair)
+                    .padding(.horizontal, Space.xs)
             }
-            VStack(alignment: .leading, spacing: Space.hair, content: content)
+            VStack(alignment: .leading, spacing: Space.xs, content: content)
                 .padding(Space.l)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .insetCard()
@@ -381,7 +381,7 @@ private struct RateTile: View {
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
+        VStack(alignment: .leading, spacing: Space.m) {
             HStack(spacing: Space.xs) {
                 Image(systemName: symbol)
                     .font(.system(size: 9, weight: .bold))
@@ -390,8 +390,13 @@ private struct RateTile: View {
             }
             .foregroundStyle(tint)
 
+            // `heading`, not `title`. The panel already has a headline — the
+            // big percentage in the progress card — and a second, slightly
+            // smaller large number competing with it is the kind of extra step
+            // that makes a hierarchy read as a list of sizes instead. This is a
+            // stat with a label above it, so it wants to look like one.
             Text(ByteFormatting.rate(value))
-                .typeStyle(Typo.title)
+                .typeStyle(Typo.heading)
                 .tabularNumerics()
                 .numericTransition()
                 .foregroundStyle(Theme.text)
@@ -504,7 +509,7 @@ struct DecisionRow: View {
     let decision: DecisionRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
+        VStack(alignment: .leading, spacing: Space.m) {
             HStack(spacing: Space.m) {
                 Text(decision.kind.rawValue)
                     .typeStyle(Typo.label)
@@ -515,7 +520,7 @@ struct DecisionRow: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             ForEach(decision.reasons, id: \.self) { reason in
-                HStack(alignment: .top, spacing: Space.s) {
+                HStack(alignment: .top, spacing: Space.m) {
                     Image(systemName: "arrow.turn.down.right")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(Theme.textQuaternary)

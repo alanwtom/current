@@ -78,7 +78,7 @@ private struct ToastCard: View {
                         dismiss()
                     }
                     .currentButton(.secondary, scale: .small)
-                    .padding(.top, Space.s)
+                    .padding(.top, Space.m)
                 }
             }
 

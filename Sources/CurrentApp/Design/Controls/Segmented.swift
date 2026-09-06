@@ -83,7 +83,7 @@ struct SegmentedPicker<Value: Hashable>: View {
                 selection = option.value
             }
         } label: {
-            HStack(spacing: Space.s) {
+            HStack(spacing: Space.m) {
                 if let symbol = option.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: Size.iconSmall, weight: .medium))

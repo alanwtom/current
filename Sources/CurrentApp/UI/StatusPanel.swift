@@ -367,7 +367,7 @@ struct StatusPanelView: View {
     }
 
     private func rate(symbol: String, value: Double) -> some View {
-        HStack(spacing: Space.s) {
+        HStack(spacing: Space.m) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .bold))
                 // Direction is what this glyph says, and it says it in grey.
@@ -398,7 +398,7 @@ struct StatusPanelView: View {
     @ViewBuilder
     private var transfers: some View {
         if model.rows.isEmpty {
-            VStack(spacing: Space.s) {
+            VStack(spacing: Space.m) {
                 Text("No transfers")
                     .typeStyle(Typo.label)
                     .foregroundStyle(Theme.textSecondary)
@@ -408,15 +408,15 @@ struct StatusPanelView: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 72)
-            .padding(.bottom, Space.s)
+            .padding(.bottom, Space.m)
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 Text("TRANSFERS")
                     .typeStyle(Typo.overline)
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.horizontal, Space.xl)
-                    .padding(.top, Space.s)
-                    .padding(.bottom, Space.s)
+                    .padding(.top, Space.m)
+                    .padding(.bottom, Space.m)
 
                 ForEach(model.rows) { row in
                     StatusPanelRow(
@@ -440,7 +440,7 @@ struct StatusPanelView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, Space.s)
+            .padding(.bottom, Space.m)
         }
     }
 
@@ -451,7 +451,7 @@ struct StatusPanelView: View {
             Hairline()
             HStack(spacing: Space.m) {
                 Button(action: onOpenApp) {
-                    HStack(spacing: Space.s) {
+                    HStack(spacing: Space.m) {
                         Image(systemName: "arrow.up.forward.square")
                             .font(.system(size: 11, weight: .semibold))
                         Text("Open Current")
@@ -504,7 +504,7 @@ private struct StatusPanelRow: View {
                 // are never coloured — the row already says what it is with a
                 // tinted bar. The percentage sits one step up the grey ramp
                 // because it's the number you actually came to read.
-                HStack(spacing: Space.s) {
+                HStack(spacing: Space.m) {
                     Text(percentText)
                         .foregroundStyle(Theme.textSecondary)
                     Text(detailText)

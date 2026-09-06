@@ -274,7 +274,7 @@ struct SettingsSurface: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                HStack(spacing: Space.s) {
+                HStack(spacing: Space.m) {
                     Text(app.settingsTab.title)
                         .typeStyle(Typo.title)
                         .foregroundStyle(Theme.text)
@@ -401,7 +401,7 @@ struct SettingsGroup<Content: View>: View {
                     .typeStyle(Typo.caption)
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Space.hair)
+                    .padding(.horizontal, Space.xs)
             }
         }
     }

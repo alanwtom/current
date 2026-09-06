@@ -89,7 +89,7 @@ struct StatePill: View {
             }
         }
         .foregroundStyle(color)
-        .padding(.horizontal, glyphOnly ? Space.xs : Space.s)
+        .padding(.horizontal, glyphOnly ? Space.xs : Space.m)
         .frame(height: 17)
         .background(
             Capsule(style: .continuous)
@@ -169,7 +169,7 @@ struct Chip: View {
                 .typeStyle(Typo.caption)
         }
         .foregroundStyle(tint)
-        .padding(.horizontal, Space.s)
+        .padding(.horizontal, Space.m)
         .frame(height: 17)
         .background(Capsule(style: .continuous).fill(Theme.fillMuted))
     }
@@ -311,7 +311,7 @@ struct ErrorDetailsDisclosure: View {
                 .foregroundStyle(Theme.textTertiary)
             }
             .buttonStyle(.plain)
-            .padding(.top, Space.hair)
+            .padding(.top, Space.xs)
 
             if expanded {
                 Text(failure.technicalMessage)
@@ -406,7 +406,7 @@ struct EmptyStateView: View {
             }
             .frame(width: 56, height: 56)
 
-            VStack(spacing: Space.s) {
+            VStack(spacing: Space.m) {
                 Text(title)
                     .typeStyle(Typo.title)
                     .foregroundStyle(Theme.text)
@@ -457,7 +457,7 @@ struct KeyHint: View {
             .typeStyle(Typo.caption)
             .tabularNumerics()
             .foregroundStyle(Theme.textTertiary)
-            .padding(.horizontal, Space.s)
+            .padding(.horizontal, Space.m)
             .frame(height: 18)
             .background(
                 RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)

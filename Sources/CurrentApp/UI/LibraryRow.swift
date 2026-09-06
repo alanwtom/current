@@ -32,7 +32,7 @@ struct LibraryRow: View {
         HStack(spacing: Space.l) {
             stateGlyph
 
-            VStack(alignment: .leading, spacing: isCompact ? 3 : Space.s) {
+            VStack(alignment: .leading, spacing: isCompact ? 3 : Space.m) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.m) {
                     Text(displayName)
                         .typeStyle(Typo.heading)
@@ -151,7 +151,7 @@ struct LibraryRow: View {
     private var trailingStat: some View {
         switch effectiveState {
         case .downloading:
-            HStack(spacing: Space.s) {
+            HStack(spacing: Space.m) {
                 // Compact has no second line, so the ETA rides up here next to
                 // the rate. Progress stays legible from the bar, which is why
                 // that is the number that gets dropped rather than these.

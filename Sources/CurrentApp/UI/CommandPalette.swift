@@ -63,7 +63,7 @@ struct CommandPalette: View {
         let count = CGFloat(filtered.count)
         let content = count * Self.rowHeight
             + max(0, count - 1) * Self.rowSpacing
-            + Space.s * 2
+            + Space.m * 2
         return min(content, Self.maxListHeight)
     }
 
@@ -79,7 +79,7 @@ struct CommandPalette: View {
             preferredTop: Self.topOffset,
             preferredListHeight: listHeight,
             chromeHeight: Self.chromeHeight,
-            minimumListHeight: Self.rowHeight + Space.s * 2,
+            minimumListHeight: Self.rowHeight + Space.m * 2,
             margin: Chrome.modalMargin
         )
     }
@@ -139,7 +139,7 @@ struct CommandPalette: View {
                                         .id(index)
                                 }
                             }
-                            .padding(Space.s)
+                            .padding(Space.m)
                         }
                         // Sized to the rows it actually has, capped so a long
                         // list scrolls instead of filling the window.
