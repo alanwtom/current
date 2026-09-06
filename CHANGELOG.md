@@ -9,6 +9,8 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-06
+
 ### Added
 
 - **Automatic updates.** Current can now tell you when a new version is out and
@@ -41,6 +43,12 @@ notes, so this file is the single place release notes are written.
 - Torrent names from magnet links are length-limited and stripped of characters
   that can make a name display as something it isn't.
 
+### Changed (interface)
+
+- Every panel is on an 8pt grid now, and the type scale is four sizes rather
+  than seven — three of the old steps sat within two points of each other,
+  which reads as noise rather than hierarchy.
+
 ## [1.0.0] — 2026-09-06
 
 First public release.
@@ -63,5 +71,6 @@ First public release.
 - Keyboard paths for every action, and a command palette.
 - Signed with a Developer ID and notarised by Apple.
 
-[Unreleased]: https://github.com/alanwtom/current/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/alanwtom/current/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/alanwtom/current/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/alanwtom/current/releases/tag/v1.0.0
