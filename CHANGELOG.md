@@ -9,6 +9,18 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-06
+
+### Fixed
+
+- **Updates downloaded but never installed.** 1.1.0's updater checked, found a
+  new version, downloaded it and verified it — then did nothing with it, ever.
+  The update sat on disk while the app stayed on the old version, which from
+  the outside is the same as having no updater at all.
+
+  If you are on 1.1.0, this is the one release you have to install by hand.
+  Every release after it will arrive on its own.
+
 ## [1.1.0] — 2026-09-06
 
 ### Added
@@ -71,6 +83,7 @@ First public release.
 - Keyboard paths for every action, and a command palette.
 - Signed with a Developer ID and notarised by Apple.
 
-[Unreleased]: https://github.com/alanwtom/current/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/alanwtom/current/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/alanwtom/current/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/alanwtom/current/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/alanwtom/current/releases/tag/v1.0.0
