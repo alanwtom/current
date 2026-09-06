@@ -4,7 +4,7 @@ One static HTML file, no build step, no framework, no external requests — not
 even a web font. `index.html` carries its own CSS and reuses the app's real
 design tokens, so the site and the product look like the same object.
 
-Live at **https://currentmac.vercel.app**.
+Live at **https://current.alantom.dev**.
 
 ## Deploying
 
@@ -27,9 +27,15 @@ Two other things that cost time and are easy to hit again:
   anyone who wasn't Alan. It is set to `prod_deployment_urls_and_all_previews`
   now: the production URL is public, per-deployment and preview URLs stay
   private.
-- **`currentmac.vercel.app` is claimed explicitly** as a project domain.
-  `current-mac.vercel.app` belongs to someone else, so Vercel had fallen back to
-  `current-mac-alantomws-projects.vercel.app`.
+- **The address is `current.alantom.dev`**, a CNAME to `cname.vercel-dns.com`
+  in Cloudflare with the proxy **off** — behind the orange cloud the TLS
+  handshake with Vercel loops, and it looks exactly like a broken site. The
+  certificate did not issue on its own and had to be ordered explicitly
+  (`POST /v7/certs`) once DNS was answering.
+- **`currentmac.vercel.app` 308-redirects here**, so links shared before the
+  domain existed still work. It is claimed explicitly as a project domain
+  because `current-mac.vercel.app` belongs to someone else, and without it
+  Vercel falls back to `current-mac-alantomws-projects.vercel.app`.
 
 ## If the app changes
 

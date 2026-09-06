@@ -6,7 +6,7 @@
 
 Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · Apple Silicon · macOS 26+
 
-### [Download for Mac →](https://currentmac.vercel.app)
+### [Download for Mac →](https://current.alantom.dev)
 
 8.8 MB · signed and notarised by Apple · free and MIT-licensed
 
