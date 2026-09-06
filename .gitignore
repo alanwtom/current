@@ -17,3 +17,6 @@ DerivedData/
 
 # Intermediate icon artwork — regenerate with: swift Scripts/make-icon.swift
 Scripts/AppIcon.iconset/
+
+# The signed disk image ships to Vercel, not into git history.
+site/Current.dmg

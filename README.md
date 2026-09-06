@@ -6,6 +6,10 @@
 
 Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · Apple Silicon · macOS 26+
 
+### [Download for Mac →](https://currentmac.vercel.app)
+
+8.8 MB · signed and notarised by Apple · free and MIT-licensed
+
 <img src="docs/images/library.png" alt="Current's library, with a torrent selected and its details panel open" width="900">
 
 </div>

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Current — a quiet BitTorrent client for macOS</title>
+<meta name="description" content="Current is a native macOS BitTorrent client built on the idea that torrenting is a background activity. Free, MIT-licensed, 8.8 MB, Apple Silicon, macOS 26+.">
+<meta name="theme-color" content="#121214">
+<link rel="icon" type="image/png" href="./icon.png">
+<link rel="apple-touch-icon" href="./icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Current — a quiet BitTorrent client for macOS">
+<meta property="og:description" content="Quiet when nothing is happening, informative when something is, and reversible when it acts on its own. Free, open source, 8.8 MB.">
+<meta property="og:image" content="./library.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Current — a quiet BitTorrent client for macOS">
+<meta name="twitter:description" content="Quiet when nothing is happening, informative when something is, and reversible when it acts on its own. Free, open source, 8.8 MB.">
+<meta name="twitter:image" content="./library.png">
+<style>
+  :root{
+    --chrome:#121214;
+    --canvas:#18181b;
+    --text:#ededf0;
+    --secondary:#a1a1aa;
+    --tertiary:#71717a;
+    --quaternary:#52525b;
+    --accent:#3fa9ff;
+    --teal:#2dd4bf;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --fill-subtle:rgba(255,255,255,.04);
+    --fill-muted:rgba(255,255,255,.07);
+    --fill-strong:rgba(255,255,255,.11);
+    --r-win:10px; --r-4:4px; --r-6:6px; --r-8:8px; --r-12:12px; --r-16:16px;
+    --s1:4px; --s2:6px; --s3:8px; --s4:12px; --s5:16px; --s6:20px; --s7:28px;
+    --quick:180ms; --standard:280ms;
+    --ease:cubic-bezier(.32,.72,0,1);
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+
+  *,*::before,*::after{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--chrome); color:var(--text);
+    font-family:var(--sans); font-size:16px; line-height:1.55;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  img{display:block; max-width:100%; height:auto}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline; text-underline-offset:3px}
+  h1,h2,h3{margin:0; font-weight:600; letter-spacing:-.02em}
+  p{margin:0}
+
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:var(--r-4)}
+
+  .skip{position:absolute; left:-9999px; top:0; padding:10px 16px; background:var(--canvas); border-radius:var(--r-8); z-index:20}
+  .skip:focus{left:var(--s5); top:var(--s5)}
+
+  .wrap{max-width:1180px; margin:0 auto; padding:0 var(--s7)}
+  .col{max-width:640px}
+  .col-wide{max-width:760px}
+
+  /* ---- chrome bar: solid, no hairline, like the app's own ---- */
+  .bar{position:sticky; top:0; z-index:10; background:var(--chrome)}
+  .bar .wrap{display:flex; align-items:center; gap:var(--s4); height:52px}
+  .mark{display:flex; align-items:center; gap:var(--s3); font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
+  .mark:hover{text-decoration:none}
+  .mark img{width:22px; height:22px; border-radius:var(--r-6)}
+  .bar nav{margin-left:auto; display:flex; align-items:center; gap:var(--s2)}
+  .bar nav a{
+    font-size:13px; color:var(--secondary); padding:5px 10px; border-radius:var(--r-6);
+    transition:background var(--quick) var(--ease), color var(--quick) var(--ease);
+  }
+  .bar nav a:hover{background:var(--fill-subtle); color:var(--text); text-decoration:none}
+  .bar nav a.on{background:var(--fill-muted); color:var(--text)}
+  @media (max-width:520px){ .bar nav a.quiet{display:none} }
+
+  /* ---- sections ---- */
+  section{padding:84px 0}
+  section.tight{padding-top:0}
+  section[id]{scroll-margin-top:72px}
+  @media (prefers-reduced-motion:no-preference){ html{scroll-behavior:smooth} }
+  h2{font-size:clamp(1.5rem,3.4vw,1.9rem); letter-spacing:-.028em; line-height:1.15}
+  .lede{margin-top:var(--s5); font-size:17px; line-height:1.6; color:var(--secondary)}
+  .body{margin-top:var(--s5); font-size:15.5px; line-height:1.65; color:var(--secondary)}
+  .body + .body{margin-top:var(--s4)}
+  .body strong{color:var(--text); font-weight:600}
+  .cap{margin-top:var(--s5); font-size:13px; line-height:1.6; color:var(--secondary); max-width:620px}
+  .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--tertiary)}
+
+  /* ---- hero ---- */
+  .hero{padding:88px 0 44px}
+  h1{font-size:clamp(2.05rem,5.6vw,3.35rem); line-height:1.04; letter-spacing:-.035em; max-width:15ch}
+  .hero .lede{max-width:56ch; font-size:19px}
+
+  .get{margin-top:var(--s7); display:flex; align-items:center; gap:var(--s5); flex-wrap:wrap}
+  .btn{
+    display:inline-flex; align-items:center; gap:var(--s3);
+    background:var(--accent); color:#07131f; font-weight:600; font-size:15px; letter-spacing:-.01em;
+    padding:12px 20px; border-radius:var(--r-8); border:0; cursor:pointer;
+    transition:filter var(--quick) var(--ease), transform 120ms var(--ease);
+  }
+  .btn:hover{filter:brightness(1.08); text-decoration:none}
+  .btn:active{transform:scale(.985)}
+  .btn svg{flex:none}
+  .get .meta{font-size:13px; color:var(--secondary); font-variant-numeric:tabular-nums; line-height:1.55}
+
+  /* ---- the window: no frame, because the page is the same material.
+         The screenshot's own chrome is #121214, exactly the page's, so the
+         only thing that reads as an object is the library well inside it.
+         Cropped 14px in on every side to shed the rounded-corner fringe. ---- */
+  .window{margin-top:56px; position:relative; overflow:hidden; border-radius:var(--r-win); padding-top:51.732%}
+  .window img{position:absolute; max-width:none; width:101.617%; left:-.808%; top:-1.5625%}
+
+  /* ---- panes ---- */
+  .pane{background:var(--canvas); border-radius:var(--r-win); padding:var(--s7)}
+  .grid{display:grid; gap:56px; grid-template-columns:minmax(0,7fr) minmax(0,10fr); align-items:center}
+  .grid.flip{grid-template-columns:minmax(0,10fr) minmax(0,7fr)}
+  @media (max-width:900px){ .grid,.grid.flip{grid-template-columns:1fr; gap:var(--s7)} .grid.flip .txt{order:-1} }
+
+  /* cropped screenshots */
+  .crop{position:relative; overflow:hidden; border-radius:var(--r-win); background:var(--chrome)}
+  .crop img{position:absolute; max-width:none}
+  .crop-magnet{padding-top:41.935%}                 /* 390 / 930 */
+  .crop-magnet img{width:189.247%; left:-43.011%; top:-20%}
+
+  /* On a phone the whole window is unreadable, so both shots crop in
+     to the part that is actually doing the arguing. */
+  @media (max-width:720px){
+    .window{padding-top:56.768%}                    /* 562 / 990 */
+    .window img{width:177.778%; left:-35.354%; top:-13.879%}
+    .crop-magnet{padding-top:40.964%}               /* 340 / 830 */
+    .crop-magnet img{width:212.048%; left:-56.627%; top:-32.353%}
+  }
+
+  .panel-shot{max-width:298px}
+  .crop-panel{padding-top:164.662%}                 /* 876 / 532 */
+  .crop-panel img{width:107.707%; left:-3.759%; top:0}
+
+  /* ---- app components reused as page furniture ---- */
+  .pill{
+    display:inline-flex; align-items:center; gap:var(--s2);
+    height:22px; padding:0 10px; border-radius:11px;
+    font-size:12px; font-weight:600; letter-spacing:-.005em; white-space:nowrap;
+  }
+  .pill .dot{width:6px; height:6px; border-radius:3px; background:currentColor}
+  .pill.teal{color:var(--teal); background:rgba(45,212,191,.13)}
+  .pill.amber{color:var(--amber); background:rgba(251,191,36,.13)}
+  .pill.green{color:var(--green); background:rgba(74,222,128,.13)}
+  .pill.grey{color:var(--secondary); background:var(--fill-muted)}
+
+  .meter{height:4px; border-radius:2px; background:var(--fill-strong); overflow:hidden}
+  .meter i{display:block; height:100%; border-radius:2px; transition:width var(--standard) var(--ease), background var(--standard) var(--ease)}
+
+  /* the app's row: 18px icon column, title, meter, meta */
+  .row{display:grid; grid-template-columns:18px minmax(0,1fr); gap:var(--s4); align-items:start}
+  .row .ico{width:18px; height:18px; display:grid; place-items:center; color:var(--tertiary); margin-top:2px}
+  .row .name{font-size:14.5px; font-weight:600; letter-spacing:-.012em; color:var(--text)}
+  .row .meter{margin-top:9px}
+  .row .sub{
+    margin-top:8px; display:flex; justify-content:space-between; gap:var(--s4);
+    font-size:12.5px; color:var(--secondary); font-variant-numeric:tabular-nums;
+  }
+
+  /* the inspector's stat table, dotted leaders and all */
+  .stats{margin-top:var(--s5); display:flex; flex-direction:column}
+  .stats .r{display:flex; align-items:baseline; gap:var(--s3); padding:9px 0; font-size:13.5px}
+  .stats .r + .r{box-shadow:inset 0 1px 0 var(--fill-subtle)}
+  .stats .k{color:var(--secondary); white-space:nowrap}
+  .stats .lead{flex:1 1 auto; border-bottom:1px dotted var(--quaternary); transform:translateY(-3px); min-width:12px}
+  .stats .v{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
+
+  .note{
+    display:grid; grid-template-columns:18px minmax(0,1fr); gap:var(--s4);
+    padding:var(--s5); border-radius:var(--r-12); background:var(--fill-subtle);
+  }
+  .note .h{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  .note p{margin-top:var(--s2); font-size:13.5px; line-height:1.55; color:var(--secondary)}
+  .note.amber .h,.note.amber svg{color:var(--amber)}
+  .note.green .h,.note.green svg{color:var(--green)}
+
+  .chips{display:flex; flex-wrap:wrap; gap:var(--s2); margin-top:var(--s6)}
+  .chip{
+    font-size:12.5px; color:var(--secondary); background:var(--fill-subtle);
+    padding:5px 11px; border-radius:var(--r-6);
+  }
+
+  kbd{
+    font-family:var(--mono); font-size:11.5px; color:var(--text);
+    background:var(--fill-muted); border-radius:var(--r-4); padding:3px 6px; white-space:nowrap;
+  }
+
+  /* ---- smart seed: four policies, one torrent ---- */
+  .seed{position:relative; margin-top:var(--s7); max-width:820px}
+  .seed fieldset{border:0; margin:0; padding:0}
+  .seed legend{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%)}
+  .seed input{position:absolute; opacity:0; width:1px; height:1px; margin:0; pointer-events:none}
+  .seg{display:grid; grid-template-columns:repeat(4,1fr); gap:2px; padding:3px; background:var(--fill-subtle); border-radius:10px; max-width:460px}
+  .seg label{
+    text-align:center; padding:7px 4px; border-radius:var(--r-8); cursor:pointer;
+    font-size:13px; font-weight:600; letter-spacing:-.01em; color:var(--secondary);
+    transition:background var(--quick) var(--ease), color var(--quick) var(--ease);
+  }
+  .seg label:hover{color:var(--text)}
+  @media (max-width:560px){ .seg{grid-template-columns:repeat(2,1fr)} }
+
+  .panels{display:grid; margin-top:var(--s6)}
+  .dp{grid-area:1/1; opacity:0; visibility:hidden; transition:opacity var(--quick) var(--ease)}
+  .dp .why{margin-top:var(--s6); padding:var(--s5); border-radius:var(--r-12); background:var(--fill-subtle)}
+  .dp .why p{font-size:14.5px; line-height:1.6; color:var(--text)}
+  .dp .why .src{margin-top:var(--s4); font-size:12px; color:var(--tertiary); font-variant-numeric:tabular-nums}
+  .dp .head{display:flex; align-items:center; gap:var(--s4); flex-wrap:wrap; margin-bottom:var(--s6)}
+  .dp .head .goal{font-size:13px; color:var(--secondary); font-variant-numeric:tabular-nums}
+
+  #s1:checked ~ .seg label[for=s1],
+  #s2:checked ~ .seg label[for=s2],
+  #s3:checked ~ .seg label[for=s3],
+  #s4:checked ~ .seg label[for=s4]{background:var(--fill-strong); color:var(--text)}
+  #s1:focus-visible ~ .seg label[for=s1],
+  #s2:focus-visible ~ .seg label[for=s2],
+  #s3:focus-visible ~ .seg label[for=s3],
+  #s4:focus-visible ~ .seg label[for=s4]{outline:2px solid var(--accent); outline-offset:2px}
+  #s1:checked ~ .panels #p1,
+  #s2:checked ~ .panels #p2,
+  #s3:checked ~ .panels #p3,
+  #s4:checked ~ .panels #p4{opacity:1; visibility:visible}
+
+  /* ---- download ---- */
+  .download{background:var(--canvas); border-radius:var(--r-win); padding:40px}
+  .download .top{display:flex; align-items:center; gap:var(--s6); flex-wrap:wrap}
+  .download img{width:76px; height:76px; border-radius:18px; flex:none}
+  .download h2{font-size:1.55rem}
+  .download .sub{margin-top:var(--s2); font-size:14px; color:var(--secondary)}
+  .dl-grid{display:grid; gap:40px; grid-template-columns:minmax(0,1fr) minmax(260px,340px); align-items:start; margin-top:var(--s7)}
+  @media (max-width:760px){ .dl-grid{grid-template-columns:1fr; gap:var(--s7)} .download{padding:var(--s7)} }
+
+  footer{padding:44px 0 64px}
+  footer .wrap{display:flex; gap:var(--s5) var(--s7); flex-wrap:wrap; align-items:baseline; font-size:13px; color:var(--secondary)}
+
+  @media (max-width:640px){
+    section{padding:64px 0}
+    .hero{padding:56px 0 32px}
+    .hero .lede{font-size:17px}
+    .wrap{padding:0 var(--s6)}
+    .window{margin-top:36px}
+    .pane{padding:var(--s6)}
+    .dp .why{padding:var(--s4)}
+  }
+
+  .sum{margin:6px 0 0; font-family:var(--mono); font-size:11px; line-height:1.7;
+       color:var(--secondary); word-break:break-all; letter-spacing:.02em}
+  .sumnote{margin:10px 0 0; font-size:12.5px; line-height:1.6; color:var(--quaternary)}
+  .sumnote code{font-family:var(--mono); font-size:11.5px; color:var(--tertiary)}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{transition-duration:1ms !important; animation-duration:1ms !important}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="mark" href="#top"><img src="./icon.png" alt="" width="22" height="22"><span>Current</span></a>
+    <nav>
+      <a class="quiet" href="#magnet">Magnet</a>
+      <a class="quiet" href="#seed">Smart Seed</a>
+      <a class="quiet" href="#keys">Keyboard</a>
+      <a class="quiet" href="https://github.com/alanwtom/current">Source</a>
+      <a class="on" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <div class="hero" id="top">
+    <div class="wrap">
+      <h1>Torrenting is a background activity.</h1>
+      <p class="lede">So Current is quiet when nothing is happening, informative when something is, and reversible when it acts on its own. A native Mac client for people who would rather not sit and watch a progress bar.</p>
+      <div class="get">
+        <a class="btn" href="./Current.dmg" download>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.6v9.2M4.4 7.4 8 11l3.6-3.6M2.2 13.4h11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Download for Mac
+        </a>
+        <p class="meta">8.8&nbsp;MB &middot; Apple&nbsp;Silicon &middot; macOS&nbsp;26 or later<br>Signed and notarised by Apple, so it opens with a double&#8209;click.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="window">
+      <img src="./library.png" width="1760" height="924" fetchpriority="high"
+           alt="Current's window: a sidebar with Library and Smart sections, six transfers in a list with blue progress bars, one finished download shown in green, and a details panel on the right listing speed, ratio, peers and a green note reading Healthy, 63 seeds.">
+    </div>
+    <p class="cap">Six transfers, one of them finished. Nothing in that window comes from the system: not the frame, not the sidebar, not the rows, not the switches. Stock Mac chrome is precisely what makes an app look like every other Mac utility, and no amount of styling gets it far enough away.</p>
+  </div>
+
+  <section id="magnet">
+    <div class="wrap">
+      <div class="grid flip">
+        <div class="crop crop-magnet">
+          <img src="./magnet-flow.png" width="1760" height="924" loading="lazy" decoding="async"
+               alt="A card over the library reading Cosmos Laundromat (2015) 4K, 1 file, 2.4 GB, with a save location of ~/Downloads/Current, a Change button, a Remember this location checkbox, and a blue Download 2.4 GB button.">
+        </div>
+        <div class="txt">
+          <h2>A magnet asks its questions once, in the window.</h2>
+          <p class="body">Click a magnet link in a browser and a card comes up over the library: what it is, how big, which files, where it goes. Answer it and it's gone.</p>
+          <p class="body">The save folder is asked for <strong>here</strong> and not at add time, because a magnet arrives as a hash — there is no name and no size to decide against yet. Tick <em>Remember this location</em> and it stops asking. Open ten <span style="font-family:var(--mono);font-size:.92em">.torrent</span> files at once and it asks about the first, then sends the rest to the default; ten questions in a row is not a conversation.</p>
+          <p class="cap">Every question the app has for you is asked in the window, next to the thing it changes. There is no floating panel, and there was one — it could not be reached by keyboard, and half of all Macs never drew it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="seed" class="tight">
+    <div class="wrap">
+      <div class="col-wide">
+        <h2>Every automatic decision explains itself.</h2>
+        <p class="body">Smart Seed has four policies, written in words rather than ratios. The reason is not a log line printed afterwards — it is part of the decision, which is why the app can always answer <em>why did this happen?</em></p>
+        <p class="body">Same torrent, four policies. Pick one.</p>
+      </div>
+
+      <div class="pane seed" style="margin-top:32px">
+        <fieldset>
+          <legend>Seed policy</legend>
+          <input type="radio" name="seed" id="s1" checked>
+          <input type="radio" name="seed" id="s2">
+          <input type="radio" name="seed" id="s3">
+          <input type="radio" name="seed" id="s4">
+          <div class="seg">
+            <label for="s1">Balanced</label>
+            <label for="s2">Helpful</label>
+            <label for="s3">Archive</label>
+            <label for="s4">Temporary</label>
+          </div>
+
+          <div class="panels">
+            <!-- Balanced -->
+            <div class="dp" id="p1">
+              <div class="head">
+                <span class="pill teal"><span class="dot"></span>Seeding</span>
+                <span class="goal">Goal: ratio 1.00</span>
+              </div>
+              <div class="row">
+                <span class="ico" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13.2V3.4M4.6 6.8 8 3.4l3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <div>
+                  <div class="name">Blender Foundation Open Movies Collection</div>
+                  <div class="meter"><i style="width:62%; background:var(--teal)"></i></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 0.62&times;</span><span>3 seeds</span></div>
+                </div>
+              </div>
+              <div class="why">
+                <p>Seeding until the ratio reaches 1.00, then stopping. It is at 0.62&times; and rising slowly.</p>
+                <p class="src">Rules &middot; today 14:02</p>
+              </div>
+            </div>
+
+            <!-- Helpful -->
+            <div class="dp" id="p2">
+              <div class="head">
+                <span class="pill amber"><span class="dot"></span>Rare &middot; kept alive</span>
+                <span class="goal">Goal: ratio 1.00 &mdash; met</span>
+              </div>
+              <div class="row">
+                <span class="ico" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13.2V3.4M4.6 6.8 8 3.4l3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <div>
+                  <div class="name">Blender Foundation Open Movies Collection</div>
+                  <div class="meter"><i style="width:100%; background:var(--amber)"></i></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 1.04&times;</span><span>3 seeds</span></div>
+                </div>
+              </div>
+              <div class="why">
+                <p>The ratio goal was met at 13:41. Still seeding: only 3 complete sources are on this swarm, and Helpful keeps rare torrents past their goal.</p>
+                <p class="src">Rules &middot; today 13:41 &middot; reversible &mdash; stop it yourself any time</p>
+              </div>
+            </div>
+
+            <!-- Archive -->
+            <div class="dp" id="p3">
+              <div class="head">
+                <span class="pill teal"><span class="dot"></span>Seeding indefinitely</span>
+                <span class="goal">No stop condition</span>
+              </div>
+              <div class="row">
+                <span class="ico" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13.2V3.4M4.6 6.8 8 3.4l3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <div>
+                  <div class="name">Blender Foundation Open Movies Collection</div>
+                  <div class="meter"><i style="width:100%; background:var(--teal)"></i></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 2.41&times;</span><span>3 seeds</span></div>
+                </div>
+              </div>
+              <div class="why">
+                <p>Archive never stops a torrent on its own, and cleanup never touches one. Nothing here happens without you.</p>
+                <p class="src">Rules &middot; no automatic action taken</p>
+              </div>
+            </div>
+
+            <!-- Temporary -->
+            <div class="dp" id="p4">
+              <div class="head">
+                <span class="pill grey">Stops Sunday</span>
+                <span class="goal">Goal: ratio 1.00 or 7 days</span>
+              </div>
+              <div class="row">
+                <span class="ico" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13.2V3.4M4.6 6.8 8 3.4l3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <div>
+                  <div class="name">Blender Foundation Open Movies Collection</div>
+                  <div class="meter"><i style="width:62%; background:var(--quaternary)"></i></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 0.62&times;</span><span>day 6 of 7</span></div>
+                </div>
+              </div>
+              <div class="why">
+                <p>Whichever comes first: ratio 1.00, or seven days. Six days in at 0.62&times;, so this one stops on Sunday — and will say so when it does.</p>
+                <p class="src">Rules &middot; scheduled 07 Sep 09:14</p>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+      </div>
+
+      <p class="cap">Four policies, one torrent, four honest answers. Note what is coloured and what isn't: the state has a hue, the numbers never do. Six downloads all shouting in blue is how a real problem ends up with nothing to stand out against.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="grid">
+        <div class="txt">
+          <h2>Cleanup moves files to the Trash. It does not delete them.</h2>
+          <p class="body">Give it a storage budget and it ranks completed downloads by how safely they can go. The gate comes first and every condition has to hold:</p>
+          <div class="chips">
+            <span class="chip">complete</span>
+            <span class="chip">seed goals met</span>
+            <span class="chip">not pinned</span>
+            <span class="chip">not active</span>
+            <span class="chip">healthy swarm</span>
+          </div>
+          <p class="body">Rare swarms are excluded from automatic cleanup entirely — the torrents that most need a seed are the ones a storage budget would take first. And <strong>go</strong> means the Trash. The app has no code path that unlinks a file.</p>
+        </div>
+        <div>
+          <div class="pane">
+            <div class="note amber">
+              <span aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="6" cy="6.4" r="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M1.8 14.4c0-2.3 1.9-4 4.2-4s4.2 1.7 4.2 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12.2 4.6a2.2 2.2 0 0 1 0 4.2M13 14.4c0-1.7-.5-3-1.4-3.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </span>
+              <div>
+                <div class="h">Rare &middot; 3 seeds</div>
+                <p>Only a few complete sources are available. Keeping this torrent seeded helps preserve it.</p>
+              </div>
+            </div>
+            <div class="note green" style="margin-top:12px">
+              <span aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="6" cy="6.4" r="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M1.8 14.4c0-2.3 1.9-4 4.2-4s4.2 1.7 4.2 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12.2 4.6a2.2 2.2 0 0 1 0 4.2M13 14.4c0-1.7-.5-3-1.4-3.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </span>
+              <div>
+                <div class="h">Healthy &middot; 63 seeds</div>
+                <p>Plenty of complete sources exist. This torrent doesn't need you to stay available.</p>
+              </div>
+            </div>
+            <p class="cap" style="margin-top:20px">Swarm health, as the app writes it. It tells you what is true and leaves the decision alone: no red badge, no counter to clear, nothing that treats a ratio as a moral score.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="keys" class="tight">
+    <div class="wrap">
+      <div class="grid flip">
+        <div class="pane">
+          <div class="stats" style="margin-top:0">
+            <div class="r"><span class="k">Add a magnet</span><span class="lead"></span><span class="v"><kbd>&#8984;N</kbd></span></div>
+            <div class="r"><span class="k">Pause or resume</span><span class="lead"></span><span class="v"><kbd>Space</kbd></span></div>
+            <div class="r"><span class="k">Remove</span><span class="lead"></span><span class="v"><kbd>&#8984;&#9003;</kbd></span></div>
+            <div class="r"><span class="k">Search the library</span><span class="lead"></span><span class="v"><kbd>&#8984;F</kbd></span></div>
+            <div class="r"><span class="k">Command palette</span><span class="lead"></span><span class="v"><kbd>&#8984;K</kbd></span></div>
+          </div>
+        </div>
+        <div class="txt">
+          <h2>Every mouse path has a keyboard path.</h2>
+          <p class="body">Not most of them. The floating panel the app used to have was removed largely for failing this: a non&#8209;activating window never takes key focus, so its buttons were mouse&#8209;only.</p>
+          <p class="body">And a keyboard action never waits on a decoration. The command palette bubbles in like every other surface, but its field takes focus the instant it appears — your first keystroke lands while it is still moving.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="grid">
+        <div class="txt">
+          <h2>A panel in the menu bar, not a menu.</h2>
+          <p class="body">Combined speeds, each transfer's progress, a pause button on each one. It is the surface for the glance you actually want — and the only one available while the window is closed.</p>
+          <p class="body">It is hand&#8209;drawn because a menu could not draw it. That version was a column of disabled text items, one of which said <em>6 active</em> — strictly less than the icon beside it was already telling you. Real menus stay native: they have to leave the window and behave like every other menu on the machine.</p>
+        </div>
+        <div>
+          <div class="panel-shot">
+            <div class="crop crop-panel">
+              <img src="./menu-bar.png" width="573" height="900" loading="lazy" decoding="async"
+                   alt="Current's menu bar panel hanging under its status icon: 32.7 MB/s down and 4.9 MB/s up, a Pause All button, and five transfers each with a progress bar, percentage, rate, time remaining and its own pause button.">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tight">
+    <div class="wrap">
+      <div class="col-wide">
+        <h2>It cannot find anything, and that is on purpose.</h2>
+        <p class="body">Current ships no trackers, no indexes and no content sources. There is no search in it. It does not suggest anything to you, because it has nothing to suggest.</p>
+        <p class="body">It is a client for a protocol that people use lawfully every day: Linux images, Internet Archive collections, scientific datasets, game patches. What you point it at is yours to decide.</p>
+        <p class="body">It makes no network calls beyond the torrent protocol itself. No accounts, no analytics, no telemetry, no update pings, no crash reporting. Your library and its history stay on the machine, in a file you can delete.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="tight">
+    <div class="wrap">
+      <div class="download">
+        <div class="top">
+          <img src="./icon.png" width="76" height="76" alt="Current's app icon: four pale blue waves narrowing down to a single dot on a dark blue rounded plate.">
+          <div>
+            <h2>Current</h2>
+            <p class="sub">Free and MIT&#8209;licensed. No accounts, no upsell, no paid tier waiting behind it.</p>
+          </div>
+        </div>
+        <div class="dl-grid">
+          <div>
+            <a class="btn" href="./Current.dmg" download>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 1.6v9.2M4.4 7.4 8 11l3.6-3.6M2.2 13.4h11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Download Current.dmg
+            </a>
+            <p class="body" style="margin-top:16px; font-size:14.5px">Open the disk image, drag Current to Applications, double&#8209;click it. It is signed with a Developer ID and notarised by Apple, so macOS lets it straight through — no right&#8209;click&#8209;Open, no trip to System Settings.</p>
+          </div>
+          <div>
+            <p class="label">Details</p>
+            <div class="stats">
+              <div class="r"><span class="k">Download</span><span class="lead"></span><span class="v">8.8 MB</span></div>
+              <div class="r"><span class="k">Requires</span><span class="lead"></span><span class="v">macOS 26+</span></div>
+              <div class="r"><span class="k">Architecture</span><span class="lead"></span><span class="v">Apple Silicon</span></div>
+              <div class="r"><span class="k">Signature</span><span class="lead"></span><span class="v">Notarised</span></div>
+              <div class="r"><span class="k">Licence</span><span class="lead"></span><span class="v"><a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT</a></span></div>
+              <div class="r"><span class="k">Source</span><span class="lead"></span><span class="v"><a href="https://github.com/alanwtom/current">GitHub</a></span></div>
+              <div class="r"><span class="k">Price</span><span class="lead"></span><span class="v">Free</span></div>
+            </div>
+            <p class="label" style="margin-top:24px">SHA&#8209;256</p>
+            <p class="sum"><code>2a916ab5d8458f54abe04e235e21fd6f6017bf67578b891233fc7fad0838f95f</code></p>
+            <p class="sumnote">Check it before you open it, if you like:
+              <code>shasum -a 256 Current.dmg</code></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Current &mdash; a BitTorrent client for macOS.</span>
+    <span>MIT&#8209;licensed. Built for Apple Silicon.</span>
+    <span>No trackers ship with it, and none watch you use it.</span>
+    <span><a href="https://github.com/alanwtom/current">Source on GitHub</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

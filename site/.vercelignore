@@ -1,0 +1,3 @@
+# Intentionally empty.
+# Without this file Vercel falls back to .gitignore, which excludes
+# Current.dmg — and the download is the entire point of the page.
