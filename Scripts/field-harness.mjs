@@ -36,12 +36,14 @@ const TEXT = { left: 88, right: 660, top: 72, bottom: 430, width: 572 };
 let clock = 0;
 let frameDraws = [];
 let draws = [];
+let framePools = [];      // the light buffer's radial gradients, this frame
+let pools = [];
 
 const ctx = {
   _fill: 'rgba(0,0,0,0)',
   set fillStyle(v) { this._fill = v; },
   get fillStyle() { return this._fill; },
-  setTransform() {}, clearRect() {}, beginPath() {},
+  setTransform() {}, clearRect() {}, beginPath() {}, drawImage() {},
   roundRect(x, y, w, h) { this._x = x; this._y = y; this._w = w; this._h = h; },
   fill() { record(this._x, this._y, this._w, this._h, this._fill); },
   fillRect(x, y, w, h) { record(x, y, w, h, this._fill); },
@@ -58,10 +60,44 @@ const canvas = {
   getBoundingClientRect: () => ({ width: W, height: H, left: 0, top: 0 }),
 };
 
+/* The offscreen buffer bg.js paints its pools into. Rather than rasterising
+   it, the stub records each radial gradient — centre, radius, colour — which
+   is exactly what's needed to measure whether the light moves, and lets the
+   frame renderer composite the same pools at full resolution. */
+function fakeBuffer() {
+  let pending = null;
+  const bctx = {
+    canvas: null,
+    globalCompositeOperation: 'source-over',
+    set fillStyle(v) { this._fill = v; if (v && v.__radial) pending = v; },
+    get fillStyle() { return this._fill; },
+    clearRect() {}, setTransform() {}, putImageData() {},
+    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    createPattern: () => ({ __pattern: true }),
+    createRadialGradient(x0, y0, r0, x1, y1, r1) {
+      const g = { __radial: true, x: x1, y: y1, r: r1, stops: [] };
+      g.addColorStop = (o, c) => g.stops.push([o, c]);
+      return g;
+    },
+    fillRect() {
+      if (pending && pending.stops.length) {
+        const m = pending.stops[0][1].match(/rgba\(([^)]+)\)/);
+        if (m) {
+          const [r, g, b, a] = m[1].split(',').map(Number);
+          framePools.push({ x: pending.x, y: pending.y, rad: pending.r, r, g, b, a });
+        }
+        pending = null;
+      }
+    },
+  };
+  return { width: 0, height: 0, getContext: () => bctx };
+}
+
 let rafQueue = [];
 global.document = {
   getElementById: id => (id === 'bg-field' ? canvas : null),
   querySelectorAll: () => [{ getBoundingClientRect: () => TEXT }],
+  createElement: () => fakeBuffer(),
 };
 global.performance = { now: () => clock };
 global.requestAnimationFrame = fn => { rafQueue.push(fn); return 1; };
@@ -85,8 +121,10 @@ function step(ms = 16) {
   const due = rafQueue;
   rafQueue = [];
   frameDraws = [];
+  framePools = [];
   due.forEach(fn => fn(clock));
   draws = frameDraws.slice();
+  pools = framePools.slice();
 }
 
 const isBlue = d => d.b - d.r > 40;
@@ -105,7 +143,7 @@ const settled = draws.length;
 
 let peakAlpha = 0, peakLit = 0, dead = 0, worstDead = 0;
 let busy = 0, quiet = 0, sum = 0, textHits = 0;
-let totalMin = Infinity, totalMax = 0;
+let totalMin = Infinity, totalMax = 0, leftOfText = 0;
 const lightPath = [];                       // where the field's light sits
 
 for (let i = 0; i < 3750; i++) {            // one minute, every frame
@@ -121,6 +159,7 @@ for (let i = 0; i < 3750; i++) {            // one minute, every frame
   peakLit = Math.max(peakLit, lit);
   peakAlpha = Math.max(peakAlpha, draws.reduce((m, d) => Math.max(m, d.a), 0));
   textHits += overText();
+  leftOfText += draws.filter(d => d.x + d.w <= TEXT.right).length;
   if (lit === 0) { dead += 16; worstDead = Math.max(worstDead, dead); } else dead = 0;
   if (lit > 12) busy++; else if (lit < 3) quiet++;
 }
@@ -144,6 +183,7 @@ for (const [x, y] of lightPath) {
   spanY = [Math.min(spanY[0], y), Math.max(spanY[1], y)];
 }
 console.log(`  centre of light       moves ${(spanX[1]-spanX[0]).toFixed(0)}px across, ${(spanY[1]-spanY[0]).toFixed(0)}px down, ${travel.toFixed(0)}px travelled`);
+console.log(`  pieces left of the words  ${leftOfText}`);
 console.log(`  overall brightness    swings ${(100*(totalMax-totalMin)/totalMax).toFixed(0)}% between its dimmest and brightest`);
 console.log(`  after eight minutes   ${late} pieces held\n`);
 
@@ -157,24 +197,33 @@ check('the field breathes', (totalMax - totalMin) / totalMax > 0.1);
 check('never dead for longer than four seconds', worstDead < 4000);
 check('nothing is ever drawn over the headline',
       startedOverText === 0 && textHits === 0 && lateOverText === 0);
+check('no pieces anywhere left of the words', leftOfText === 0);
 check('the field settles rather than filling solid', Math.abs(late - settled) / settled < 0.25);
 check('still alive after eight minutes', late > 0);
 
 // --- look at it ----------------------------------------------------------
 if (WANT_FRAMES) {
   const CROP = 620;   // the part of the region the hero actually occupies
+  const GLOW = 5;     // bg.js paints its light into a buffer this much smaller
 
   function save(name) {
     const px = Buffer.alloc(W * CROP * 3);
+    // the ground, then the pools of light additively — the same ones bg.js
+    // painted into its buffer this frame
     for (let y = 0; y < CROP; y++) {
       for (let x = 0; x < W; x++) {
-        // ground plus the CSS wash, roughly — enough to judge contrast against
-        const dx = (x - W * 0.30) / (W * 0.62), dy = (y - CROP * 0.08) / CROP;
-        const wash = Math.max(0, 1 - Math.min(1, Math.hypot(dx, dy))) * 0.16;
         const i = (y * W + x) * 3;
-        px[i] = Math.round(10 + 63 * wash);
-        px[i + 1] = Math.round(10 + 169 * wash);
-        px[i + 2] = Math.round(10 + 255 * wash);
+        let r = 10, g = 10, b = 10;
+        for (const p of pools) {
+          const d = Math.hypot(x - p.x * GLOW, y - p.y * GLOW);
+          const rad = p.rad * GLOW;
+          if (d >= rad) continue;
+          const f = (1 - d / rad) * p.a;
+          r += p.r * f; g += p.g * f; b += p.b * f;
+        }
+        px[i] = Math.min(255, Math.round(r));
+        px[i + 1] = Math.min(255, Math.round(g));
+        px[i + 2] = Math.min(255, Math.round(b));
       }
     }
     for (const d of draws) {

@@ -1,30 +1,40 @@
 /* The piece field behind the first screen.
  *
  * A torrent arrives as thousands of fixed-size pieces, out of order, from
- * strangers. That is the one picture this whole page is about, and it is what
- * the background draws: a field of small squares that fill in, flare once as
- * they land, settle, and eventually go again. Left running it never finishes
- * and never sits still — which is the headline, more or less.
+ * strangers. That is the one picture this page is about, and it is what the
+ * background draws: a field of small squares that land, flare, cool and
+ * eventually go again, lit from underneath by pools of colour drifting past
+ * each other at different rates.
  *
- * It replaced two blurred blobs and a grid, because those are what every dark
- * landing page has and they said nothing about this one.
+ * Three things this has already been, and why it isn't them any more:
  *
- * Rules it plays by:
+ * - **Two blurred blobs and a grid.** What every dark landing page has, and
+ *   it said nothing about this one.
+ * - **An even drizzle of squares.** Ten lit out of eight hundred reads as a
+ *   still picture no matter how many there are. Pieces arrive in bursts now,
+ *   which is also how they really arrive.
+ * - **Slow.** Loops of a minute or more sit below the rate at which movement
+ *   registers at all: technically animated, visually frozen. Everything here
+ *   now turns over in seconds.
  *
- * - It is never allowed near the words. The weight of every cell is computed
- *   once from where it sits, and cells under the headline weigh nothing, so
- *   the field has a hole in it rather than a mask laid over it. Doing it in
- *   the canvas rather than in CSS also dodges mask-composite, which is where
- *   this sort of thing usually breaks in one browser.
- * - It stops dead when scrolled out of view. A background that keeps painting
- *   while nobody is looking is just a battery drain.
- * - Only living cells are drawn. An empty cell paints nothing at all, so the
- *   cost tracks what is lit, not the size of the grid.
- * - Reduced motion gets one still frame of a half-filled field: same picture,
- *   no movement.
+ * Two rules it can't break:
  *
- * Its own file on purpose — the page's scripts each run alone, so a fault in
- * a decoration cannot take the demo or the scroll reveals with it.
+ * - **Nothing to the left of the words.** The clear area is measured from the
+ *   headline itself, and it is one-sided — the field starts after the text's
+ *   right edge and runs to the window edge. It used to be a plain distance,
+ *   which meant the whole left gutter qualified: on a wide display that put a
+ *   large block of squares out there with nothing to do and nowhere to go.
+ * - **It stops dead when scrolled past.** A background still painting while
+ *   nobody is looking is a battery drain.
+ *
+ * The light underneath is painted into a small buffer and scaled up, rather
+ * than being a CSS gradient. A gradient this wide and this dark quantises into
+ * visible contour lines on an 8-bit screen — that was the faint striping this
+ * used to have. Interpolating a small buffer up smooths the steps out, and a
+ * little noise in the buffer breaks up what survives that.
+ *
+ * Its own file on purpose: the page's scripts each run alone, so a fault in a
+ * decoration can't take the demo or the scroll reveals with it.
  */
 (function () {
   var canvas = document.getElementById('bg-field');
@@ -36,57 +46,61 @@
   var reduceMotion = window.matchMedia
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // --- the look ------------------------------------------------------------
-  var PITCH   = 17;    // cell to cell, including the gap
-  var SQUARE  = 13;    // the drawn square, so a 4px gutter — the app's own
+  var TAU = Math.PI * 2;
+
+  // --- the pieces ----------------------------------------------------------
+  var PITCH   = 17;     // cell to cell, including the gap
+  var SQUARE  = 13;     // the drawn square, so a 4pt gutter — the app's own
   var CORNER  = 2;
 
-  var HELD_ALPHA  = 0.115;  // a piece at rest
-  var FLARE_ALPHA = 0.60;   // the moment it lands
-  var FILL_TARGET = 0.25;   // how much of the field is held at once
+  var HELD_ALPHA  = 0.10;   // a piece at rest, outside any pool
+  var FLARE_ALPHA = 0.62;   // the moment it lands
+  var FILL_TARGET = 0.26;   // how much of the field is held at once
 
-  var ARRIVE  = 350;    // ms to fade in
-  var FLARE   = 2000;   // ms for the accent to decay out of it
-  var RELEASE = 2400;   // ms to fade out again
-  var DRIZZLE   = 2.5;  // pieces a second, always
-  var BURST_SIZE= 26;   // and a run of them arriving together
-  var BURST_RATE= 46;   // pieces a second inside a burst
-  var BURST_GAP = 1100; // ms of quiet after one, plus up to as much again
-  var BURST_SPAN= 5;    // cells — how tight a burst lands
-
-  // The fade-in has to be much shorter than the flare, or a piece spends the
+  // The fade-in has to be far shorter than the flare, or a piece spends the
   // brightest part of its life still fading up and the landing never reads.
-  // That was one of two things wrong with the first version of this: the
-  // flare was there in the numbers and invisible on the screen.
-  //
-  // The other was that pieces landed at an even rate, everywhere, forever.
-  // Ten lit squares scattered through eight hundred is a drizzle, and a
-  // drizzle reads as a still picture no matter how much of it there is.
-  // Torrents don't behave that way — a peer connects, a run of pieces lands
-  // together, then it's quiet. So most of them now arrive in bursts, which
-  // gives the thing what it was missing: somewhere to look.
+  var ARRIVE  = 220;
+  var FLARE   = 1100;
+  var RELEASE = 1300;
 
-  var CURSOR_REACH = 150;   // px — pieces near the pointer brighten
+  var DRIZZLE    = 5;     // pieces a second, always
+  var BURST_SIZE = 22;    // and a run of them arriving together
+  var BURST_RATE = 90;    // pieces a second inside a burst
+  var BURST_GAP  = 420;   // ms of quiet after one, plus up to as much again
+  var BURST_SPAN = 4;     // cells — how tight a burst lands
 
-  // Three pools of warmth drifting through the field on long, unequal loops,
-  // and a slow breath under everything.
+  var CURSOR_REACH = 150; // px — pieces near the pointer brighten
+
+  // --- the light -----------------------------------------------------------
   //
-  // Without these the only thing moving was the landings themselves, and a
-  // piece that lands and then sits at a fixed brightness forever leaves a
-  // field that is technically animated and visually still. Now the bright
-  // part of the field slides around and the whole thing rises and falls, so
-  // there is something happening between bursts as well as during them.
-  // The periods are deliberately not multiples of each other — three pools on
-  // round numbers resynchronise every so often and the field visibly pulses as
-  // one, which is the opposite of the intent.
+  // Periods are seconds rather than minutes, and deliberately share no
+  // factors: pools on round numbers resynchronise and the whole field visibly
+  // pulses as one, which is the opposite of the intent.
+  //
+  // hue 0 is the app's accent blue, 1 its teal. Mixing the two is what makes
+  // colour appear to move, rather than only brightness.
+  var ACCENT = [63, 169, 255];
+  var TEAL   = [45, 212, 191];
+
   var POOLS = [
-    { x: 0.70, y: 0.32, ax: 0.30, ay: 0.24, sx: 59000,  sy: 43000, r: 380 },
-    { x: 0.88, y: 0.60, ax: 0.24, ay: 0.30, sx: 79000,  sy: 67000, r: 300 },
-    { x: 0.56, y: 0.72, ax: 0.32, ay: 0.19, sx: 101000, sy: 87000, r: 430 }
+    // The big quiet one behind the headline. Ambient only — no squares live
+    // over there — and it is what keeps the left of the screen from being the
+    // flat black this all started as.
+    { x: 0.26, y: 0.24, ax: 0.05, ay: 0.06, px: 31000, py: 23000, r: 560, hue: 0, a: 0.15 },
+
+    { x: 0.62, y: 0.30, ax: 0.15, ay: 0.19, px:  9700, py: 12300, r: 210, hue: 0, a: 0.13 },
+    { x: 0.81, y: 0.50, ax: 0.13, ay: 0.16, px: 13100, py:  8900, r: 175, hue: 1, a: 0.10 },
+    { x: 0.71, y: 0.70, ax: 0.17, ay: 0.12, px: 17300, py: 11700, r: 245, hue: 0, a: 0.12 },
+    { x: 0.91, y: 0.27, ax: 0.09, ay: 0.21, px: 10700, py: 15100, r: 150, hue: 1, a: 0.11 },
+    { x: 0.67, y: 0.49, ax: 0.20, ay: 0.17, px: 21100, py: 14300, r: 295, hue: 0, a: 0.10 },
+    { x: 0.87, y: 0.78, ax: 0.11, ay: 0.14, px: 12700, py: 19300, r: 190, hue: 1, a: 0.11 }
   ];
-  var POOL_LIFT = 1.9;    // how much brighter a piece sitting in one is
+
+  var POOL_LIFT = 2.2;    // how much brighter a piece sitting in one is
   var BREATH    = 0.30;   // how far the whole field rises and falls
-  var BREATH_MS = 9500;   // and how long one breath takes
+  var BREATH_MS = 5200;   // and how long one breath takes
+
+  var GLOW_STEP = 5;      // the light buffer is this many times smaller
 
   // --- state ---------------------------------------------------------------
   var cols = 0, rows = 0, count = 0, room = 0, cap = 0, cssW = 0, cssH = 0;
@@ -96,26 +110,15 @@
   var cursorX = -1e4, cursorY = -1e4, cursorSeen = 0;
   var running = false, last = 0, owed = 0, raf = 0;
   var burstLeft = 0, burstOwed = 0, burstX = 0, burstY = 0, burstNext = 0;
-
-  var TAU = Math.PI * 2;
+  var textBox = null;
+  var glow = null, gctx = null, noise = null;
 
   function rand(n) { return (Math.random() * n) | 0; }
 
-  /* How much of the field is allowed to exist at a given point.
-     Nothing where the words are, quiet at the very top, gone before the
-     bottom edge, densest about three quarters across.
-
-     The hole is measured from the headline block itself rather than guessed
-     as a fraction of the viewport. Guessing works at one window size and
-     fails at the rest — on a phone the copy runs the full width, so a hole
-     sized for a desktop hero left squares sitting behind the second line of
-     the sentence. */
-  var textBox = null;
-
+  /* The text itself, not the container it sits in. The hero's wrapper is the
+     page's full content width, so measuring that punches a hole the width of
+     the window and leaves no field at all. */
   function measureText() {
-    // The text itself, not the container it sits in. The hero's wrapper is
-    // the page's full content width, so measuring that punched a hole the
-    // width of the window and left almost no field at all.
     var parts = document.querySelectorAll('.hero h1, .hero .lede, .hero .get');
     if (!parts || !parts.length) { textBox = null; return; }
 
@@ -131,41 +134,36 @@
     }
     if (l === Infinity) { textBox = null; return; }
 
-    var pad = 26;
     textBox = {
-      l: l - box.left - pad, r: r - box.left + pad,
-      t: t - box.top - pad,  b: b - box.top + pad
+      l: l - box.left, r: r - box.left,
+      t: t - box.top,  b: b - box.top
     };
   }
 
+  /* How much of the field is allowed to exist at a point.
+     Nothing at all to the left of the words; a margin to their right before it
+     starts; gone before the section below. */
   function weightAt(x, y, w, h) {
-    // How far outside the words this is, faded in over a comfortable margin.
+    // One-sided, at every height: the field is a column to the right of the
+    // words and nothing else. Allowing it below them as well left a band of
+    // squares under the download button, on the left, where they mostly sat
+    // still — the single thing about this that looked worst.
     var clear = 1;
     if (textBox) {
-      var ox = Math.max(textBox.l - x, x - textBox.r, 0);
-      var oy = Math.max(textBox.t - y, y - textBox.b, 0);
-      clear = Math.min(1, Math.sqrt(ox * ox + oy * oy) / 130);
+      if (x <= textBox.r) return 0;
+      clear = Math.min(1, (x - textBox.r) / 110);
     }
 
     // Off well before the section below starts — most of the lower half is
-    // behind the app window anyway, and drawing under it is work nobody sees.
+    // behind the app window anyway, and drawing under it is unseen work.
     var bottom = y > h * 0.52 ? Math.max(0, 1 - (y - h * 0.52) / (h * 0.30)) : 1;
 
-    // And a touch under the chrome bar.
+    // A touch under the chrome bar, and fading into the right edge rather
+    // than stopping at it in a straight line.
     var top = y < h * 0.05 ? y / (h * 0.05) : 1;
+    var side = Math.min(1, (w - x) / (w * 0.10));
 
-    // Both side edges fade rather than stop, or the field ends in a straight
-    // line down the window and reads as a panel.
-    var margin = w * 0.13;
-    var sides = Math.min(1, Math.min(x, w - x) / margin);
-
-    // Densest about three quarters across and thinning both ways. A lean that
-    // just rises with x packs the last few columns solid, which is what the
-    // right-hand edge looked like before: a wall rather than a drift.
-    var t = (x / w - 0.74) / 0.34;
-    var lean = 0.3 + 0.7 * Math.exp(-t * t);
-
-    return clear * clear * bottom * top * sides * lean;
+    return clear * clear * bottom * top * side;
   }
 
   function build() {
@@ -195,19 +193,47 @@
     for (var i = 0; i < count; i++) {
       var x = (i % cols) * PITCH + SQUARE / 2;
       var y = ((i / cols) | 0) * PITCH + SQUARE / 2;
-        var v = weightAt(x, y, w, h);
+      var v = weightAt(x, y, w, h);
       weight[i] = v < 0.06 ? 0 : v;   // below this it would never be seen
       if (weight[i] > 0) room++;
     }
     cap = Math.round(room * FILL_TARGET);
 
+    buildGlow();
     seed();
   }
 
-  /* Start part-filled, and filled the same way the live field grows: plant a
-     few nuclei and let the growth rule spread them. Scattering the seed at
-     random instead — which is what this did first — produces even static, and
-     static is exactly what it must not look like. Pieces clump. */
+  /* The buffer the pools are painted into, at a fraction of the real size.
+     Scaling it back up is what keeps a wide dark gradient from banding into
+     contour lines, and the noise tile breaks up whatever survives that. */
+  function buildGlow() {
+    if (!glow) {
+      glow = document.createElement('canvas');
+      if (!glow || !glow.getContext) { glow = null; return; }
+      gctx = glow.getContext('2d');
+      if (!gctx) { glow = null; return; }
+    }
+    glow.width = Math.max(1, Math.ceil(cssW / GLOW_STEP));
+    glow.height = Math.max(1, Math.ceil(cssH / GLOW_STEP));
+
+    if (!noise && gctx.createImageData && gctx.createPattern) {
+      var tile = document.createElement('canvas');
+      tile.width = tile.height = 64;
+      var t = tile.getContext('2d');
+      if (!t) return;
+      var img = t.createImageData(64, 64);
+      for (var i = 0; i < img.data.length; i += 4) {
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+        img.data[i + 3] = (Math.random() * 9) | 0;
+      }
+      t.putImageData(img, 0, 0);
+      noise = gctx.createPattern(tile, 'repeat');
+    }
+  }
+
+  /* Start part-filled, and filled the way the live field grows: plant a few
+     nuclei and let the growth rule spread them. Seeding at random instead
+     produces even static, which is what this must not look like. */
   function seed() {
     var now = (window.performance ? performance.now() : 0);
     var settled = now - ARRIVE - FLARE;   // already landed, already cooled
@@ -225,22 +251,19 @@
 
     var target = Math.round(cap * 0.75);
     while (held.length < target) {
-      var i = nextCell();
+      var i = nextCell(false);
       if (i < 0) break;
       phase[i] = 1; stamp[i] = settled;
       live.push(i); held.push(i);
     }
   }
 
-  /* Where the next piece lands. Mostly beside one that has already arrived,
-     because pieces that clump grow shapes and pieces scattered uniformly grow
-     static. Near the pointer when there is one, which is the only interactive
-     part of this and the only one worth having. */
+  /* Where the next piece lands. Inside a burst, one neighbourhood — that is
+     what makes it read as an arrival. Otherwise beside a piece already there,
+     because pieces that clump grow shapes and pieces scattered grow static. */
   function nextCell(inBurst) {
     var tries, i;
 
-    // Inside a burst everything lands in one neighbourhood, which is what
-    // makes it read as an arrival rather than more drizzle.
     if (inBurst) {
       for (tries = 0; tries < 24; tries++) {
         var bx = burstX + rand(BURST_SPAN * 2 + 1) - BURST_SPAN;
@@ -288,15 +311,10 @@
     held.push(i);
   }
 
-  /* Starts a run of pieces somewhere the field has room. Aimed at a spot the
-     pointer isn't, when there is a pointer — the cursor already brightens what
-     it passes over, and a burst landing under it is one thing too many. */
   function openBurst(now) {
     for (var tries = 0; tries < 30; tries++) {
       var i = rand(count);
       if (weight[i] < 0.35 || phase[i] !== 0) continue;
-      // Bias toward the denser half of the field so bursts land where there
-      // is already something to join rather than alone in the thin edges.
       if (weight[i] < 0.6 && Math.random() < 0.6) continue;
       burstX = i % cols;
       burstY = (i / cols) | 0;
@@ -316,25 +334,57 @@
     }
   }
 
+  /* Where each pool has drifted to this frame. Worked out once per frame —
+     the piece loop below runs several hundred times. */
+  function placePools(now) {
+    var out = [];
+    for (var i = 0; i < POOLS.length; i++) {
+      var p = POOLS[i];
+      out.push({
+        x: (p.x + p.ax * Math.sin(now / p.px * TAU)) * cssW,
+        y: (p.y + p.ay * Math.cos(now / p.py * TAU)) * cssH,
+        r: p.r, hue: p.hue, a: p.a
+      });
+    }
+    return out;
+  }
+
+  function paintGlow(pools, breath) {
+    if (!glow) return;
+    var s = GLOW_STEP;
+    gctx.clearRect(0, 0, glow.width, glow.height);
+    gctx.globalCompositeOperation = 'lighter';
+
+    for (var i = 0; i < pools.length; i++) {
+      var p = pools[i];
+      var c = p.hue ? TEAL : ACCENT;
+      var r = p.r / s, px = p.x / s, py = p.y / s;
+      var a = p.a * (0.82 + 0.18 * breath);
+      var g = gctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a.toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+      gctx.fillStyle = g;
+      gctx.fillRect(px - r, py - r, r * 2, r * 2);
+    }
+
+    gctx.globalCompositeOperation = 'source-over';
+    if (noise) {
+      gctx.fillStyle = noise;
+      gctx.fillRect(0, 0, glow.width, glow.height);
+    }
+  }
+
   function draw(now) {
     // In CSS pixels, not device ones — the context carries the retina scale,
     // so clearing to canvas.width would wipe an area four times too big every
     // frame on a retina Mac.
     ctx.clearRect(0, 0, cssW, cssH);
 
-    // Where the pools have drifted to this frame. Worked out once here rather
-    // than once per piece — the loop below runs several hundred times.
-    var pools = [];
-    for (var p = 0; p < POOLS.length; p++) {
-      var pool = POOLS[p];
-      pools.push({
-        x: (pool.x + pool.ax * Math.sin(now / pool.sx * TAU)) * cssW,
-        y: (pool.y + pool.ay * Math.cos(now / pool.sy * TAU)) * cssH,
-        r: pool.r
-      });
-    }
-
+    var pools = placePools(now);
     var breath = Math.sin(now / BREATH_MS * TAU);
+
+    paintGlow(pools, breath);
+    if (glow) ctx.drawImage(glow, 0, 0, cssW, cssH);
 
     var still = [];
     for (var n = 0; n < live.length; n++) {
@@ -350,13 +400,29 @@
       }
 
       var flare = phase[i] === 1 && age < FLARE ? 1 - age / FLARE : 0;
-      flare *= flare * 0.6 + flare * 0.4;   // fast off the top, then a long tail
+      flare *= flare * 0.6 + flare * 0.4;   // fast off the top, then a tail
 
       var x = (i % cols) * PITCH;
       var y = ((i / cols) | 0) * PITCH;
 
-      // Near the pointer a piece brightens and leans blue, so moving across
-      // the field feels like touching it rather than dragging a spotlight.
+      // How deep in a pool this piece sits, and whose pool it is. Carrying the
+      // hue through to the square is what makes the colour appear to move
+      // rather than only the brightness.
+      var lift = 0, teal = 0;
+      for (var q = 0; q < pools.length; q++) {
+        var pdx = x - pools[q].x, pdy = y - pools[q].y;
+        var pd = Math.sqrt(pdx * pdx + pdy * pdy);
+        if (pd < pools[q].r) {
+          var f = 1 - pd / pools[q].r;
+          f *= f;
+          if (f > lift) { lift = f; teal = pools[q].hue; }
+        }
+      }
+
+      // The breath travels across as a swell rather than the whole field
+      // blinking at once.
+      var wave = 1 + BREATH * Math.sin(now / BREATH_MS * TAU - (x + y) * 0.0035);
+
       var near = 0;
       if (cursorSeen) {
         var dx = x - cursorX, dy = y - cursorY;
@@ -364,38 +430,22 @@
         if (d < CURSOR_REACH) { near = 1 - d / CURSOR_REACH; near *= near; }
       }
 
-      // How deep in a pool of warmth this piece is sitting.
-      var lift = 0;
-      for (var q = 0; q < pools.length; q++) {
-        var pdx = x - pools[q].x, pdy = y - pools[q].y;
-        var pd = Math.sqrt(pdx * pdx + pdy * pdy);
-        if (pd < pools[q].r) {
-          var f = 1 - pd / pools[q].r;
-          f *= f;
-          if (f > lift) lift = f;
-        }
-      }
-
-      // The breath is offset along a diagonal, so it travels across the field
-      // as a slow swell rather than the whole thing blinking at once.
-      var wave = 1 + BREATH * Math.sin(
-        now / BREATH_MS * TAU - (x + y) * 0.0035
-      ) * (0.4 + 0.6 * (0.5 + 0.5 * breath));
-
-      var blue = Math.min(1, flare + near * 0.75 + lift * 0.45);
       var alpha = weight[i] * body
         * (HELD_ALPHA * wave * (1 + POOL_LIFT * lift)
            + FLARE_ALPHA * flare
            + 0.10 * near);
 
-      if (alpha < 0.003) { still.push(i); continue; }
+      if (alpha < 0.004) { still.push(i); continue; }
 
-      // Grey at rest, accent as it lands. The app's own two colours.
-      var r = Math.round(255 - 192 * blue);
-      var g = Math.round(255 - 86 * blue);
-      var b = 255;
+      // Grey at rest; the pool's own hue where the light is; accent as it
+      // lands, because a landing is the app's "this is happening".
+      var tint = Math.min(1, flare + near * 0.75 + lift * 0.7);
+      var c = teal ? TEAL : ACCENT;
+      var r = Math.round(255 + (c[0] - 255) * tint);
+      var g = Math.round(255 + (c[1] - 255) * tint);
+      var b = Math.round(255 + (c[2] - 255) * tint);
+
       ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + alpha.toFixed(3) + ')';
-
       if (ctx.roundRect) {
         ctx.beginPath();
         ctx.roundRect(x, y, SQUARE, SQUARE, CORNER);

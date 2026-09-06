@@ -139,20 +139,14 @@
   }
   .bg-field{position:absolute; inset:0; width:100%; height:100%}
 
-  /* One wash, so the field is lit rather than floating in nothing. Slow
-     enough that it reads as depth and not as an animation. */
-  .bg-wash{
-    position:absolute; left:-18vw; top:-24vh; width:96vw; height:92vh;
-    background:radial-gradient(circle,rgba(63,169,255,.16),rgba(63,169,255,0) 66%);
-    filter:blur(58px);
-    animation:wash 44s ease-in-out infinite alternate;
-    will-change:transform;
-  }
-  @keyframes wash{from{transform:none} to{transform:translate3d(14vw,8vh,0) scale(1.16)}}
+  /* The light used to be a CSS radial gradient here. A gradient that wide and
+     that dark quantises into visible contour lines on an 8-bit screen — faint
+     striping across the hero that looked like a rendering fault, because it
+     was one. It is painted in the canvas now, into a small buffer that gets
+     scaled up, which interpolates the steps away. */
 
   @media (max-width:700px){
     .bg{height:clamp(620px,86vh,900px)}
-    .bg-wash{filter:blur(42px)}
   }
 
   /* ---- hero ---- */
@@ -903,8 +897,7 @@
   @media (prefers-reduced-motion:reduce){
     .rise,.rise-2,.rise-3,.rise-4{animation:none}
     .reveal{opacity:1; transform:none; filter:none; transition:none}
-    /* The light stays; only the drifting stops. */
-    .bg-wash{animation:none}
+    /* bg.js draws one still frame and never starts its loop. */
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -914,7 +907,6 @@
 </head>
 <body>
 <div class="bg" aria-hidden="true">
-  <div class="bg-wash"></div>
   <canvas class="bg-field" id="bg-field"></canvas>
 </div>
 
