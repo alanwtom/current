@@ -29,6 +29,37 @@ It draws its own window chrome and every one of its own controls. There is no
 because those are precisely the things that make an app look like a stock Mac
 utility, and none of them can be restyled far enough to stop.
 
+## Scope
+
+**Current is a client for a protocol.** It ships no trackers, no indexes and no
+content sources. It has no search, it cannot find anything, and it does not
+suggest anything to you. You bring the link. BitTorrent moves Linux images,
+Internet Archive collections, scientific datasets and game patches every day,
+and that is what this is for.
+
+That means some things are welcome here and some are not:
+
+**Issues are for the app.** Bugs, crashes, wrong behaviour, bad layout, a
+setting that lies. Those get read and fixed. The bug report template asks
+whether `-simulate` reproduces it, which is usually the fastest way to tell an
+interface bug from an engine one.
+
+**These get closed without an answer**, and it isn't personal:
+
+- Requests for content, or help finding, sourcing or downloading anything.
+- Questions about a specific torrent, tracker or site.
+- Reports about what some third party is hosting — this project hosts nothing
+  and has no relationship with any tracker or index.
+
+**Security reports don't go in issues at all.** See [SECURITY.md](SECURITY.md)
+for the private route.
+
+**Pull requests are welcome**, and [CONTRIBUTING.md](CONTRIBUTING.md) sets the
+bar — the short version is that the reasoning behind a change matters as much as
+the change. One behaviour per PR. This is solo-maintained, so reviews can be
+slow; that is a queue, not disinterest. If you're planning something large, open
+an issue first so you don't build for a week and find it's out of scope.
+
 <table>
 <tr>
 <td width="52%" valign="top">

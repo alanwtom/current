@@ -1,9 +1,42 @@
 // swift-tools-version: 6.2
 
 import PackageDescription
+import Foundation
 
-let libtorrentInclude = "/opt/homebrew/include"
-let libtorrentLib = "/opt/homebrew/lib"
+/// Where Homebrew put libtorrent.
+///
+/// This used to be `/opt/homebrew` written twice, which builds on exactly one
+/// kind of machine: Apple Silicon with Homebrew at its default prefix. On an
+/// Intel Mac (`/usr/local`) or any custom prefix the build failed at the first
+/// `#include`, so "clone it and build" was untrue for anyone but the author —
+/// a small pool to draw contributors from.
+///
+/// Probed rather than guessed, and overridable, in that order:
+///
+///   1. `CURRENT_BREW_PREFIX`, for a prefix in neither usual place.
+///   2. The two standard prefixes, checked for libtorrent's headers rather than
+///      for the directory — Homebrew being installed is not the same as this
+///      dependency being installed, and failing on the missing header gives a
+///      far better error than failing on a missing symbol at link time.
+///
+/// Falls back to the Apple Silicon default so the manifest still parses when
+/// libtorrent is absent; the build then fails with a plain "file not found",
+/// which is the right message.
+let brewPrefix: String = {
+    let manager = FileManager.default
+    if let override = ProcessInfo.processInfo.environment["CURRENT_BREW_PREFIX"],
+       !override.isEmpty {
+        return override
+    }
+    for candidate in ["/opt/homebrew", "/usr/local"]
+    where manager.fileExists(atPath: candidate + "/include/libtorrent") {
+        return candidate
+    }
+    return "/opt/homebrew"
+}()
+
+let libtorrentInclude = brewPrefix + "/include"
+let libtorrentLib = brewPrefix + "/lib"
 
 let package = Package(
     name: "Current",

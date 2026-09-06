@@ -1,0 +1,19 @@
+# Every issue starts from a template, so the scope note below is always read
+# before anything is filed. A torrent client attracts a predictable kind of
+# request, and answering it once here is cheaper than answering it weekly.
+blank_issues_enabled: false
+contact_links:
+  - name: Looking for something to download?
+    url: https://github.com/alanwtom/current#scope
+    about: >-
+      Current has no search, no trackers and no indexes — it cannot find
+      anything. Requests for content, or for help sourcing it, are closed
+      unanswered.
+  - name: Reporting a security vulnerability
+    url: https://github.com/alanwtom/current/security/advisories/new
+    about: >-
+      Please report privately rather than opening a public issue. This link
+      goes straight to the private advisory form.
+  - name: How to build it, and what a PR needs
+    url: https://github.com/alanwtom/current/blob/main/CONTRIBUTING.md
+    about: Build instructions and the bar for a change to be merged.

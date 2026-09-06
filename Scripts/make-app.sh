@@ -22,6 +22,43 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$FRAMEWORKS"
 cp "$BIN" "$APP/Contents/MacOS/Current"
 cp "$ROOT/Scripts/Info.plist" "$APP/Contents/Info.plist"
 
+# ---------------------------------------------------------------------------
+# Version, stamped from git rather than typed into the template
+#
+# The template used to carry `1.0.0` and build `1` literally, which meant every
+# build the project has ever produced claimed to be the same one. That is fine
+# right up until an updater exists, at which point two releases are
+# indistinguishable — Sparkle compares CFBundleVersion and would see no reason
+# to offer anything. It is also the first thing a bug report gets asked for.
+#
+# Marketing version comes from the newest tag; build number from the commit
+# count, which only ever goes up and needs no state kept anywhere.
+# ---------------------------------------------------------------------------
+SHORT_VERSION="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
+SHORT_VERSION="${SHORT_VERSION#v}"
+if [[ -z "$SHORT_VERSION" ]]; then
+    # An untagged checkout is a normal thing for a contributor to have, so this
+    # is a real fallback rather than an error — but it is deliberately obvious,
+    # so a fallback version can never be mistaken for a release.
+    SHORT_VERSION="0.0.0-dev"
+fi
+BUILD_VERSION="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+
+plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$APP/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$BUILD_VERSION" "$APP/Contents/Info.plist"
+echo "  version: $SHORT_VERSION ($BUILD_VERSION)"
+
+# Licences for everything bundled inside. libtorrent (BSD-3), OpenSSL
+# (Apache-2.0) and Boost (BSL-1.0) all require their notice to travel with a
+# binary distribution, and this is the binary distribution. Regenerate with
+# Scripts/make-notices.sh after upgrading a dependency.
+if [[ -f "$ROOT/THIRD-PARTY-NOTICES.md" ]]; then
+    cp "$ROOT/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"
+else
+    echo "error: THIRD-PARTY-NOTICES.md missing — run: Scripts/make-notices.sh" >&2
+    exit 1
+fi
+
 # App icon. Regenerate with `swift Scripts/make-icon.swift` after editing it.
 if [[ -f "$ROOT/Scripts/AppIcon.icns" ]]; then
     cp "$ROOT/Scripts/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
