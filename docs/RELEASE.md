@@ -189,16 +189,43 @@ Run against a **release** build — signed, notarised, stapled, installed from t
 DMG. Not `swift run`, and not the debug bundle. Several of the things most
 likely to be broken only exist in that path.
 
-## A. The clean machine — do this first
+## A. The clean machine
 
-The whole point of the bundling work, and the only test that proves it.
+The whole point of the bundling work. A second Mac is still the only thing that
+*proves* it, but most of what that Mac would tell us has now been established
+another way, against the disk image downloaded from the live site — not a local
+build.
 
-- [ ] A Mac that has **never had Homebrew or Xcode**. Download the DMG in a
-      browser, drag to Applications, double-click.
-- [ ] It opens **without** right-click → Open, without any "damaged" or
-      "unidentified developer" dialog.
-- [ ] Same, with **the Mac offline** on first launch. This is what proves the
-      notarisation ticket was stapled.
+**Established, on the shipped artifact:**
+
+- [x] **Nothing outside the bundle is linked.** All four Mach-O binaries walked
+      recursively, resolving `@rpath`/`@loader_path`/`@executable_path`: every
+      dependency lands inside `Current.app` or in `/usr/lib` / `/System`.
+- [x] **Nothing outside the bundle is opened at runtime.** The app was run under
+      `sandbox-exec` with `/opt/homebrew` and `/usr/local/{Cellar,opt}` denied.
+      The **real libtorrent engine** — not `-simulate` — loaded all three
+      bundled dylibs and ran with **zero** Homebrew files open.
+- [x] **The OpenSSL trust store is the one we ship.** This was the live hazard:
+      `libcrypto`'s compiled-in `OPENSSLDIR` is `/opt/homebrew/etc/openssl@3`,
+      so on a clean Mac its default trust store is *empty* — and the failure is
+      silent, because HTTPS tracker announces just fail verification and magnets
+      fall back to the DHT. `LibtorrentEngine.init` sets `SSL_CERT_FILE` to the
+      bundled `cacert.pem` as its first statement, before the session exists.
+      That bundle holds 192 certificates, none expired, and on its own verifies
+      `tracker.opentrackr.org`, `torrent.ubuntu.com` and `archive.org`.
+- [x] **Gatekeeper accepts a browser download.** The `.dmg` was given a real
+      Safari quarantine attribute; both it and the app extracted from it assess
+      as `accepted — source=Notarized Developer ID`. The ticket is stapled, so
+      it opens with no network. The quarantined copy launches and draws its
+      window; no crash reports.
+
+**Still genuinely untested, and a second Mac is the only way:**
+
+- [ ] A different machine — a different macOS build, different hardware, and a
+      user account with no `~/Library/Application Support/Current` already in
+      it. Everything above ran on the machine that built the app.
+- [ ] First-run system permission prompts on an account that has never granted
+      them to this app.
 - [ ] If the floor drops to macOS 14: the whole pass again on Sonoma, paying
       attention to the window chrome and the menu bar panel.
 
