@@ -88,15 +88,52 @@
   .col{max-width:640px}
   .col-wide{max-width:760px}
 
-  /* ---- chrome bar: solid, no hairline, like the app's own ---- */
-  .bar{position:sticky; top:0; z-index:10; background:rgba(10,10,10,.72);
-       -webkit-backdrop-filter:saturate(1.6) blur(14px); backdrop-filter:saturate(1.6) blur(14px);
-       border-bottom:1px solid rgba(255,255,255,.05)}
-  .bar .wrap{display:flex; align-items:center; gap:var(--s4); height:52px}
+  /* ---- chrome bar ---------------------------------------------------------
+     Nothing at all until you scroll. At the top of the page the mark and the
+     links simply sit over the hero, with no bar behind them and no line under
+     them; the moment the page moves they draw themselves in as a floating
+     pill, and the pill pulls in from both sides at the same time.
+
+     The glass is a ::before rather than the bar's own background, so it can
+     fade on its own while the pill's width animates on a different curve.
+     Fading a backdrop-filter by animating the element's background instead
+     gives you a blur that snaps on at the first frame and then tints — the
+     blur isn't part of the colour and doesn't fade with it.
+     ---------------------------------------------------------------------- */
+  .bar{position:sticky; top:0; z-index:10; padding-top:8px}
+  .bar .wrap{padding:0 var(--s5)}
+  .bar-pill{
+    position:relative; display:flex; align-items:center; gap:var(--s4);
+    height:48px; padding:0 var(--s4) 0 var(--s5);
+    max-width:1124px; margin:0 auto; border-radius:999px;
+    transition:max-width .5s var(--expo), padding .5s var(--expo);
+  }
+  .bar-pill::before{
+    content:""; position:absolute; inset:-1px; border-radius:999px;
+    background:rgba(18,18,21,.66);
+    -webkit-backdrop-filter:saturate(1.7) blur(14px);
+            backdrop-filter:saturate(1.7) blur(14px);
+    border:1px solid rgba(255,255,255,.07);
+    opacity:0; transition:opacity .4s ease-in-out;
+  }
+  /* Relative as well as absolute, or the contraction stops being visible on a
+     narrower window: at 1024 the pill is already down to 960 from the content
+     width alone, so a flat 960 would light the glass and move nothing. */
+  .bar.is-scrolled .bar-pill{max-width:min(960px,86vw)}
+  .bar.is-scrolled .bar-pill::before{opacity:1}
+  /* everything in the pill sits above its glass */
+  .bar-pill > *{position:relative}
+  @media (max-width:720px){
+    .bar-pill{max-width:none; padding:0 var(--s4)}
+    .bar.is-scrolled .bar-pill{max-width:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .bar-pill,.bar-pill::before{transition:none}
+  }
   .mark{display:flex; align-items:center; gap:var(--s3); font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
   .mark:hover{text-decoration:none}
   .mark img{width:22px; height:22px; border-radius:var(--r-6)}
-  .bar nav{margin-left:auto; display:flex; align-items:center; gap:var(--s2)}
+  .bar nav{margin-left:auto; display:flex; align-items:center; gap:var(--s1)}
   .bar nav a{
     font-size:13px; color:var(--secondary); padding:5px 10px; border-radius:var(--r-6);
     transition:background var(--quick) var(--ease), color var(--quick) var(--ease);
@@ -912,15 +949,17 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="bar">
+<header class="bar" id="bar">
   <div class="wrap">
-    <a class="mark" href="#top"><img src="./icon.png" alt="" width="22" height="22"><span>Current</span></a>
-    <nav>
-      <a class="quiet" href="#magnet">Magnet</a>
-      <a class="quiet" href="#seed">Smart Seed</a>
-      <a class="quiet" href="https://github.com/alanwtom/current">Source</a>
-      <a class="on" href="#download">Download</a>
-    </nav>
+    <div class="bar-pill">
+      <a class="mark" href="#top"><img src="./icon.png" alt="" width="22" height="22"><span>Current</span></a>
+      <nav>
+        <a class="quiet" href="#magnet">Magnet</a>
+        <a class="quiet" href="#seed">Smart Seed</a>
+        <a class="quiet" href="https://github.com/alanwtom/current">Source</a>
+        <a class="on" href="#download">Download</a>
+      </nav>
+    </div>
   </div>
 </header>
 
@@ -1269,6 +1308,7 @@
 
 
 
+<script src="./nav.js" defer></script>
 <script src="./bg.js" defer></script>
 <script src="./reveal.js" defer></script>
 <script src="./demo.js" defer></script>
