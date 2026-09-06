@@ -8,6 +8,31 @@ Live at **https://current.alantom.dev**.
 
 ## Deploying
 
+**Do not connect this project to the GitHub repo in Vercel.** It was, briefly,
+and it broke the site twice. Two separate reasons, and the second one is fatal:
+
+1. Vercel's Root Directory defaults to the repo root, where there is no
+   `index.html` — so every Git build deployed nothing and the domain served a
+   404. Setting the root to `site` fixes that one.
+2. **`Current.dmg` is not in git**, deliberately — it is a 9 MB build artifact
+   that `Scripts/release.sh` regenerates. A build made from a GitHub checkout
+   therefore cannot contain it, so the page ships with a download button that
+   404s. No Root Directory setting fixes this.
+
+The code lives in git as normal; it is only the *deploy* that has to come from
+a local folder, because the folder has one file the repo does not.
+
+A third, smaller reason: an app-only commit should not redeploy the website. On
+a day of ordinary commits the Git link produced enough deployments to hit
+Vercel's daily rate limit, after which every deploy came back `BLOCKED`.
+
+If you ever do want push-to-deploy, the way to get it is to stop the site
+serving the binary at all — point the download at the GitHub Release asset,
+which already exists and carries the same file — and then a Git build has
+nothing missing.
+
+
+
 ```bash
 Scripts/release.sh            # rebuilds, signs, notarises, staples, makes the .dmg
 cp .build/Current.dmg site/   # the download the page points at
