@@ -73,11 +73,50 @@ public enum DropParser {
     /// `Some.Release+Name+Here` — decoded, but still wearing its plus signs.
     /// A literal plus in a name is collateral damage, and every other client
     /// makes the same trade.
+    /// The longest display name a magnet is allowed to contribute.
+    ///
+    /// `dn=` is attacker-controlled: a magnet link is something any web page
+    /// can hand the app, and nothing about the format bounds it. Without a cap
+    /// a link can carry a megabyte of text straight into a `Text` view and the
+    /// library database. 200 is past any real release name.
+    static let maximumNameLength = 200
+
     public static func nameHint(fromMagnet uri: String) -> String? {
         guard let range = uri.range(of: "dn=") else { return nil }
         let tail = String(uri[range.upperBound...])
         let token = tail.split(separator: "&").first.map(String.init) ?? tail
         let spaced = token.replacingOccurrences(of: "+", with: " ")
-        return spaced.removingPercentEncoding ?? spaced
+        let decoded = spaced.removingPercentEncoding ?? spaced
+        return sanitisedName(decoded)
+    }
+
+    /// Makes a name from an untrusted source safe to show.
+    ///
+    /// Two things get stripped, and neither is hypothetical for a format whose
+    /// links arrive from web pages:
+    ///
+    /// - **Control characters and direction overrides.** A U+202E in a name
+    ///   reverses everything after it, so a torrent can be made to display as
+    ///   something it isn't — the same trick that has been used on filenames
+    ///   for years. Newlines and tabs get stripped for the plainer reason that
+    ///   a name is one line in a fixed-height row.
+    /// - **Length.** See `maximumNameLength`.
+    ///
+    /// Returns nil rather than an empty string when nothing survives, so the
+    /// caller falls back to the info hash the way it does for a nameless
+    /// magnet.
+    public static func sanitisedName(_ raw: String) -> String? {
+        let cleaned = raw.unicodeScalars.filter { scalar in
+            // Cc covers the C0/C1 control ranges; Cf covers the bidi overrides
+            // and other invisible formatting characters.
+            !CharacterSet.controlCharacters.contains(scalar)
+                && !CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}").contains(scalar)
+        }
+        var name = String(String.UnicodeScalarView(cleaned))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.count > maximumNameLength {
+            name = String(name.prefix(maximumNameLength))
+        }
+        return name.isEmpty ? nil : name
     }
 }

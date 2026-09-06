@@ -165,3 +165,44 @@ final class DropParserTests: XCTestCase {
         XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=100%+Complete"), "100% Complete")
     }
 }
+
+// MARK: - Names from untrusted magnets
+//
+// A magnet link is something any web page can hand the app, so its `dn=` is
+// attacker-controlled text that goes straight into a row and into the library
+// database. These pin the two things that has to survive.
+
+extension DropParserTests {
+
+    /// A right-to-left override reverses everything after it, so a name can be
+    /// made to display as something it is not — the trick that has been used on
+    /// filenames for years. It should never reach a view.
+    func testNameHintStripsDirectionOverridesAndControlCharacters() {
+        let spoofed = "magnet:?xt=x&dn=" + "invoice\u{202E}fdp.exe".addingPercentEncoding(
+            withAllowedCharacters: .alphanumerics
+        )!
+        let name = DropParser.nameHint(fromMagnet: spoofed)
+        XCTAssertNotNil(name)
+        XCTAssertFalse(name!.unicodeScalars.contains { $0 == "\u{202E}" },
+                       "a bidi override survived into the display name")
+
+        XCTAssertEqual(DropParser.sanitisedName("two\nlines\there"), "twolineshere")
+        XCTAssertNil(DropParser.sanitisedName("\u{202E}\u{200F}"),
+                     "a name that is nothing but overrides should be treated as no name")
+    }
+
+    /// Nothing in the format bounds `dn=`, so the app has to.
+    func testNameHintIsLengthBounded() {
+        let huge = String(repeating: "A", count: 50_000)
+        let name = DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=" + huge)
+        XCTAssertEqual(name?.count, DropParser.maximumNameLength)
+    }
+
+    /// The bound must not damage ordinary names.
+    func testOrdinaryNamesAreUntouched() {
+        XCTAssertEqual(
+            DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=Sintel+%282010%29&tr=udp://x"),
+            "Sintel (2010)"
+        )
+    }
+}

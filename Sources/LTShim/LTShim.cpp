@@ -265,9 +265,24 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
     pack.set_int(settings_pack::alert_mask,
                  alert_category::status | alert_category::error | alert_category::storage);
     pack.set_str(settings_pack::listen_interfaces, "0.0.0.0:6881,[::]:6881");
-    pack.set_bool(settings_pack::enable_upnp, true);
-    pack.set_bool(settings_pack::enable_natpmp, true);
-    pack.set_bool(settings_pack::enable_lsd, true);
+
+    // The session starts with every outward-facing feature OFF, and the app
+    // turns on whatever the user actually asked for in its first
+    // `lt_apply_settings`.
+    //
+    // These three used to be `true` here. The app has real switches for all of
+    // them, but the switches are read after the session already exists — so a
+    // user who had turned port mapping off still got a UPnP and NAT-PMP
+    // mapping punched through their router at every launch, and a user who had
+    // turned off local discovery still had the app broadcast on their LAN what
+    // it was downloading. A port mapping made in that window also outlives it:
+    // the router keeps the lease.
+    //
+    // Defaulting a network exposure to on and correcting it a moment later is
+    // the wrong way round. Fail closed and let the settings open things up.
+    pack.set_bool(settings_pack::enable_upnp, false);
+    pack.set_bool(settings_pack::enable_natpmp, false);
+    pack.set_bool(settings_pack::enable_lsd, false);
     pack.set_int(settings_pack::connections_limit, 240);
     pack.set_int(settings_pack::alert_queue_size, 5000);
     pack.set_str(settings_pack::user_agent, "Current/1.0");

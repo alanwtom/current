@@ -51,10 +51,52 @@ final class AppEnvironment: ObservableObject {
     private var configCancellables = Set<AnyCancellable>()
     private var appliedConfiguration: EngineConfiguration?
 
+    /// Creates the app's data directory readable only by its owner.
+    ///
+    /// `createDirectory` alone leaves it at the process umask, which on macOS
+    /// is 0755 — so `library.sqlite` and everything beside it were readable by
+    /// every other account on the machine. That file is the whole torrent
+    /// history: names, sizes, save paths, when each one was added.
+    ///
+    /// The app's flatly-stated promise is that this stays on your Mac, and
+    /// "on your Mac" has to mean "yours", not "anyone with a login". 0700 on
+    /// the directory, and the existing one is tightened too — a fix that only
+    /// applied to fresh installs would leave every current user exposed.
+    private static func createPrivateDirectory(at url: URL) {
+        let manager = FileManager.default
+        try? manager.createDirectory(
+            at: url,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+
+        tightenContents(of: url)
+    }
+
+    /// Takes the files inside the data directory down to 0600.
+    ///
+    /// Called again *after* the database is opened, because SQLite creates
+    /// `library.sqlite` and its `-wal`/`-shm` siblings itself, at the umask —
+    /// so tightening only at directory-creation time catches nothing on a
+    /// fresh install. The 0700 directory is what actually stops another
+    /// account reading them; this is so the files don't claim otherwise if one
+    /// is ever copied somewhere less careful.
+    private static func tightenContents(of url: URL) {
+        let manager = FileManager.default
+        let names = (try? manager.contentsOfDirectory(atPath: url.path)) ?? []
+        for name in names {
+            try? manager.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.appendingPathComponent(name).path
+            )
+        }
+    }
+
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Current", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        Self.createPrivateDirectory(at: appSupport)
 
         let simulate = ProcessInfo.processInfo.arguments.contains("-simulate")
 
@@ -65,6 +107,8 @@ final class AppEnvironment: ObservableObject {
 
         let database = AppDatabase(url: appSupport.appendingPathComponent("library.sqlite"))
         self.database = database
+        // SQLite has just created its files at the umask; take them to 0600.
+        Self.tightenContents(of: appSupport)
         self.settings = SettingsStore(database: database)
         // Before any window exists, so the first frame is already the right
         // appearance. The property's own `didSet` handles later changes, but it
@@ -406,7 +450,24 @@ final class AppEnvironment: ObservableObject {
 
     func cancelMagnetSelection() async {
         if case .selecting(let id) = magnetFlow.stage {
-            await engine.remove(id, deleteFiles: true)
+            // `deleteFiles: false`, and this is a security fix rather than a
+            // tidiness regression.
+            //
+            // It used to pass `true`, on the reasoning that a magnet paused for
+            // file selection has written nothing yet, so there is nothing to
+            // delete. That reasoning is about the *torrent*; the flag is about
+            // the *path*. libtorrent's `session::delete_files` erases every
+            // file in the torrent's file list underneath the save folder,
+            // whether this app put it there or not. Re-add a magnet for
+            // something already sitting in your downloads folder, press Cancel
+            // on the "which files?" card, and it erased the copy you already
+            // had — not to the Trash, gone.
+            //
+            // A Cancel button must not be able to destroy data. Worst case now
+            // is a few stray part-files, which is the failure the app is
+            // supposed to have: it never unlinks on its own, and everything it
+            // does remove goes to the Trash.
+            await engine.remove(id, deleteFiles: false)
             await library.remove([id], deleteFiles: false)
         }
         magnetFlow.dismiss()

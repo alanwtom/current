@@ -20,3 +20,6 @@ Scripts/AppIcon.iconset/
 
 # The signed disk image ships to Vercel, not into git history.
 site/Current.dmg
+
+# Session-local editor/agent config, not part of the project.
+.claude/

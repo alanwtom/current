@@ -126,7 +126,15 @@ public actor LibtorrentEngine: TorrentEngine {
         }
         let directory = support.appendingPathComponent("Current", isDirectory: true)
         do {
-            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            // 0700, matching the app's own creation of this directory. The app
+            // gets here first in practice, but the engine is a separate module
+            // and this is the other door into the same folder — it should not
+            // be the one that leaves it readable by every account on the Mac.
+            try manager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         } catch {
             return ""
         }
