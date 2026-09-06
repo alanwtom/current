@@ -282,6 +282,29 @@ never joins a swarm:
       and the torrent limps along on DHT, which reads as a flaky network rather
       than a broken build. It works.
 
+- [x] **The updater actually delivers an update.** `Scripts/test-update.sh`
+      builds a 1.1.0 and a 1.1.1, signs both, publishes the newer one to a
+      **local** appcast, installs the older into `/Applications`, and checks
+      that the installed app becomes 1.1.1 on its own. Then the half that
+      matters: it swaps the served file for a different valid disk image while
+      leaving the appcast advertising the original's signature, and confirms the
+      update is **refused**. Without that second check the EdDSA signature is
+      decoration and anyone who can answer for the feed's host owns every
+      install.
+
+      The feed is on localhost on purpose — publishing a pretend 1.1.1 to the
+      real appcast would hand it to everybody. Everything else is real: both
+      code signatures, the EdDSA signature and its verification, Sparkle's own
+      download and install, and a genuine `/Applications` install.
+
+      Two things learned writing it, both now in the script. Sparkle's automatic
+      checking does not mean "check now" — it spaces checks a day apart, so
+      there is a `CURRENT_UPDATE_CHECK_ON_LAUNCH` hook to ask for one
+      immediately. And the app must be quit **cleanly**: Sparkle installs from
+      the termination handler, which does not run on a signal, so `pkill` made
+      the test fail in the most misleading way available — the update path was
+      fine and the test was killing the app before it could finish.
+
 Still by hand, because they can't be automated usefully:
 - [ ] A magnet whose trackers are all dead, so it must resolve over DHT alone.
 - [ ] The first magnet **after a cold launch**, which is the case the persisted
