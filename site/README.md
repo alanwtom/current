@@ -37,6 +37,34 @@ Two other things that cost time and are easy to hit again:
   because `current-mac.vercel.app` belongs to someone else, and without it
   Vercel falls back to `current-mac-alantomws-projects.vercel.app`.
 
+## The interactive demo
+
+The window in the hero is not a screenshot — it is a working replica built from
+plain DOM (`demo.js`). Sections filter, search filters, rows select, pause
+buttons pause, `+` raises the magnet card, and the meters tick. It is the same
+approach Cursor's product page uses: real `<button>` elements inside a container
+styled to look like a window.
+
+Two things it must keep doing:
+
+- **Fall back.** With JavaScript off it renders nothing, so a `<noscript>` block
+  swaps in `library.webp` — the screenshot it is a live version of.
+- **Stay out of the page's way.** Every class is prefixed `cd-` and every rule
+  is scoped to `.cd-demo`. When it was first dropped in, one unscoped `body`
+  rule from its standalone page centred the entire site.
+
+`reveal.js` is separate from `demo.js` on purpose. They were briefly one file,
+and a runtime fault in the demo stopped the reveal observer running, which left
+every section below the hero at `opacity: 0` — a blank page. Separate files, and
+a three-second failsafe in `reveal.js`, mean the text shows whatever happens.
+
+## Type and motion
+
+Montserrat 500 with about -0.02em tracking for display, DM Sans for body, on a
+near-black `#0a0a0a` ground — the app's own chrome colour is kept for the
+window and the cards so they sit *on* the page rather than dissolve into it.
+The entrance is a staggered rise-fade-unblur; sections repeat it on scroll.
+
 ## Assets
 
 The three screenshots are served as **lossless WebP** — pixel-identical to the

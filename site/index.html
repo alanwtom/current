@@ -7,6 +7,12 @@
 <title>Current — a quiet BitTorrent client for macOS</title>
 <meta name="description" content="Current is a native macOS BitTorrent client built on the idea that torrenting is a background activity. Free, MIT-licensed, 8.8 MB, Apple Silicon, macOS 26+.">
 <link rel="canonical" href="https://current.alantom.dev/">
+<noscript><style>
+  .reveal{opacity:1 !important; transform:none !important; filter:none !important}
+  .cd-hint{display:none !important}
+  .cd-demo{display:none !important}
+  .demo-fallback{display:block !important}
+</style></noscript>
 <meta name="theme-color" content="#121214">
 <link rel="icon" type="image/png" href="./icon.png">
 <link rel="apple-touch-icon" href="./icon.png">
@@ -25,6 +31,14 @@
 <meta name="twitter:description" content="Quiet when nothing is happening, informative when something is, and reversible when it acts on its own. Free, open source, 8.8 MB.">
 <meta name="twitter:image" content="https://current.alantom.dev/library.png">
 <style>
+  /* Montserrat and DM Sans, SIL Open Font License, served from this origin so
+     the page still makes zero third-party requests. Latin subsets only: 42 KB
+     for both. */
+  @font-face{font-family:'Montserrat';src:url('./fonts/montserrat-latin.woff2') format('woff2');
+    font-weight:100 900; font-style:normal; font-display:swap;}
+  @font-face{font-family:'DM Sans';src:url('./fonts/dmsans-latin.woff2') format('woff2');
+    font-weight:100 1000; font-style:normal; font-display:swap;}
+
   :root{
     --chrome:#121214;
     --canvas:#18181b;
@@ -43,14 +57,19 @@
     --s1:4px; --s2:6px; --s3:8px; --s4:12px; --s5:16px; --s6:20px; --s7:28px;
     --quick:180ms; --standard:280ms;
     --ease:cubic-bezier(.32,.72,0,1);
-    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    --sans:'DM Sans',-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    --display:'Montserrat','DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    /* The ground goes darker than the app's own chrome so the window and the
+       cards sit on top of it rather than dissolving into it. */
+    --ground:#0a0a0a;
+    --expo:cubic-bezier(.16,1,.3,1);
     --mono:ui-monospace,"SF Mono",Menlo,monospace;
   }
 
   *,*::before,*::after{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
   body{
-    margin:0; background:var(--chrome); color:var(--text);
+    margin:0; background:var(--ground); color:var(--text);
     font-family:var(--sans); font-size:16px; line-height:1.55;
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   }
@@ -70,7 +89,9 @@
   .col-wide{max-width:760px}
 
   /* ---- chrome bar: solid, no hairline, like the app's own ---- */
-  .bar{position:sticky; top:0; z-index:10; background:var(--chrome)}
+  .bar{position:sticky; top:0; z-index:10; background:rgba(10,10,10,.72);
+       -webkit-backdrop-filter:saturate(1.6) blur(14px); backdrop-filter:saturate(1.6) blur(14px);
+       border-bottom:1px solid rgba(255,255,255,.05)}
   .bar .wrap{display:flex; align-items:center; gap:var(--s4); height:52px}
   .mark{display:flex; align-items:center; gap:var(--s3); font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
   .mark:hover{text-decoration:none}
@@ -90,7 +111,7 @@
   section[id]{scroll-margin-top:72px}
   @media (prefers-reduced-motion:no-preference){ html{scroll-behavior:smooth} }
   h2{font-size:clamp(1.5rem,3.4vw,1.9rem); letter-spacing:-.028em; line-height:1.15}
-  .lede{margin-top:var(--s5); font-size:17px; line-height:1.6; color:var(--secondary)}
+  .lede{margin-top:var(--s5); font-size:17px; line-height:1.6; color:var(--secondary); max-width:34ch}
   .body{margin-top:var(--s5); font-size:15.5px; line-height:1.65; color:var(--secondary)}
   .body + .body{margin-top:var(--s4)}
   .body strong{color:var(--text); font-weight:600}
@@ -118,11 +139,13 @@
          The screenshot's own chrome is #121214, exactly the page's, so the
          only thing that reads as an object is the library well inside it.
          Cropped 14px in on every side to shed the rounded-corner fringe. ---- */
-  .window{margin-top:56px; position:relative; overflow:hidden; border-radius:var(--r-win); padding-top:51.732%}
+  .window{margin-top:56px; position:relative; overflow:hidden; border-radius:14px;
+    padding-top:51.732%; box-shadow:0 0 0 1px rgba(255,255,255,.07), 0 32px 80px -24px rgba(0,0,0,.9)}
   .window img{position:absolute; max-width:none; width:101.617%; left:-.808%; top:-1.5625%}
 
   /* ---- panes ---- */
-  .pane{background:var(--canvas); border-radius:var(--r-win); padding:var(--s7)}
+  .pane{background:var(--canvas); border-radius:12px; padding:var(--s7);
+        box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
   .grid{display:grid; gap:48px; grid-template-columns:minmax(0,7fr) minmax(0,10fr); align-items:center}
   .grid.flip{grid-template-columns:minmax(0,10fr) minmax(0,7fr)}
   @media (max-width:900px){ .grid,.grid.flip{grid-template-columns:1fr; gap:var(--s7)} .grid.flip .txt{order:-1} }
@@ -238,7 +261,8 @@
   #s4:checked ~ .panels #p4{opacity:1; visibility:visible}
 
   /* ---- download ---- */
-  .download{background:var(--canvas); border-radius:var(--r-win); padding:40px}
+  .download{background:var(--canvas); border-radius:16px; padding:40px;
+            box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
   .download .top{display:flex; align-items:center; gap:var(--s6); flex-wrap:wrap}
   .download img{width:76px; height:76px; border-radius:18px; flex:none}
   .download h2{font-size:1.55rem}
@@ -247,7 +271,10 @@
   @media (max-width:900px){ .dl-grid{grid-template-columns:1fr; gap:var(--s7)} .download{padding:var(--s7)} }
 
   footer{padding:44px 0 64px}
-  footer .wrap{display:flex; gap:var(--s5) var(--s7); flex-wrap:wrap; align-items:baseline; font-size:13px; color:var(--secondary)}
+  footer .wrap{display:flex; justify-content:space-between; gap:var(--s4) var(--s6);
+                flex-wrap:wrap; align-items:baseline; font-size:13px; color:var(--tertiary);
+                border-top:1px solid rgba(255,255,255,.06); padding-top:28px}
+  footer .wrap span{flex:0 1 auto}
 
   @media (max-width:640px){
     section{padding:48px 0}
@@ -259,10 +286,587 @@
     .dp .why{padding:var(--s4)}
   }
 
-  .sum{margin:6px 0 0; font-family:var(--mono); font-size:11px; line-height:1.7;
-       color:var(--secondary); word-break:break-all; letter-spacing:.02em}
-  .sumnote{margin:10px 0 0; font-size:12.5px; line-height:1.6; color:var(--secondary)}
-  .sumnote code{font-family:var(--mono); font-size:11.5px; color:var(--secondary)}
+
+  h1,h2,h3,.dl-title{font-family:var(--display); font-weight:500; letter-spacing:-.022em}
+  h1{font-size:clamp(38px,5.4vw,60px); line-height:1.06; max-width:15ch}
+  h2{font-size:clamp(27px,3.1vw,36px); line-height:1.16}
+
+  /* The reference's entrance: rise, fade and unblur together, staggered down
+     the hero, with the duration getting *shorter* as the delay grows so the
+     whole group still lands at about the same moment. `backwards` keeps each
+     element hidden during its own delay. */
+  @keyframes rise-in{
+    from{opacity:0; transform:translateY(var(--rise,20px)); filter:blur(var(--rise-blur,0px))}
+    to  {opacity:1; transform:translateY(0);                filter:blur(0)}
+  }
+  .rise{animation:rise-in .9s ease-out backwards}
+  .rise-2{animation:rise-in .8s ease-out .15s backwards}
+  .rise-3{animation:rise-in .7s ease-out .30s backwards}
+  .rise-4{animation:rise-in .7s ease-out .42s backwards}
+
+  /* Sections do the same thing on scroll rather than on load. */
+  .reveal{opacity:0; transform:translateY(22px); filter:blur(6px);
+          transition:opacity .7s var(--expo), transform .7s var(--expo), filter .7s var(--expo)}
+  .reveal.seen{opacity:1; transform:none; filter:none}
+  .demo-fallback{display:none; width:100%; height:auto; border-radius:14px;
+    box-shadow:0 0 0 1px rgba(255,255,255,.07), 0 32px 80px -24px rgba(0,0,0,.9)}
+
+
+/* ===== interactive demo (scoped to .cd-demo) ===== */
+
+  /* Host page only. Everything below the widget marker is scoped to .cd-demo. */
+  html, body { margin: 0; padding: 0; background: #0a0a0a; }
+
+/* ============================================================================
+   BEGIN CURRENT DEMO WIDGET — STYLES
+   Every rule is scoped under .cd-demo and every class is prefixed cd-, so this
+   block can be lifted into any page without colliding with its styles.
+   ========================================================================= */
+
+.cd-demo {
+  /* the app's own tokens */
+  --cd-chrome:      #121214;
+  --cd-canvas:      #18181b;
+  --cd-text:        #ededf0;
+  --cd-secondary:   #a1a1aa;
+  --cd-tertiary:    #71717a;   /* strokes, tracks, leaders — never body text */
+  --cd-quaternary:  #52525b;   /* strokes only */
+  --cd-accent:      #3fa9ff;
+  --cd-teal:        #2dd4bf;
+  --cd-green:       #4ade80;
+  --cd-amber:       #fbbf24;
+  --cd-red:         #f87171;
+  --cd-fill-1:      rgba(255,255,255,.04);
+  --cd-fill-2:      rgba(255,255,255,.07);
+  --cd-fill-3:      rgba(255,255,255,.11);
+  --cd-r-window:    10px;
+  --cd-r-well:      8px;
+  --cd-r-control:   6px;
+  --cd-r-meter:     4px;
+  --cd-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --cd-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --cd-quick: 180ms;
+  --cd-instant: 120ms;
+  --cd-standard: 280ms;
+  --cd-ease: cubic-bezier(.32,.72,0,1);
+
+  container-type: inline-size;
+  container-name: cd;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  font-family: var(--cd-font);
+  color: var(--cd-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.cd-demo *, .cd-demo *::before, .cd-demo *::after { box-sizing: border-box; }
+/* :where() keeps the reset at zero specificity, so every component class below
+   can still set its own background, colour and radius. */
+.cd-demo :where(button, input) {
+  font: inherit; color: inherit; margin: 0;
+  background: none; border: 0; border-radius: 0;
+  -webkit-appearance: none; appearance: none;
+}
+.cd-demo button { cursor: pointer; }
+.cd-demo input { user-select: text; -webkit-user-select: text; }
+.cd-demo p, .cd-demo h1, .cd-demo h2, .cd-demo ul, .cd-demo li { margin: 0; padding: 0; }
+.cd-demo ul { list-style: none; }
+.cd-demo :focus { outline: none; }
+.cd-demo :focus-visible {
+  outline: 2px solid var(--cd-accent);
+  outline-offset: 2px;
+  border-radius: var(--cd-r-control);
+}
+.cd-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.cd-sr {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+.cd-i { display: block; flex: none; }
+
+/* ---- window ------------------------------------------------------------- */
+.cd-win {
+  position: relative;
+  background: var(--cd-chrome);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: var(--cd-r-window);
+  box-shadow: 0 24px 70px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.5);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---- chrome bar --------------------------------------------------------- */
+.cd-bar {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  flex: none;
+}
+.cd-lights { display: flex; gap: 8px; align-items: center; flex: none; }
+.cd-light { width: 12px; height: 12px; border-radius: 50%; }
+.cd-light-r { background: #ff5f57; }
+.cd-light-y { background: #febc2e; }
+.cd-light-g { background: #28c840; }
+.cd-bar-toggle {
+  width: 28px; height: 24px; margin-left: 12px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--cd-r-control);
+  background: var(--cd-fill-1);
+  color: var(--cd-secondary);
+  flex: none;
+}
+.cd-section-label {
+  font-size: 13px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--cd-text);
+  white-space: nowrap;
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.cd-bar-spacer { flex: 1 1 auto; min-width: 8px; }
+.cd-rates { display: flex; gap: 14px; align-items: center; flex: none; }
+.cd-rate {
+  display: flex; align-items: baseline; gap: 4px;
+  font-size: 12px; color: var(--cd-secondary);
+  width: 84px; justify-content: flex-end;   /* fixed width: rates never resize the bar */
+}
+.cd-rate-arrow { color: var(--cd-tertiary); font-size: 11px; }
+.cd-search {
+  position: relative; flex: 0 1 240px; min-width: 84px;
+  display: flex; align-items: center;
+}
+.cd-search-i {
+  position: absolute; left: 8px; color: var(--cd-secondary); pointer-events: none;
+}
+.cd-search input {
+  width: 100%; height: 28px;
+  padding: 0 26px 0 28px;
+  background: var(--cd-fill-2);
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: var(--cd-r-control);
+  font-size: 12.5px; color: var(--cd-text);
+  transition: background var(--cd-instant) var(--cd-ease), border-color var(--cd-instant) var(--cd-ease);
+}
+.cd-search input::placeholder { color: var(--cd-secondary); }
+.cd-search input:focus { background: var(--cd-fill-3); border-color: rgba(63,169,255,.5); }
+.cd-search input::-webkit-search-cancel-button { display: none; }
+.cd-search-clear {
+  position: absolute; right: 4px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  color: var(--cd-secondary); background: var(--cd-fill-2);
+}
+.cd-search.is-filled .cd-search-clear { display: flex; }
+.cd-icon-btn {
+  width: 28px; height: 28px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--cd-r-control);
+  background: var(--cd-fill-2);
+  color: var(--cd-secondary);
+  transition: background var(--cd-instant) var(--cd-ease), color var(--cd-instant) var(--cd-ease);
+}
+.cd-icon-btn:hover { background: var(--cd-fill-3); color: var(--cd-text); }
+.cd-icon-btn:active { transform: scale(.94); }
+.cd-icon-btn.is-on { background: var(--cd-fill-3); color: var(--cd-text); }
+.cd-cmd { font-family: var(--cd-mono); font-size: 13px; line-height: 1; }
+.cd-add {
+  background: var(--cd-accent); color: #06121f;
+  width: 32px;
+}
+.cd-add:hover { background: #62b9ff; color: #06121f; }
+
+/* the one pulsing hint — stops for good on the visitor's first interaction */
+.cd-add.cd-hint::after {
+  content: ""; position: absolute; inset: -3px;
+  border-radius: 9px; border: 2px solid var(--cd-accent);
+  animation: cd-pulse 2200ms var(--cd-ease) infinite;
+  pointer-events: none;
+}
+.cd-add { position: relative; }
+@keyframes cd-pulse {
+  0%   { opacity: .9; transform: scale(1); }
+  60%  { opacity: 0;  transform: scale(1.34); }
+  100% { opacity: 0;  transform: scale(1.34); }
+}
+
+/* ---- body columns ------------------------------------------------------- */
+.cd-body { display: flex; align-items: stretch; height: 494px; }
+
+/* ---- sidebar ------------------------------------------------------------ */
+.cd-side {
+  width: 180px; flex: none;
+  display: flex; flex-direction: column;
+  padding: 0 8px 10px 8px;
+}
+.cd-side-head {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
+  color: var(--cd-secondary);
+  padding: 14px 8px 6px;
+}
+.cd-side-row {
+  position: relative;
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; height: 30px;
+  padding: 0 8px;
+  border-radius: var(--cd-r-control);
+  font-size: 13px; color: var(--cd-secondary);
+  transition: background var(--cd-instant) var(--cd-ease), color var(--cd-instant) var(--cd-ease);
+}
+.cd-side-row:hover { background: var(--cd-fill-1); color: var(--cd-text); }
+.cd-side-row[aria-current="true"] { background: var(--cd-fill-2); color: var(--cd-text); font-weight: 500; }
+.cd-side-row[aria-current="true"]::before {
+  content: ""; position: absolute; left: -4px; top: 7px; bottom: 7px;
+  width: 3px; border-radius: 2px; background: var(--cd-accent);
+}
+.cd-side-icon {
+  width: 18px; flex: none;                /* Size.iconColumn — the app's fixed glyph slot */
+  display: flex; align-items: center; justify-content: center;
+  color: currentColor;
+}
+.cd-side-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.cd-side-foot { margin-top: auto; padding: 0 8px; }
+.cd-storage-line {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; color: var(--cd-secondary); margin-bottom: 6px;
+}
+.cd-storage-meter { height: 3px; border-radius: 3px; background: var(--cd-fill-2); overflow: hidden; }
+.cd-storage-fill { display: block; height: 100%; background: var(--cd-tertiary); border-radius: 3px; }
+
+/* ---- gutter + library well ---------------------------------------------- */
+.cd-gutter { flex: 1 1 auto; min-width: 0; padding: 8px 0 10px; }
+.cd-pane {
+  height: 100%;
+  background: var(--cd-canvas);
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: var(--cd-r-well);
+  overflow: hidden;
+  position: relative;
+  display: flex; flex-direction: column;
+}
+.cd-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.14) transparent;
+}
+.cd-list::-webkit-scrollbar { width: 9px; }
+.cd-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 5px; border: 3px solid transparent; background-clip: content-box; }
+
+/* ---- a library row: fixed 58px, always ---------------------------------- */
+.cd-row {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  height: 58px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--cd-r-control);
+  transition: background var(--cd-instant) var(--cd-ease);
+}
+.cd-row:hover { background: var(--cd-fill-1); }
+.cd-row.is-sel { background: var(--cd-fill-2); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+.cd-row.is-new { animation: cd-rowin var(--cd-standard) var(--cd-ease) 1; }
+@keyframes cd-rowin {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+.cd-glyph {
+  width: 26px; height: 26px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--cd-fill-1);
+  transition: background var(--cd-instant) var(--cd-ease);
+}
+.cd-glyph:hover { background: var(--cd-fill-3); }
+.cd-glyph .cd-pauseglyph { display: none; }
+.cd-glyph:hover .cd-stateglyph, .cd-glyph:focus-visible .cd-stateglyph { display: none; }
+.cd-glyph:hover .cd-pauseglyph, .cd-glyph:focus-visible .cd-pauseglyph { display: block; color: var(--cd-text); }
+.cd-glyph.is-paused .cd-stateglyph { display: none; }
+.cd-glyph.is-paused .cd-pauseglyph { display: block; color: var(--cd-secondary); }
+.cd-main {
+  flex: 1 1 auto; min-width: 0;
+  display: block; text-align: left;
+  padding: 0; border-radius: var(--cd-r-control);
+}
+.cd-row-top { display: flex; align-items: baseline; gap: 12px; }
+.cd-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 13.5px; font-weight: 600; letter-spacing: -.005em;
+  color: var(--cd-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cd-row-rate {
+  flex: none; font-size: 12px; color: var(--cd-secondary); white-space: nowrap;
+}
+.cd-meter {
+  display: block;
+  height: 4px; margin: 7px 0 6px;
+  border-radius: var(--cd-r-meter);
+  background: var(--cd-fill-2);
+  overflow: hidden;
+}
+.cd-fill {
+  display: block; height: 100%; width: 100%;
+  border-radius: var(--cd-r-meter);
+  transform-origin: left center;
+  transition: transform var(--cd-standard) linear, background-color var(--cd-quick) var(--cd-ease);
+}
+.cd-row-sub { display: flex; align-items: baseline; gap: 12px; font-size: 11.5px; color: var(--cd-secondary); }
+.cd-sub-l { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-sub-r { flex: none; white-space: nowrap; }
+.cd-donepill {
+  display: inline-block; padding: 1px 7px; border-radius: 999px;
+  background: var(--cd-fill-2); color: var(--cd-secondary);
+  font-size: 11px;
+}
+.cd-empty {
+  padding: 46px 20px; text-align: center;
+  font-size: 12.5px; color: var(--cd-secondary);
+}
+
+/* state tints — a row says itself with exactly two: its glyph and its meter */
+.cd-t-downloading { color: var(--cd-accent); }
+.cd-t-seeding     { color: var(--cd-teal); }
+.cd-t-done        { color: var(--cd-green); }
+.cd-t-paused      { color: var(--cd-tertiary); }
+.cd-f-downloading { background: var(--cd-accent); }
+.cd-f-seeding     { background: var(--cd-teal); }
+.cd-f-done        { background: var(--cd-green); }
+.cd-f-paused      { background: rgba(255,255,255,.20); }
+
+/* ---- inspector ---------------------------------------------------------- */
+.cd-insp {
+  width: 230px; flex: none;
+  padding: 12px 14px 10px 6px;
+  display: flex; flex-direction: column; gap: 9px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.14) transparent;
+}
+.cd-insp::-webkit-scrollbar { width: 9px; }
+.cd-insp::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 5px; border: 3px solid transparent; background-clip: content-box; }
+.cd-win.cd-no-insp .cd-insp { display: none; }
+.cd-insp-name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+.cd-insp-actions { display: flex; align-items: center; gap: 8px; }
+.cd-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; white-space: nowrap;
+}
+.cd-pill-downloading { background: rgba(63,169,255,.16); color: var(--cd-accent); }
+.cd-pill-seeding     { background: rgba(45,212,191,.16); color: var(--cd-teal); }
+.cd-pill-done        { background: rgba(74,222,128,.16); color: var(--cd-green); }
+.cd-pill-paused      { background: var(--cd-fill-2); color: var(--cd-secondary); }
+.cd-insp-btns { margin-left: auto; display: flex; gap: 4px; }
+.cd-insp-btn {
+  width: 26px; height: 26px; border-radius: var(--cd-r-control);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--cd-secondary);
+  transition: background var(--cd-instant) var(--cd-ease), color var(--cd-instant) var(--cd-ease);
+}
+.cd-insp-btn:hover { background: var(--cd-fill-2); color: var(--cd-text); }
+.cd-insp-btn.cd-danger:hover { background: rgba(248,113,113,.14); color: var(--cd-red); }
+.cd-card {
+  background: var(--cd-canvas);
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: var(--cd-r-well);
+  padding: 10px 12px;
+}
+.cd-pct-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cd-pct { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+.cd-pct-of { font-size: 12px; color: var(--cd-secondary); text-align: right; }
+.cd-insp-meter { height: 6px; margin-top: 10px; border-radius: var(--cd-r-meter); background: var(--cd-fill-2); overflow: hidden; }
+.cd-group-head {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
+  color: var(--cd-secondary); padding: 0 2px 2px;
+}
+.cd-stat { display: flex; align-items: baseline; gap: 6px; height: 20px; font-size: 12px; }
+.cd-stat-k { color: var(--cd-secondary); white-space: nowrap; }
+.cd-lead { flex: 1 1 auto; min-width: 8px; border-bottom: 1px dotted var(--cd-quaternary); transform: translateY(-3px); }
+.cd-stat-v { color: var(--cd-text); font-weight: 500; white-space: nowrap; }
+.cd-health { border-radius: var(--cd-r-well); padding: 10px 11px; display: flex; gap: 9px; }
+.cd-health-healthy { background: rgba(74,222,128,.10); border: 1px solid rgba(74,222,128,.18); }
+.cd-health-rare    { background: rgba(251,191,36,.10); border: 1px solid rgba(251,191,36,.20); }
+.cd-health-icon { padding-top: 1px; }
+.cd-health-healthy .cd-health-icon, .cd-health-healthy .cd-health-title { color: var(--cd-green); }
+.cd-health-rare .cd-health-icon, .cd-health-rare .cd-health-title { color: var(--cd-amber); }
+.cd-health-title { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+.cd-health-body { display: block; font-size: 11.5px; line-height: 1.42; color: var(--cd-secondary); }
+
+/* ---- magnet card -------------------------------------------------------- */
+.cd-scrim {
+  position: absolute; inset: 0; z-index: 20;
+  background: rgba(9,9,11,.5);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 96px;
+  animation: cd-fade var(--cd-quick) var(--cd-ease) 1;
+}
+@keyframes cd-fade { from { opacity: 0; } to { opacity: 1; } }
+.cd-magnet {
+  width: min(430px, calc(100% - 40px));
+  background: #1c1c20;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: var(--cd-r-window);
+  box-shadow: 0 20px 50px rgba(0,0,0,.55);
+  padding: 16px;
+  animation: cd-pop var(--cd-quick) var(--cd-ease) 1;
+}
+@keyframes cd-pop {
+  from { opacity: 0; transform: scale(.92); }
+  to   { opacity: 1; transform: none; }
+}
+.cd-magnet-top { display: flex; align-items: flex-start; gap: 10px; }
+.cd-magnet-title { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.cd-magnet-meta { font-size: 12px; color: var(--cd-secondary); margin-top: 3px; }
+.cd-magnet-close {
+  margin-left: auto; width: 24px; height: 24px; border-radius: var(--cd-r-control);
+  display: flex; align-items: center; justify-content: center; color: var(--cd-secondary);
+}
+.cd-magnet-close:hover { background: var(--cd-fill-2); color: var(--cd-text); }
+.cd-magnet-head { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; color: var(--cd-secondary); margin: 16px 0 8px; }
+.cd-path-row { display: flex; align-items: center; gap: 9px; height: 28px; }
+.cd-path {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12.5px; color: var(--cd-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cd-btn {
+  height: 28px; padding: 0 12px;
+  border-radius: var(--cd-r-control);
+  background: var(--cd-fill-2);
+  border: 1px solid rgba(255,255,255,.06);
+  font-size: 12.5px; color: var(--cd-text); white-space: nowrap;
+  transition: background var(--cd-instant) var(--cd-ease);
+}
+.cd-btn:hover { background: var(--cd-fill-3); }
+.cd-btn:active { transform: scale(.98); }
+.cd-btn-primary {
+  background: var(--cd-accent); border-color: transparent; color: #06121f; font-weight: 600;
+}
+.cd-btn-primary:hover { background: #62b9ff; }
+.cd-check { display: flex; align-items: center; gap: 9px; margin-top: 12px; height: 24px; padding: 0; }
+.cd-check-box {
+  width: 15px; height: 15px; flex: none;
+  border-radius: 4px; border: 1px solid var(--cd-quaternary);
+  display: flex; align-items: center; justify-content: center;
+  color: #06121f;
+  transition: background var(--cd-instant) var(--cd-ease), border-color var(--cd-instant) var(--cd-ease);
+}
+.cd-check[aria-checked="true"] .cd-check-box { background: var(--cd-accent); border-color: var(--cd-accent); }
+.cd-check-box svg { opacity: 0; }
+.cd-check[aria-checked="true"] .cd-check-box svg { opacity: 1; }
+.cd-check-label { font-size: 12.5px; color: var(--cd-text); }
+.cd-files { margin-top: 10px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 10px; }
+.cd-file {
+  display: flex; align-items: center; gap: 9px; height: 26px;
+  font-size: 12px; color: var(--cd-secondary);
+}
+.cd-file-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cd-text); }
+.cd-magnet-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.cd-magnet-foot .cd-btn-primary { margin-left: auto; }
+
+/* ---- the teaching layer ------------------------------------------------- */
+.cd-caption {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin: 12px 4px 0;
+  min-height: 32px;
+}
+.cd-caption-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--cd-accent); margin-top: 6px;
+  transition: background var(--cd-quick) var(--cd-ease);
+}
+.cd-caption-text {
+  font-size: 12.5px; line-height: 1.45; color: var(--cd-secondary);
+  max-width: 74ch;
+}
+.cd-caption-text strong { color: var(--cd-text); font-weight: 600; }
+.cd-caption-text kbd {
+  font-family: var(--cd-font); font-size: 11px;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--cd-fill-2); border: 1px solid rgba(255,255,255,.07);
+  color: var(--cd-text);
+}
+.cd-caption.is-flash .cd-caption-text { animation: cd-capin var(--cd-quick) var(--cd-ease) 1; }
+@keyframes cd-capin { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+
+/* the autoplay's ghost pointer: transform-only, never hit-tested */
+.cd-ghost {
+  position: absolute; z-index: 30; top: 0; left: 0;
+  width: 18px; height: 18px; margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: rgba(237,237,240,.9);
+  box-shadow: 0 2px 10px rgba(0,0,0,.5);
+  pointer-events: none;
+  opacity: 0;
+  transition: transform var(--cd-standard) var(--cd-ease), opacity var(--cd-quick) linear;
+}
+.cd-ghost.is-on { opacity: 1; }
+.cd-ghost::after {
+  content: ""; position: absolute; inset: -6px;
+  border-radius: 50%; border: 2px solid var(--cd-accent);
+  opacity: 0; transform: scale(.6);
+}
+.cd-ghost.is-tap::after { animation: cd-tap 420ms var(--cd-ease) 1; }
+@keyframes cd-tap {
+  0%   { opacity: .95; transform: scale(.6); }
+  100% { opacity: 0;   transform: scale(1.7); }
+}
+
+/* ---- responsive: degrade in a stated order, never overflow -------------- */
+@container cd (max-width: 900px) {
+  .cd-insp, .cd-insp-toggle { display: none !important; }
+  .cd-body { height: 456px; }
+}
+@container cd (max-width: 640px) {
+  .cd-side { display: none; }
+  .cd-gutter { padding-left: 8px; padding-right: 8px; }
+  .cd-rates { display: none; }
+  .cd-body { height: 420px; }
+  .cd-bar-toggle { margin-left: 8px; }
+}
+@container cd (max-width: 460px) {
+  .cd-palette-btn { display: none; }
+  .cd-search { flex-basis: 130px; }
+}
+/* Backstop for hosts without container query support. */
+@media (max-width: 900px) {
+  .cd-demo .cd-insp, .cd-demo .cd-insp-toggle { display: none !important; }
+}
+@media (max-width: 640px) {
+  .cd-demo .cd-side { display: none; }
+  .cd-demo .cd-rates { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-demo *, .cd-demo *::before, .cd-demo *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .cd-demo .cd-add.cd-hint::after { display: none; }
+}
+
+/* ==========================================================================
+   END CURRENT DEMO WIDGET — STYLES
+   ======================================================================== */
+
+  .dl-get{display:flex; flex-direction:column; align-items:flex-start; gap:14px}
+  .dl-note{margin:0; font-size:14px; line-height:1.55; color:var(--secondary); max-width:30ch}
+  .sha{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+       margin:28px 0 0; padding-top:20px; border-top:1px solid rgba(255,255,255,.06)}
+  .sha span{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+            color:var(--secondary); flex:none}
+  .sha code{font-family:var(--mono); font-size:11.5px; line-height:1.6; color:var(--secondary);
+            word-break:break-all; letter-spacing:.02em}
+
+  @media (prefers-reduced-motion:reduce){
+    .rise,.rise-2,.rise-3,.rise-4{animation:none}
+    .reveal{opacity:1; transform:none; filter:none; transition:none}
+  }
 
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:1ms !important; animation-duration:1ms !important}
@@ -289,9 +893,9 @@
 
   <div class="hero" id="top">
     <div class="wrap">
-      <h1>Torrenting is a background activity.</h1>
-      <p class="lede">A native Mac torrent client that stays out of the way. Free and open source.</p>
-      <div class="get">
+      <h1 class="rise">Torrenting is a background activity.</h1>
+      <p class="lede rise-2">A native Mac torrent client that stays out of the way. Free and open source.</p>
+      <div class="get rise-3">
         <a class="btn" href="./Current.dmg" download>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 1.6v9.2M4.4 7.4 8 11l3.6-3.6M2.2 13.4h11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -304,14 +908,102 @@
   </div>
 
   <div class="wrap">
-    <div class="window">
-      <img src="./library.webp" width="1760" height="924" fetchpriority="high"
-           alt="Current's window: a sidebar with Library and Smart sections, six transfers in a list with blue progress bars, one finished download shown in green, and a details panel on the right listing speed, ratio, peers and a green note reading Healthy, 63 seeds.">
+    <div class="demo-host rise-4" style="--rise:28px; --rise-blur:8px">
+      <noscript>
+        <img class="demo-fallback" src="./library.webp" width="1760" height="924"
+             alt="Current's window: a sidebar with Library and Smart sections, transfers in a list with blue progress bars, one finished download in green, and a details panel on the right.">
+      </noscript>
+<!-- ==========================================================================
+     BEGIN CURRENT DEMO WIDGET — MARKUP
+     Self-contained. Move this element (plus the style and script blocks) into
+     any page; nothing inside reaches outside .cd-demo.
+     ======================================================================= -->
+<div class="cd-demo" id="cd-demo">
+  <div class="cd-win" id="cd-win">
+
+    <!-- chrome bar -->
+    <div class="cd-bar">
+      <div class="cd-lights" aria-hidden="true">
+        <span class="cd-light cd-light-r"></span>
+        <span class="cd-light cd-light-y"></span>
+        <span class="cd-light cd-light-g"></span>
+      </div>
+      <div class="cd-bar-toggle" aria-hidden="true" id="cd-sidebar-glyph"></div>
+      <span class="cd-section-label" id="cd-section-label">All</span>
+      <span class="cd-bar-spacer"></span>
+
+      <div class="cd-rates">
+        <span class="cd-rate cd-num"><span class="cd-rate-arrow" aria-hidden="true">↓</span><span class="cd-sr">Downloading at </span><span id="cd-rate-down">32.7 MB/s</span></span>
+        <span class="cd-rate cd-num"><span class="cd-rate-arrow" aria-hidden="true">↑</span><span class="cd-sr">Uploading at </span><span id="cd-rate-up">4.9 MB/s</span></span>
+      </div>
+
+      <div class="cd-search" id="cd-search-wrap">
+        <span class="cd-search-i" id="cd-search-icon"></span>
+        <label class="cd-sr" for="cd-search">Search torrents by name</label>
+        <input id="cd-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false">
+        <button class="cd-search-clear" id="cd-search-clear" type="button" title="Clear search">
+          <span class="cd-sr">Clear search</span>
+        </button>
+      </div>
+
+      <button class="cd-icon-btn cd-add cd-hint" id="cd-add" type="button" title="Add a torrent">
+        <span class="cd-sr">Add a torrent</span>
+      </button>
+      <button class="cd-icon-btn cd-palette-btn" id="cd-palette" type="button" title="Command palette">
+        <span class="cd-cmd" aria-hidden="true">⌘</span>
+        <span class="cd-sr">Command palette</span>
+      </button>
+      <button class="cd-icon-btn cd-insp-toggle is-on" id="cd-insp-toggle" type="button" aria-pressed="true" title="Hide inspector">
+        <span class="cd-sr">Hide inspector</span>
+      </button>
     </div>
-    
+
+    <div class="cd-body">
+      <!-- sidebar -->
+      <nav class="cd-side" aria-label="Library sections">
+        <h2 class="cd-side-head" id="cd-head-library">LIBRARY</h2>
+        <ul id="cd-side-library" aria-labelledby="cd-head-library"></ul>
+        <h2 class="cd-side-head" id="cd-head-smart">SMART</h2>
+        <ul id="cd-side-smart" aria-labelledby="cd-head-smart"></ul>
+        <div class="cd-side-foot">
+          <div class="cd-storage-line">
+            <span>Storage</span>
+            <span class="cd-num"><span id="cd-storage-used">7.6 GB</span> / 93.1 GB</span>
+          </div>
+          <div class="cd-storage-meter"><i class="cd-storage-fill" id="cd-storage-fill" style="width:8.2%"></i></div>
+        </div>
+      </nav>
+
+      <!-- library list, set into its well -->
+      <div class="cd-gutter">
+        <div class="cd-pane">
+          <div class="cd-list" id="cd-list" role="list" aria-label="Torrents"></div>
+        </div>
+      </div>
+
+      <!-- inspector -->
+      <aside class="cd-insp" id="cd-insp" aria-label="Torrent inspector"></aside>
+    </div>
+
+    <!-- the magnet card mounts here -->
+    <div id="cd-magnet-mount"></div>
+    <div class="cd-ghost" id="cd-ghost" aria-hidden="true"></div>
   </div>
 
-  <section id="magnet">
+  <!-- the demo narrates itself here -->
+  <p class="cd-caption" id="cd-caption" aria-live="polite">
+    <span class="cd-caption-dot" id="cd-caption-dot" aria-hidden="true"></span>
+    <span class="cd-caption-text" id="cd-caption-text"></span>
+  </p>
+</div>
+<!-- ==========================================================================
+     END CURRENT DEMO WIDGET — MARKUP
+     ======================================================================= -->
+    </div>
+  </div>
+
+
+  <section id="magnet" class="reveal">
     <div class="wrap">
       <div class="grid flip">
         <div class="crop crop-magnet">
@@ -328,7 +1020,7 @@
     </div>
   </section>
 
-  <section id="seed" class="tight">
+  <section id="seed" class="reveal tight">
     <div class="wrap">
       <div class="col-wide">
         <h2>Every automatic decision explains itself.</h2>
@@ -446,7 +1138,7 @@
     </div>
   </section>
 
-  <section>
+  <section class="reveal">
     <div class="wrap">
       <div class="grid">
         <div class="txt">
@@ -488,7 +1180,7 @@
     </div>
   </section>
 
-  <section id="keys" class="tight">
+  <section id="keys" class="reveal tight">
     <div class="wrap">
       <div class="col-wide">
         <h2>Everything has a keyboard path.</h2>
@@ -500,11 +1192,12 @@
             <div class="r"><span class="k">Remove</span><span class="lead"></span><span class="v"><kbd>&#8984;&#9003;</kbd></span></div>
             <div class="r"><span class="k">Search the library</span><span class="lead"></span><span class="v"><kbd>&#8984;F</kbd></span></div>
             <div class="r"><span class="k">Command palette</span><span class="lead"></span><span class="v"><kbd>&#8984;K</kbd></span></div>
+        </div>
       </div>
     </div>
   </section>
 
-  <section>
+  <section class="reveal">
     <div class="wrap">
       <div class="grid">
         <div class="txt">
@@ -524,54 +1217,44 @@
     </div>
   </section>
 
-  <section class="tight">
+  <section class="reveal tight">
     <div class="wrap">
       <div class="col-wide">
-        <h2>It cannot find anything.</h2>
-        <p class="body">No trackers, no indexes, no content sources. The only search in it searches the library you already have.</p>
-        <p class="body">It is a client for a protocol people use lawfully every day &mdash; Linux images, the Internet Archive, scientific datasets. What you point it at is up to you.</p>
-        <p class="body">No accounts, no analytics, no telemetry. Your library stays on your Mac.</p>
+        <h2>Private by default.</h2>
+        <p class="body">No accounts, no analytics, no telemetry. Nothing is stored anywhere but your Mac, and nothing is sent anywhere but the torrent protocol itself.</p>
+        <p class="body">It ships no trackers or indexes and cannot search for content. You bring the link.</p>
       </div>
     </div>
   </section>
 
-  <section id="download" class="tight">
+  <section id="download" class="reveal tight">
     <div class="wrap">
       <div class="download">
         <div class="top">
           <img src="./icon.png" width="76" height="76" alt="Current's app icon: four pale blue waves narrowing down to a single dot on a dark blue rounded plate.">
           <div>
             <h2>Current</h2>
-            <p class="sub">Free and MIT&#8209;licensed.</p>
+            <p class="sub">Free and <a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT&#8209;licensed</a>.</p>
           </div>
         </div>
         <div class="dl-grid">
-          <div>
+          <div class="dl-get">
             <a class="btn" href="./Current.dmg" download>
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 1.6v9.2M4.4 7.4 8 11l3.6-3.6M2.2 13.4h11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
               Download Current.dmg
             </a>
-            <p class="body" style="margin-top:16px; font-size:14.5px">Drag Current to Applications and open it. No security warnings.</p>
+            <p class="dl-note">Drag it to Applications and open it. No security warnings.</p>
           </div>
-          <div>
-            <p class="label">Details</p>
-            <div class="stats">
-              <div class="r"><span class="k">Download</span><span class="lead"></span><span class="v">8.8 MB</span></div>
-              <div class="r"><span class="k">Requires</span><span class="lead"></span><span class="v">macOS 26+</span></div>
-              <div class="r"><span class="k">Architecture</span><span class="lead"></span><span class="v">Apple Silicon</span></div>
-              <div class="r"><span class="k">Signature</span><span class="lead"></span><span class="v">Notarised</span></div>
-              <div class="r"><span class="k">Licence</span><span class="lead"></span><span class="v"><a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT</a></span></div>
-              <div class="r"><span class="k">Source</span><span class="lead"></span><span class="v"><a href="https://github.com/alanwtom/current">GitHub</a></span></div>
-              <div class="r"><span class="k">Price</span><span class="lead"></span><span class="v">Free</span></div>
-            </div>
-            <p class="label" style="margin-top:24px">SHA&#8209;256</p>
-            <p class="sum"><code>2a916ab5d8458f54abe04e235e21fd6f6017bf67578b891233fc7fad0838f95f</code></p>
-            <p class="sumnote">Verify it, if you like:
-              <code>shasum -a 256 Current.dmg</code></p>
+          <div class="stats">
+            <div class="r"><span class="k">Download</span><span class="lead"></span><span class="v">8.8 MB</span></div>
+            <div class="r"><span class="k">Requires</span><span class="lead"></span><span class="v">macOS&nbsp;26+ &middot; Apple&nbsp;Silicon</span></div>
+            <div class="r"><span class="k">Signature</span><span class="lead"></span><span class="v">Notarised by Apple</span></div>
+            <div class="r"><span class="k">Source</span><span class="lead"></span><span class="v"><a href="https://github.com/alanwtom/current">GitHub</a></span></div>
           </div>
         </div>
+        <p class="sha"><span>SHA&#8209;256</span><code>2a916ab5d8458f54abe04e235e21fd6f6017bf67578b891233fc7fad0838f95f</code></p>
       </div>
     </div>
   </section>
@@ -580,12 +1263,15 @@
 
 <footer>
   <div class="wrap">
-    <span>Current &mdash; a BitTorrent client for macOS.</span>
-    <span>MIT&#8209;licensed. Built for Apple Silicon.</span>
-    <span>No trackers ship with it, and none watch you use it.</span>
+    <span>Current &mdash; a BitTorrent client for macOS</span>
+    <span>MIT&#8209;licensed &middot; Apple&nbsp;Silicon</span>
     <span><a href="https://github.com/alanwtom/current">Source on GitHub</a></span>
   </div>
 </footer>
 
+
+
+<script src="./reveal.js" defer></script>
+<script src="./demo.js" defer></script>
 </body>
 </html>
