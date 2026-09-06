@@ -82,11 +82,6 @@ commands couldn't draw any of this.
   always reversible, never destructive by default.
 - **Swarm health in plain words** — "Only a few complete sources are available.
   Keeping this torrent seeded helps preserve it." Never shame, never nag.
-- **Keyboard-first** — `⌘N` add magnet · `␣` pause/resume · `⌘⌫` remove ·
-  `⌘F` search · `⌘K` command palette · arrows/⇧/⌘ for selection.
-- **Menu bar panel** — click the icon and a panel drops under it with combined
-  speeds, every active transfer's progress, and a pause button on each one.
-  Everything you'd reach for without opening the app, and nothing else.
 - **You choose where each download goes** — the confirm card offers a folder
   before anything starts, and remembers it if you say so. After that they go
   straight there, and the switch to start asking again is in Settings beside
