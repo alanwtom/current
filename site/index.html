@@ -253,7 +253,7 @@
 
 
   /* ---- smart seed: four policies, one torrent ---- */
-  .seed{position:relative; margin-top:var(--s7); max-width:820px}
+  .seed{position:relative; max-width:820px}
   .seed fieldset{border:0; margin:0; padding:0}
   .seed legend{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%)}
   .seed input{position:absolute; opacity:0; width:1px; height:1px; margin:0; pointer-events:none}
@@ -1064,13 +1064,13 @@
 
   <section id="seed" class="reveal tight">
     <div class="wrap">
-      <div class="col-wide">
-        <h2>Every automatic decision explains itself.</h2>
-        <p class="body">Four policies. Pick one and the app tells you, in words, what it did and why.</p>
-        
-      </div>
-
-      <div class="pane seed" style="margin-top:32px">
+      <div class="grid">
+        <div class="txt">
+          <h2>Every automatic decision explains itself.</h2>
+          <p class="body">Four policies. Pick one and the app tells you, in words, what it did and why.</p>
+        </div>
+        <div>
+      <div class="pane seed">
         <fieldset>
           <legend>Seed policy</legend>
           <input type="radio" name="seed" id="s1" checked>
@@ -1175,26 +1175,14 @@
           </div>
         </fieldset>
       </div>
-
-      
+        </div>
+      </div>
     </div>
   </section>
 
   <section class="reveal">
     <div class="wrap">
-      <div class="grid">
-        <div class="txt">
-          <h2>Cleanup moves files to the Trash.</h2>
-          <p class="body">Set a storage budget. Only downloads that pass every one of these can go:</p>
-          <div class="chips">
-            <span class="chip">complete</span>
-            <span class="chip">seed goals met</span>
-            <span class="chip">not pinned</span>
-            <span class="chip">not active</span>
-            <span class="chip">healthy swarm</span>
-          </div>
-          <p class="body">Rare torrents are never touched, and nothing skips the Trash &mdash; you can always put it back.</p>
-        </div>
+      <div class="grid flip">
         <div>
           <div class="pane">
             <div class="note amber">
@@ -1217,6 +1205,18 @@
             </div>
             
           </div>
+        </div>
+        <div class="txt">
+          <h2>Cleanup moves files to the Trash.</h2>
+          <p class="body">Set a storage budget. Only downloads that pass every one of these can go:</p>
+          <div class="chips">
+            <span class="chip">complete</span>
+            <span class="chip">seed goals met</span>
+            <span class="chip">not pinned</span>
+            <span class="chip">not active</span>
+            <span class="chip">healthy swarm</span>
+          </div>
+          <p class="body">Rare torrents are never touched, and nothing skips the Trash &mdash; you can always put it back.</p>
         </div>
       </div>
     </div>
