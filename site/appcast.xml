@@ -1,0 +1,16 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Current</title>
+        <item>
+            <title>1.1.0</title>
+            <pubDate>Sun, 06 Sep 2026 16:40:19 -0400</pubDate>
+            <link>https://current.alantom.dev</link>
+            <sparkle:version>58</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://current.alantom.dev/Current.dmg" length="10357401" type="application/octet-stream" sparkle:edSignature="FvzgCFGycR99Ggt2TagQCoPkWfuB1yjkZhsPuV71q4Z1lfxbhi+oH4L5bJY4PpFUGkMtU+OTDBitPbGuLAkJDg=="/>
+        </item>
+    </channel>
+</rss>
