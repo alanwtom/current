@@ -37,6 +37,24 @@ Two other things that cost time and are easy to hit again:
   because `current-mac.vercel.app` belongs to someone else, and without it
   Vercel falls back to `current-mac-alantomws-projects.vercel.app`.
 
+## Assets
+
+The three screenshots are served as **lossless WebP** — pixel-identical to the
+PNGs and 57% smaller, which took the page from 1.5 MB to about 500 KB.
+`library.png` stays on disk anyway because the Open Graph and Twitter tags point
+at it: several link-preview crawlers still don't render WebP, and a blank share
+card is worse than a file nobody downloads.
+
+`icon.png` is 180x180, not the 1024x1024 original. It is drawn at 22px in the
+header and 76px in the download card, and it was 425 KB — a quarter of the
+page's weight, fetched ahead of the hero screenshot because it appears first in
+the document.
+
+```bash
+cwebp -lossless -z 9 library.png -o library.webp
+sips -Z 180 icon.png --out icon.png
+```
+
 ## If the app changes
 
 The screenshots are `docs/images/*.png`, taken against `-simulate` so they are

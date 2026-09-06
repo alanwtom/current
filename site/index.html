@@ -15,6 +15,11 @@
 <meta property="og:description" content="Quiet when nothing is happening, informative when something is, and reversible when it acts on its own. Free, open source, 8.8 MB.">
 <meta property="og:url" content="https://current.alantom.dev/">
 <meta property="og:image" content="https://current.alantom.dev/library.png">
+<meta property="og:image:width" content="1760">
+<meta property="og:image:height" content="924">
+<meta property="og:image:alt" content="Current's window: a list of transfers with progress bars and a details panel.">
+<meta property="og:site_name" content="Current">
+<meta property="og:locale" content="en_GB">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Current — a quiet BitTorrent client for macOS">
 <meta name="twitter:description" content="Quiet when nothing is happening, informative when something is, and reversible when it acts on its own. Free, open source, 8.8 MB.">
@@ -90,7 +95,7 @@
   .body + .body{margin-top:var(--s4)}
   .body strong{color:var(--text); font-weight:600}
   .cap{margin-top:var(--s5); font-size:13px; line-height:1.6; color:var(--secondary); max-width:620px}
-  .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--tertiary)}
+  .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--secondary)}
 
   /* ---- hero ---- */
   .hero{padding:88px 0 44px}
@@ -212,14 +217,17 @@
   .dp{grid-area:1/1; opacity:0; visibility:hidden; transition:opacity var(--quick) var(--ease)}
   .dp .why{margin-top:var(--s6); padding:var(--s5); border-radius:var(--r-12); background:var(--fill-subtle)}
   .dp .why p{font-size:14.5px; line-height:1.6; color:var(--text)}
-  .dp .why .src{margin-top:var(--s4); font-size:12px; color:var(--tertiary); font-variant-numeric:tabular-nums}
+  .dp .why .src{margin-top:var(--s4); font-size:12px; color:var(--secondary); font-variant-numeric:tabular-nums}
   .dp .head{display:flex; align-items:center; gap:var(--s4); flex-wrap:wrap; margin-bottom:var(--s6)}
   .dp .head .goal{font-size:13px; color:var(--secondary); font-variant-numeric:tabular-nums}
 
   #s1:checked ~ .seg label[for=s1],
   #s2:checked ~ .seg label[for=s2],
   #s3:checked ~ .seg label[for=s3],
-  #s4:checked ~ .seg label[for=s4]{background:var(--fill-strong); color:var(--text)}
+  #s4:checked ~ .seg label[for=s4]{
+    background:var(--fill-strong); color:var(--text);
+    box-shadow:inset 0 -2px 0 0 var(--accent);
+  }
   #s1:focus-visible ~ .seg label[for=s1],
   #s2:focus-visible ~ .seg label[for=s2],
   #s3:focus-visible ~ .seg label[for=s3],
@@ -236,7 +244,7 @@
   .download h2{font-size:1.55rem}
   .download .sub{margin-top:var(--s2); font-size:14px; color:var(--secondary)}
   .dl-grid{display:grid; gap:40px; grid-template-columns:minmax(0,1fr) minmax(260px,340px); align-items:start; margin-top:var(--s7)}
-  @media (max-width:760px){ .dl-grid{grid-template-columns:1fr; gap:var(--s7)} .download{padding:var(--s7)} }
+  @media (max-width:900px){ .dl-grid{grid-template-columns:1fr; gap:var(--s7)} .download{padding:var(--s7)} }
 
   footer{padding:44px 0 64px}
   footer .wrap{display:flex; gap:var(--s5) var(--s7); flex-wrap:wrap; align-items:baseline; font-size:13px; color:var(--secondary)}
@@ -253,8 +261,8 @@
 
   .sum{margin:6px 0 0; font-family:var(--mono); font-size:11px; line-height:1.7;
        color:var(--secondary); word-break:break-all; letter-spacing:.02em}
-  .sumnote{margin:10px 0 0; font-size:12.5px; line-height:1.6; color:var(--quaternary)}
-  .sumnote code{font-family:var(--mono); font-size:11.5px; color:var(--tertiary)}
+  .sumnote{margin:10px 0 0; font-size:12.5px; line-height:1.6; color:var(--secondary)}
+  .sumnote code{font-family:var(--mono); font-size:11.5px; color:var(--secondary)}
 
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:1ms !important; animation-duration:1ms !important}
@@ -297,7 +305,7 @@
 
   <div class="wrap">
     <div class="window">
-      <img src="./library.png" width="1760" height="924" fetchpriority="high"
+      <img src="./library.webp" width="1760" height="924" fetchpriority="high"
            alt="Current's window: a sidebar with Library and Smart sections, six transfers in a list with blue progress bars, one finished download shown in green, and a details panel on the right listing speed, ratio, peers and a green note reading Healthy, 63 seeds.">
     </div>
     <p class="cap">Six transfers, one of them finished. Nothing in that window comes from the system: not the frame, not the sidebar, not the rows, not the switches. Stock Mac chrome is precisely what makes an app look like every other Mac utility, and no amount of styling gets it far enough away.</p>
@@ -307,14 +315,14 @@
     <div class="wrap">
       <div class="grid flip">
         <div class="crop crop-magnet">
-          <img src="./magnet-flow.png" width="1760" height="924" loading="lazy" decoding="async"
-               alt="A card over the library reading Cosmos Laundromat (2015) 4K, 1 file, 2.4 GB, with a save location of ~/Downloads/Current, a Change button, a Remember this location checkbox, and a blue Download 2.4 GB button.">
+          <img src="./magnet-flow.webp" width="1760" height="924" loading="lazy" decoding="async"
+               alt="A card over the library reading Cosmos Laundromat (2015) 4K, 1 files, 2.4 GB, with a save location of ~/Downloads/Current, a Change button, a Remember this location checkbox, and a blue Download 2.4 GB button.">
         </div>
         <div class="txt">
           <h2>A magnet asks its questions once, in the window.</h2>
           <p class="body">Click a magnet link in a browser and a card comes up over the library: what it is, how big, which files, where it goes. Answer it and it's gone.</p>
           <p class="body">The save folder is asked for <strong>here</strong> and not at add time, because a magnet arrives as a hash — there is no name and no size to decide against yet. Tick <em>Remember this location</em> and it stops asking. Open ten <span style="font-family:var(--mono);font-size:.92em">.torrent</span> files at once and it asks about the first, then sends the rest to the default; ten questions in a row is not a conversation.</p>
-          <p class="cap">Every question the app has for you is asked in the window, next to the thing it changes. There is no floating panel, and there was one — it could not be reached by keyboard, and half of all Macs never drew it.</p>
+          <p class="cap">Every question the app has for you is asked in the window, next to the thing it changes. There is no floating panel, and there was one — it could not be reached by keyboard, and it only existed on Macs with a camera housing.</p>
         </div>
       </div>
     </div>
@@ -324,7 +332,7 @@
     <div class="wrap">
       <div class="col-wide">
         <h2>Every automatic decision explains itself.</h2>
-        <p class="body">Smart Seed has four policies, written in words rather than ratios. The reason is not a log line printed afterwards — it is part of the decision, which is why the app can always answer <em>why did this happen?</em></p>
+        <p class="body">Smart Seed has four policies you choose by name, not by filling in a ratio field. The reason is not a log line printed afterwards — it is part of the decision, which is why the app can always answer <em>why did this happen?</em></p>
         <p class="body">Same torrent, four policies. Pick one.</p>
       </div>
 
@@ -347,7 +355,7 @@
             <div class="dp" id="p1">
               <div class="head">
                 <span class="pill teal"><span class="dot"></span>Seeding</span>
-                <span class="goal">Goal: ratio 1.00</span>
+                <span class="goal">Goal: ratio 1.00 and 24 h seeding</span>
               </div>
               <div class="row">
                 <span class="ico" aria-hidden="true">
@@ -356,11 +364,11 @@
                 <div>
                   <div class="name">Blender Foundation Open Movies Collection</div>
                   <div class="meter"><i style="width:62%; background:var(--teal)"></i></div>
-                  <div class="sub"><span>11.0 GB &middot; ratio 0.62&times;</span><span>3 seeds</span></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 0.62&times;</span><span>2 seeds</span></div>
                 </div>
               </div>
               <div class="why">
-                <p>Seeding until the ratio reaches 1.00, then stopping. It is at 0.62&times; and rising slowly.</p>
+                <p>Seeding until the ratio reaches 1.00 <em>and</em> it has been up for 24 hours. Both have to be true. It is at 0.62&times; after nine hours.</p>
                 <p class="src">Rules &middot; today 14:02</p>
               </div>
             </div>
@@ -369,7 +377,7 @@
             <div class="dp" id="p2">
               <div class="head">
                 <span class="pill amber"><span class="dot"></span>Rare &middot; kept alive</span>
-                <span class="goal">Goal: ratio 1.00 &mdash; met</span>
+                <span class="goal">Goal: ratio 1.00 and 24 h &mdash; met</span>
               </div>
               <div class="row">
                 <span class="ico" aria-hidden="true">
@@ -378,11 +386,11 @@
                 <div>
                   <div class="name">Blender Foundation Open Movies Collection</div>
                   <div class="meter"><i style="width:100%; background:var(--amber)"></i></div>
-                  <div class="sub"><span>11.0 GB &middot; ratio 1.04&times;</span><span>3 seeds</span></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 1.04&times;</span><span>2 seeds</span></div>
                 </div>
               </div>
               <div class="why">
-                <p>The ratio goal was met at 13:41. Still seeding: only 3 complete sources are on this swarm, and Helpful keeps rare torrents past their goal.</p>
+                <p>The goal was met at 13:41. Still seeding: only 2 complete sources are on this swarm, and Helpful keeps rare torrents past their goal.</p>
                 <p class="src">Rules &middot; today 13:41 &middot; reversible &mdash; stop it yourself any time</p>
               </div>
             </div>
@@ -400,7 +408,7 @@
                 <div>
                   <div class="name">Blender Foundation Open Movies Collection</div>
                   <div class="meter"><i style="width:100%; background:var(--teal)"></i></div>
-                  <div class="sub"><span>11.0 GB &middot; ratio 2.41&times;</span><span>3 seeds</span></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 2.41&times;</span><span>2 seeds</span></div>
                 </div>
               </div>
               <div class="why">
@@ -412,8 +420,8 @@
             <!-- Temporary -->
             <div class="dp" id="p4">
               <div class="head">
-                <span class="pill grey">Stops Sunday</span>
-                <span class="goal">Goal: ratio 1.00 or 7 days</span>
+                <span class="pill grey">Ready for cleanup</span>
+                <span class="goal">Goal: ratio 1.00 &mdash; met</span>
               </div>
               <div class="row">
                 <span class="ico" aria-hidden="true">
@@ -421,13 +429,13 @@
                 </span>
                 <div>
                   <div class="name">Blender Foundation Open Movies Collection</div>
-                  <div class="meter"><i style="width:62%; background:var(--quaternary)"></i></div>
-                  <div class="sub"><span>11.0 GB &middot; ratio 0.62&times;</span><span>day 6 of 7</span></div>
+                  <div class="meter"><i style="width:100%; background:var(--quaternary)"></i></div>
+                  <div class="sub"><span>11.0 GB &middot; ratio 1.04&times;</span><span>2 seeds</span></div>
                 </div>
               </div>
               <div class="why">
-                <p>Whichever comes first: ratio 1.00, or seven days. Six days in at 0.62&times;, so this one stops on Sunday — and will say so when it does.</p>
-                <p class="src">Rules &middot; scheduled 07 Sep 09:14</p>
+                <p>Ratio reached 1.04&times;, so seeding stopped. Temporary hands it to cleanup from here, which will move it to the Trash when the disk needs the room.</p>
+                <p class="src">Rules &middot; today 13:41</p>
               </div>
             </div>
           </div>
@@ -451,7 +459,7 @@
             <span class="chip">not active</span>
             <span class="chip">healthy swarm</span>
           </div>
-          <p class="body">Rare swarms are excluded from automatic cleanup entirely — the torrents that most need a seed are the ones a storage budget would take first. And <strong>go</strong> means the Trash. The app has no code path that unlinks a file.</p>
+          <p class="body">Rare swarms are excluded from automatic cleanup entirely — the torrents that most need a seed are the ones a storage budget would take first. And <strong>go</strong> means the Trash. Nothing the app decides on its own ever bypasses it — cleanup and automatic removal both put files where you can put them back.</p>
         </div>
         <div>
           <div class="pane">
@@ -460,7 +468,7 @@
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="6" cy="6.4" r="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M1.8 14.4c0-2.3 1.9-4 4.2-4s4.2 1.7 4.2 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12.2 4.6a2.2 2.2 0 0 1 0 4.2M13 14.4c0-1.7-.5-3-1.4-3.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               </span>
               <div>
-                <div class="h">Rare &middot; 3 seeds</div>
+                <div class="h">Rare &middot; 2 seeds</div>
                 <p>Only a few complete sources are available. Keeping this torrent seeded helps preserve it.</p>
               </div>
             </div>
@@ -512,7 +520,7 @@
         <div>
           <div class="panel-shot">
             <div class="crop crop-panel">
-              <img src="./menu-bar.png" width="573" height="900" loading="lazy" decoding="async"
+              <img src="./menu-bar.webp" width="573" height="900" loading="lazy" decoding="async"
                    alt="Current's menu bar panel hanging under its status icon: 32.7 MB/s down and 4.9 MB/s up, a Pause All button, and five transfers each with a progress bar, percentage, rate, time remaining and its own pause button.">
             </div>
           </div>
@@ -525,7 +533,7 @@
     <div class="wrap">
       <div class="col-wide">
         <h2>It cannot find anything, and that is on purpose.</h2>
-        <p class="body">Current ships no trackers, no indexes and no content sources. There is no search in it. It does not suggest anything to you, because it has nothing to suggest.</p>
+        <p class="body">Current ships no trackers, no indexes and no content sources. The only search in it searches the library you already have. It does not suggest anything to you, because it has nothing to suggest.</p>
         <p class="body">It is a client for a protocol that people use lawfully every day: Linux images, Internet Archive collections, scientific datasets, game patches. What you point it at is yours to decide.</p>
         <p class="body">It makes no network calls beyond the torrent protocol itself. No accounts, no analytics, no telemetry, no update pings, no crash reporting. Your library and its history stay on the machine, in a file you can delete.</p>
       </div>
