@@ -263,16 +263,26 @@ build.
 - [ ] If the floor drops to macOS 14: the whole pass again on Sonoma, paying
       attention to the window chrome and the menu bar panel.
 
-## B. The real network — never been tested
+## B. The real network
 
-Everything so far has run against the simulator. This is the biggest unknown in
-the whole project.
+Was the biggest unknown in the project. The two that mattered are now automated
+and passing — `Tests/CurrentCoreTests/RealNetworkTests.swift`, opt-in so CI
+never joins a swarm:
 
-- [ ] A large real torrent (a Linux ISO) start to finish, and **verify the
-      checksum**. Downloading is not the same as downloading correctly.
-- [ ] A torrent whose trackers are **HTTPS**. This is what the certificate
-      bundling fixed and it has never been exercised — if announces fail, this
-      is where it shows.
+    CURRENT_REAL_NETWORK=1 swift test --filter RealNetworkTests
+
+- [x] **A real torrent start to finish, checksum verified.** Debian's arm64
+      netinst, 735 MB, pulled in 43 seconds at 19 MB/s from 87 seeds — and the
+      finished file's SHA-256 matched Debian's published `SHA256SUMS`, which is
+      fetched from a different file than the one being checked. Downloading is
+      not the same as downloading correctly, and now the difference is tested.
+- [x] **An HTTPS tracker announce.** Ubuntu's tracker is HTTPS; peers were
+      reached through it in five seconds. This is the path the bundled CA file
+      exists for and the failure is silent — announces just fail verification
+      and the torrent limps along on DHT, which reads as a flaky network rather
+      than a broken build. It works.
+
+Still by hand, because they can't be automated usefully:
 - [ ] A magnet whose trackers are all dead, so it must resolve over DHT alone.
 - [ ] The first magnet **after a cold launch**, which is the case the persisted
       DHT routing table exists for.
