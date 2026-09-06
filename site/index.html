@@ -85,7 +85,7 @@
   @media (max-width:520px){ .bar nav a.quiet{display:none} }
 
   /* ---- sections ---- */
-  section{padding:84px 0}
+  section{padding:60px 0}
   section.tight{padding-top:0}
   section[id]{scroll-margin-top:72px}
   @media (prefers-reduced-motion:no-preference){ html{scroll-behavior:smooth} }
@@ -98,7 +98,7 @@
   .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--secondary)}
 
   /* ---- hero ---- */
-  .hero{padding:88px 0 44px}
+  .hero{padding:72px 0 40px}
   h1{font-size:clamp(2.05rem,5.6vw,3.35rem); line-height:1.04; letter-spacing:-.035em; max-width:15ch}
   .hero .lede{max-width:56ch; font-size:19px}
 
@@ -123,7 +123,7 @@
 
   /* ---- panes ---- */
   .pane{background:var(--canvas); border-radius:var(--r-win); padding:var(--s7)}
-  .grid{display:grid; gap:56px; grid-template-columns:minmax(0,7fr) minmax(0,10fr); align-items:center}
+  .grid{display:grid; gap:48px; grid-template-columns:minmax(0,7fr) minmax(0,10fr); align-items:center}
   .grid.flip{grid-template-columns:minmax(0,10fr) minmax(0,7fr)}
   @media (max-width:900px){ .grid,.grid.flip{grid-template-columns:1fr; gap:var(--s7)} .grid.flip .txt{order:-1} }
 
@@ -250,7 +250,7 @@
   footer .wrap{display:flex; gap:var(--s5) var(--s7); flex-wrap:wrap; align-items:baseline; font-size:13px; color:var(--secondary)}
 
   @media (max-width:640px){
-    section{padding:64px 0}
+    section{padding:48px 0}
     .hero{padding:56px 0 32px}
     .hero .lede{font-size:17px}
     .wrap{padding:0 var(--s6)}
@@ -290,7 +290,7 @@
   <div class="hero" id="top">
     <div class="wrap">
       <h1>Torrenting is a background activity.</h1>
-      <p class="lede">So Current is quiet when nothing is happening, informative when something is, and reversible when it acts on its own. A native Mac client for people who would rather not sit and watch a progress bar.</p>
+      <p class="lede">A native Mac torrent client that stays out of the way. Free and open source.</p>
       <div class="get">
         <a class="btn" href="./Current.dmg" download>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -308,7 +308,7 @@
       <img src="./library.webp" width="1760" height="924" fetchpriority="high"
            alt="Current's window: a sidebar with Library and Smart sections, six transfers in a list with blue progress bars, one finished download shown in green, and a details panel on the right listing speed, ratio, peers and a green note reading Healthy, 63 seeds.">
     </div>
-    <p class="cap">Six transfers, one of them finished. Nothing in that window comes from the system: not the frame, not the sidebar, not the rows, not the switches. Stock Mac chrome is precisely what makes an app look like every other Mac utility, and no amount of styling gets it far enough away.</p>
+    
   </div>
 
   <section id="magnet">
@@ -319,10 +319,10 @@
                alt="A card over the library reading Cosmos Laundromat (2015) 4K, 1 files, 2.4 GB, with a save location of ~/Downloads/Current, a Change button, a Remember this location checkbox, and a blue Download 2.4 GB button.">
         </div>
         <div class="txt">
-          <h2>A magnet asks its questions once, in the window.</h2>
-          <p class="body">Click a magnet link in a browser and a card comes up over the library: what it is, how big, which files, where it goes. Answer it and it's gone.</p>
-          <p class="body">The save folder is asked for <strong>here</strong> and not at add time, because a magnet arrives as a hash — there is no name and no size to decide against yet. Tick <em>Remember this location</em> and it stops asking. Open ten <span style="font-family:var(--mono);font-size:.92em">.torrent</span> files at once and it asks about the first, then sends the rest to the default; ten questions in a row is not a conversation.</p>
-          <p class="cap">Every question the app has for you is asked in the window, next to the thing it changes. There is no floating panel, and there was one — it could not be reached by keyboard, and it only existed on Macs with a camera housing.</p>
+          <h2>A magnet asks once.</h2>
+          <p class="body">Click a magnet link and one card asks what it is, how big, which files, and where it goes.</p>
+          <p class="body">Tick <em>Remember this location</em> and it stops asking.</p>
+          
         </div>
       </div>
     </div>
@@ -332,8 +332,8 @@
     <div class="wrap">
       <div class="col-wide">
         <h2>Every automatic decision explains itself.</h2>
-        <p class="body">Smart Seed has four policies you choose by name, not by filling in a ratio field. The reason is not a log line printed afterwards — it is part of the decision, which is why the app can always answer <em>why did this happen?</em></p>
-        <p class="body">Same torrent, four policies. Pick one.</p>
+        <p class="body">Four policies. Pick one and the app tells you, in words, what it did and why.</p>
+        
       </div>
 
       <div class="pane seed" style="margin-top:32px">
@@ -442,7 +442,7 @@
         </fieldset>
       </div>
 
-      <p class="cap">Four policies, one torrent, four honest answers. Note what is coloured and what isn't: the state has a hue, the numbers never do. Six downloads all shouting in blue is how a real problem ends up with nothing to stand out against.</p>
+      
     </div>
   </section>
 
@@ -450,8 +450,8 @@
     <div class="wrap">
       <div class="grid">
         <div class="txt">
-          <h2>Cleanup moves files to the Trash. It does not delete them.</h2>
-          <p class="body">Give it a storage budget and it ranks completed downloads by how safely they can go. The gate comes first and every condition has to hold:</p>
+          <h2>Cleanup moves files to the Trash.</h2>
+          <p class="body">Set a storage budget. Only downloads that pass every one of these can go:</p>
           <div class="chips">
             <span class="chip">complete</span>
             <span class="chip">seed goals met</span>
@@ -459,7 +459,7 @@
             <span class="chip">not active</span>
             <span class="chip">healthy swarm</span>
           </div>
-          <p class="body">Rare swarms are excluded from automatic cleanup entirely — the torrents that most need a seed are the ones a storage budget would take first. And <strong>go</strong> means the Trash. Nothing the app decides on its own ever bypasses it — cleanup and automatic removal both put files where you can put them back.</p>
+          <p class="body">Rare torrents are never touched, and nothing skips the Trash &mdash; you can always put it back.</p>
         </div>
         <div>
           <div class="pane">
@@ -481,7 +481,7 @@
                 <p>Plenty of complete sources exist. This torrent doesn't need you to stay available.</p>
               </div>
             </div>
-            <p class="cap" style="margin-top:20px">Swarm health, as the app writes it. It tells you what is true and leaves the decision alone: no red badge, no counter to clear, nothing that treats a ratio as a moral score.</p>
+            
           </div>
         </div>
       </div>
@@ -490,21 +490,16 @@
 
   <section id="keys" class="tight">
     <div class="wrap">
-      <div class="grid flip">
-        <div class="pane">
-          <div class="stats" style="margin-top:0">
+      <div class="col-wide">
+        <h2>Everything has a keyboard path.</h2>
+      </div>
+      <div class="pane" style="margin-top:24px; max-width:560px">
+        <div class="stats" style="margin-top:0">
             <div class="r"><span class="k">Add a magnet</span><span class="lead"></span><span class="v"><kbd>&#8984;N</kbd></span></div>
             <div class="r"><span class="k">Pause or resume</span><span class="lead"></span><span class="v"><kbd>Space</kbd></span></div>
             <div class="r"><span class="k">Remove</span><span class="lead"></span><span class="v"><kbd>&#8984;&#9003;</kbd></span></div>
             <div class="r"><span class="k">Search the library</span><span class="lead"></span><span class="v"><kbd>&#8984;F</kbd></span></div>
             <div class="r"><span class="k">Command palette</span><span class="lead"></span><span class="v"><kbd>&#8984;K</kbd></span></div>
-          </div>
-        </div>
-        <div class="txt">
-          <h2>Every mouse path has a keyboard path.</h2>
-          <p class="body">Not most of them. The floating panel the app used to have was removed largely for failing this: a non&#8209;activating window never takes key focus, so its buttons were mouse&#8209;only.</p>
-          <p class="body">And a keyboard action never waits on a decoration. The command palette bubbles in like every other surface, but its field takes focus the instant it appears — your first keystroke lands while it is still moving.</p>
-        </div>
       </div>
     </div>
   </section>
@@ -513,9 +508,9 @@
     <div class="wrap">
       <div class="grid">
         <div class="txt">
-          <h2>A panel in the menu bar, not a menu.</h2>
-          <p class="body">Combined speeds, each transfer's progress, a pause button on each one. It is the surface for the glance you actually want — and the only one available while the window is closed.</p>
-          <p class="body">It is hand&#8209;drawn because a menu could not draw it. That version was a column of disabled text items, one of which said <em>6 active</em> — strictly less than the icon beside it was already telling you. Real menus stay native: they have to leave the window and behave like every other menu on the machine.</p>
+          <h2>A panel in the menu bar.</h2>
+          <p class="body">Speeds, progress and a pause button on every transfer &mdash; without opening the window.</p>
+          
         </div>
         <div>
           <div class="panel-shot">
@@ -532,10 +527,10 @@
   <section class="tight">
     <div class="wrap">
       <div class="col-wide">
-        <h2>It cannot find anything, and that is on purpose.</h2>
-        <p class="body">Current ships no trackers, no indexes and no content sources. The only search in it searches the library you already have. It does not suggest anything to you, because it has nothing to suggest.</p>
-        <p class="body">It is a client for a protocol that people use lawfully every day: Linux images, Internet Archive collections, scientific datasets, game patches. What you point it at is yours to decide.</p>
-        <p class="body">It makes no network calls beyond the torrent protocol itself. No accounts, no analytics, no telemetry, no update pings, no crash reporting. Your library and its history stay on the machine, in a file you can delete.</p>
+        <h2>It cannot find anything.</h2>
+        <p class="body">No trackers, no indexes, no content sources. The only search in it searches the library you already have.</p>
+        <p class="body">It is a client for a protocol people use lawfully every day &mdash; Linux images, the Internet Archive, scientific datasets. What you point it at is up to you.</p>
+        <p class="body">No accounts, no analytics, no telemetry. Your library stays on your Mac.</p>
       </div>
     </div>
   </section>
@@ -547,7 +542,7 @@
           <img src="./icon.png" width="76" height="76" alt="Current's app icon: four pale blue waves narrowing down to a single dot on a dark blue rounded plate.">
           <div>
             <h2>Current</h2>
-            <p class="sub">Free and MIT&#8209;licensed. No accounts, no upsell, no paid tier waiting behind it.</p>
+            <p class="sub">Free and MIT&#8209;licensed.</p>
           </div>
         </div>
         <div class="dl-grid">
@@ -558,7 +553,7 @@
               </svg>
               Download Current.dmg
             </a>
-            <p class="body" style="margin-top:16px; font-size:14.5px">Open the disk image, drag Current to Applications, double&#8209;click it. It is signed with a Developer ID and notarised by Apple, so macOS lets it straight through — no right&#8209;click&#8209;Open, no trip to System Settings.</p>
+            <p class="body" style="margin-top:16px; font-size:14.5px">Drag Current to Applications and open it. No security warnings.</p>
           </div>
           <div>
             <p class="label">Details</p>
@@ -573,7 +568,7 @@
             </div>
             <p class="label" style="margin-top:24px">SHA&#8209;256</p>
             <p class="sum"><code>2a916ab5d8458f54abe04e235e21fd6f6017bf67578b891233fc7fad0838f95f</code></p>
-            <p class="sumnote">Check it before you open it, if you like:
+            <p class="sumnote">Verify it, if you like:
               <code>shasum -a 256 Current.dmg</code></p>
           </div>
         </div>
