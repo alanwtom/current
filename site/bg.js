@@ -100,7 +100,11 @@
   var BREATH    = 0.30;   // how far the whole field rises and falls
   var BREATH_MS = 5200;   // and how long one breath takes
 
-  var GLOW_STEP = 5;      // the light buffer is this many times smaller
+  // The light buffer's scale, and it is a balance: coarser interpolates the
+  // banding away more aggressively, finer puts the dither on smaller pixels so
+  // the contours break up properly. Two is where both work.
+  var GLOW_STEP = 2;
+  var FADE_FROM = 0.54;   // where the light starts fading out at the bottom
 
   // --- state ---------------------------------------------------------------
   var cols = 0, rows = 0, count = 0, room = 0, cap = 0, cssW = 0, cssH = 0;
@@ -111,7 +115,7 @@
   var running = false, last = 0, owed = 0, raf = 0;
   var burstLeft = 0, burstOwed = 0, burstX = 0, burstY = 0, burstNext = 0;
   var textBox = null;
-  var glow = null, gctx = null, noise = null;
+  var glow = null, gctx = null, dither = null;
 
   function rand(n) { return (Math.random() * n) | 0; }
 
@@ -156,7 +160,9 @@
 
     // Off well before the section below starts — most of the lower half is
     // behind the app window anyway, and drawing under it is unseen work.
-    var bottom = y > h * 0.52 ? Math.max(0, 1 - (y - h * 0.52) / (h * 0.30)) : 1;
+    var bottom = y > h * FADE_FROM
+      ? Math.max(0, 1 - (y - h * FADE_FROM) / (h * (1 - FADE_FROM)))
+      : 1;
 
     // A touch under the chrome bar, and fading into the right edge rather
     // than stopping at it in a straight line.
@@ -216,19 +222,45 @@
     glow.width = Math.max(1, Math.ceil(cssW / GLOW_STEP));
     glow.height = Math.max(1, Math.ceil(cssH / GLOW_STEP));
 
-    if (!noise && gctx.createImageData && gctx.createPattern) {
-      var tile = document.createElement('canvas');
-      tile.width = tile.height = 64;
-      var t = tile.getContext('2d');
-      if (!t) return;
-      var img = t.createImageData(64, 64);
-      for (var i = 0; i < img.data.length; i += 4) {
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
-        img.data[i + 3] = (Math.random() * 9) | 0;
-      }
-      t.putImageData(img, 0, 0);
-      noise = gctx.createPattern(tile, 'repeat');
+    buildDither();
+  }
+
+  /* One step of dither, added rather than laid on top, and in the light's own
+     colour rather than white.
+     Banding is a quantising artefact: a 1/255 step spread over enough pixels
+     shows as a contour line, and on a background this dark those steps are
+     wide. Varying each pixel by that same single step breaks the lines up, and
+     one step is far below what anyone can see as texture.
+
+     Two ways I got this wrong first, both of which looked like poor rendering:
+
+     - Noise in the light buffer, which is a quarter-scale, so it was scaled up
+       into four-pixel blobs at fourteen times this amplitude. That is grain,
+       not dither.
+     - White, painted over the finished canvas with source-over. The canvas is
+       barely opaque — around 14/255 where the light is — so adding even 2/255
+       of white shifts the *ratio* of the channels enormously: red swung
+       between 73 and 96 on neighbouring pixels. Visible chroma noise from an
+       adjustment that was supposed to be invisible.
+
+     Additive, in the accent's own hue, inside the buffer: brightness moves by
+     one step and the colour does not move at all. */
+  function buildDither() {
+    if (dither || !gctx.createPattern) return;
+    var tile = document.createElement('canvas');
+    if (!tile.getContext) return;
+    tile.width = tile.height = 64;
+    var t = tile.getContext('2d');
+    if (!t || !t.createImageData) return;
+    var img = t.createImageData(64, 64);
+    for (var i = 0; i < img.data.length; i += 4) {
+      img.data[i] = ACCENT[0];
+      img.data[i + 1] = ACCENT[1];
+      img.data[i + 2] = ACCENT[2];
+      img.data[i + 3] = Math.random() < 0.5 ? 0 : 1;
     }
+    t.putImageData(img, 0, 0);
+    dither = gctx.createPattern(tile, 'repeat');
   }
 
   /* Start part-filled, and filled the way the live field grows: plant a few
@@ -367,11 +399,23 @@
       gctx.fillRect(px - r, py - r, r * 2, r * 2);
     }
 
-    gctx.globalCompositeOperation = 'source-over';
-    if (noise) {
-      gctx.fillStyle = noise;
+    if (dither) {
+      gctx.fillStyle = dither;
       gctx.fillRect(0, 0, glow.width, glow.height);
     }
+
+    // Fade the light out downward instead of stopping at the buffer's edge.
+    // Without this the glow ends on a straight horizontal line across the
+    // page, which is obvious anywhere the app window doesn't cover it.
+    gctx.globalCompositeOperation = 'destination-out';
+    var fade = gctx.createLinearGradient(0, glow.height * FADE_FROM, 0, glow.height);
+    fade.addColorStop(0, 'rgba(0,0,0,0)');
+    fade.addColorStop(0.55, 'rgba(0,0,0,0.65)');
+    fade.addColorStop(1, 'rgba(0,0,0,1)');
+    gctx.fillStyle = fade;
+    gctx.fillRect(0, glow.height * FADE_FROM, glow.width, glow.height);
+
+    gctx.globalCompositeOperation = 'source-over';
   }
 
   function draw(now) {
@@ -384,7 +428,11 @@
     var breath = Math.sin(now / BREATH_MS * TAU);
 
     paintGlow(pools, breath);
-    if (glow) ctx.drawImage(glow, 0, 0, cssW, cssH);
+    if (glow) {
+      ctx.imageSmoothingEnabled = true;
+      if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(glow, 0, 0, cssW, cssH);
+    }
 
     var still = [];
     for (var n = 0; n < live.length; n++) {

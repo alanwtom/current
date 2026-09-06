@@ -44,12 +44,18 @@ const ctx = {
   set fillStyle(v) { this._fill = v; },
   get fillStyle() { return this._fill; },
   setTransform() {}, clearRect() {}, beginPath() {}, drawImage() {},
+  save() {}, restore() {},
+  imageSmoothingEnabled: true, imageSmoothingQuality: 'high',
+  createPattern: () => ({ __pattern: true }),
+  createLinearGradient() { const g = { __linear: true }; g.addColorStop = () => {}; return g; },
   roundRect(x, y, w, h) { this._x = x; this._y = y; this._w = w; this._h = h; },
   fill() { record(this._x, this._y, this._w, this._h, this._fill); },
   fillRect(x, y, w, h) { record(x, y, w, h, this._fill); },
 };
 
 function record(x, y, w, h, style) {
+  // the dither pass fills with a pattern, not a colour — nothing to record
+  if (typeof style !== 'string' || style.indexOf('rgba') !== 0) return;
   const p = style.slice(5, -1).split(',').map(Number);
   frameDraws.push({ x, y, w, h, r: p[0], g: p[1], b: p[2], a: p[3] });
 }
@@ -74,6 +80,12 @@ function fakeBuffer() {
     clearRect() {}, setTransform() {}, putImageData() {},
     createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
     createPattern: () => ({ __pattern: true }),
+    createLinearGradient() {
+      const g = { __linear: true, stops: [] };
+      g.addColorStop = (o, c) => g.stops.push([o, c]);
+      return g;
+    },
+    save() {}, restore() {},
     createRadialGradient(x0, y0, r0, x1, y1, r1) {
       const g = { __radial: true, x: x1, y: y1, r: r1, stops: [] };
       g.addColorStop = (o, c) => g.stops.push([o, c]);
