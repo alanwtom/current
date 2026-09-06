@@ -75,6 +75,26 @@
             </dict>
         </dict>
     </array>
+    <!-- Sparkle. The feed is on our own domain rather than GitHub so an update
+         check reaches one origin, the same one the download page is on, and can
+         be moved later without orphaning installs.
+
+         SUEnableAutomaticChecks is false on purpose: the app asks the user in
+         its own card on first launch and only then turns checking on. Sparkle
+         must not check before that, or the "sends nothing but the torrent
+         protocol" claim on the download page is false the first time anyone
+         opens the app.
+
+         SUPublicEDKey is the public half of the EdDSA pair. The private half
+         never touches this repository — see docs/RELEASE.md. -->
+    <key>SUFeedURL</key>
+    <string>https://current.alantom.dev/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
+    <key>SUEnableInstallerLauncherService</key>
+    <false/>
+    <key>SUPublicEDKey</key>
+    <string>BXyLWZGFiy3Lx1Adna9FwwArw4ED0WJOHnsW/qusVcA=</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

@@ -118,7 +118,24 @@ commands couldn't draw any of this.
   straight there, and the switch to start asking again is in Settings beside
   the folder itself.
 - **Private by construction** — no accounts, no analytics, no tracking.
-  Torrent history stays local.
+  Torrent history stays local. The only request Current makes that isn't
+  the torrent protocol is an update check, and it asks before the first
+  one — see [Updates](#updates).
+
+## Updates
+
+Current can check whether a newer version exists and install it. **It asks
+once, on first launch, before making that request** — and the switch is in
+Settings if you change your mind.
+
+The check asks `current.alantom.dev` for a version file. Nothing about you, your
+library or your machine is sent, and there is no identifier of any kind. Every
+update is signed with an EdDSA key and refused if the signature doesn't match,
+so a tampered download can't install.
+
+It matters more than the average updater: Current bundles a torrent engine and a
+TLS library, and when those ship security fixes this is the only way one reaches
+a copy already downloaded.
 
 ## Building
 

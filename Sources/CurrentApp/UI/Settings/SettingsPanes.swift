@@ -207,7 +207,26 @@ struct GeneralPane: View {
                     .currentButton(.secondary)
                 }
             }
+
+            SettingsGroup(title: "Updates", footer: updatesFooter) {
+                ToggleRow(
+                    title: "Check for updates automatically",
+                    detail: "Asks current.alantom.dev whether a newer version exists. Nothing else is sent.",
+                    isOn: $settings.checksForUpdatesAutomatically
+                )
+            }
         }
+    }
+
+    /// Why this switch is worth leaving on, without nagging about it.
+    ///
+    /// The honest argument is a security one: the app bundles a torrent engine
+    /// and a TLS library, both of which ship fixes, and without a check there
+    /// is no way for one to reach a copy already downloaded.
+    private var updatesFooter: String {
+        settings.checksForUpdatesAutomatically
+            ? "Current checks in the background and tells you once an update is ready to install. It never installs anything without you relaunching."
+            : "Current will not check. Security fixes to the torrent engine won't reach this copy unless you download a new version yourself."
     }
 
     /// Says what the switch above actually does in each position, because "ask

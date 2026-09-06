@@ -71,6 +71,15 @@ struct CurrentApp: App {
                 .keyboardShortcut("a", modifiers: .command)
             }
 
+            // The manual path to an update check. Menus are the one place
+            // AGENTS.md keeps native, and this is the only visible part of
+            // the updater besides the toast — a user who has turned
+            // automatic checks off still needs a way to look.
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { app.updates?.checkForUpdates() }
+                    .disabled(app.updates?.canCheckForUpdates != true)
+            }
+
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { app.openSettings(tab: .general) }
                     .keyboardShortcut(",", modifiers: .command)

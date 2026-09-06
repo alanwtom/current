@@ -82,3 +82,7 @@ obvious:
   `LibtorrentEngine.useBundledCertificates`.
 - **The app is signed with a Developer ID, notarised, and stapled.** It ships
   with the hardened runtime and claims no entitlements.
+- **Updates are signed with an EdDSA key and refused if the signature does
+  not verify**, so control of the download page alone is not enough to ship
+  anyone an update. The app makes no update request at all until the user
+  has been asked.

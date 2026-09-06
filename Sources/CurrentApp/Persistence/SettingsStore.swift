@@ -24,6 +24,12 @@ final class SettingsStore: ObservableObject {
         static let notifyFailed = "notifications.failed"
         static let notifyBudget = "notifications.budget"
         static let launchAtLogin = "general.launchAtLogin"
+        /// Whether the user has been asked about update checks yet. Separate
+        /// from the answer, because "not asked" and "said no" have to be told
+        /// apart — otherwise a default of false is indistinguishable from a
+        /// decision and the app would either nag forever or never ask.
+        static let updatesAsked = "updates.asked"
+        static let updatesAutomatic = "updates.automatic"
         static let appearance = "general.appearance"
         // Bandwidth. Stored in bytes/second; 0 means unlimited.
         static let normalDown = "bandwidth.normal.down"
@@ -93,6 +99,22 @@ final class SettingsStore: ObservableObject {
     @Published var notifyOnFailure: Bool {
         didSet { persist(notifyOnFailure, forKey: Keys.notifyFailed) }
     }
+    /// Whether the first-launch question has been put to the user.
+    @Published var hasAnsweredUpdateQuestion: Bool {
+        didSet { persist(hasAnsweredUpdateQuestion, forKey: Keys.updatesAsked) }
+    }
+
+    /// Whether Current may ask the update feed whether a new version exists.
+    ///
+    /// **False until answered**, and the app makes no network call of any kind
+    /// on this account until it is true. That ordering is the whole point: the
+    /// README and the download page both say Current sends nothing but the
+    /// torrent protocol, and an updater that checks before being asked would
+    /// make that untrue.
+    @Published var checksForUpdatesAutomatically: Bool {
+        didSet { persist(checksForUpdatesAutomatically, forKey: Keys.updatesAutomatic) }
+    }
+
     @Published var notifyOnBudgetPressure: Bool {
         didSet { persist(notifyOnBudgetPressure, forKey: Keys.notifyBudget) }
     }
@@ -190,6 +212,8 @@ final class SettingsStore: ObservableObject {
         // this location" turns it off for good.
         self.asksForDownloadLocation = value(Keys.askForLocation).map({ $0 == "1" }) ?? true
         self.defaultSeedPolicy = Self.policy(fromKey: value(Keys.seedPolicy))
+        self.hasAnsweredUpdateQuestion = value(Keys.updatesAsked).map({ $0 == "1" }) ?? false
+        self.checksForUpdatesAutomatically = value(Keys.updatesAutomatic).map({ $0 == "1" }) ?? false
         // Read back as bytes, because bytes are what `didSet` writes.
         //
         // This used to multiply the stored number by a billion, treating it as

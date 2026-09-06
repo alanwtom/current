@@ -200,6 +200,21 @@ struct AppShell: View {
         // sheet, which was the last piece of stock chrome left in the window.
         .overlay {
             ZStack {
+                if app.isAskingAboutUpdates {
+                    // Asked once, before a single network call is made on this
+                    // account. The download page says Current sends nothing but
+                    // the torrent protocol; checking before asking would make
+                    // that false the first time anyone opened the app.
+                    ConfirmDialog(
+                        title: "Check for updates automatically?",
+                        message: "Current will ask current.alantom.dev whether a newer version exists, and nothing else is sent. Without this, security fixes to the torrent engine can't reach you. You can change it later in Settings.",
+                        confirmTitle: "Check for updates",
+                        alternateTitle: "Not now",
+                        onConfirm: { app.answerUpdateQuestion(checkAutomatically: true) },
+                        onAlternate: { app.answerUpdateQuestion(checkAutomatically: false) },
+                        onCancel: { app.answerUpdateQuestion(checkAutomatically: false) }
+                    )
+                }
                 if !app.pendingRemoval.isEmpty {
                     ConfirmDialog(
                         title: removalTitle,
@@ -216,6 +231,13 @@ struct AppShell: View {
             .animation(
                 Motion.pop(presenting: !app.pendingRemoval.isEmpty, reduceMotion: reduceMotion),
                 value: app.pendingRemoval.isEmpty
+            )
+            // Its own animated context. The flag is set from the environment's
+            // init, never inside `withAnimation`, so without this the card
+            // would simply appear fully formed.
+            .animation(
+                Motion.pop(presenting: app.isAskingAboutUpdates, reduceMotion: reduceMotion),
+                value: app.isAskingAboutUpdates
             )
             .zIndex(25)
         }

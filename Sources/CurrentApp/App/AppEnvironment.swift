@@ -24,6 +24,15 @@ final class AppEnvironment: ObservableObject {
     let activity: ActivityModel
     let magnetFlow: MagnetFlowCenter
     let toasts: ToastCenter
+    /// Nil under `-simulate`: a demo build has no business phoning a feed.
+    private(set) var updates: UpdateController?
+
+    /// Drives the one-time card asking whether Current may check for updates.
+    ///
+    /// Never shown under `-simulate`, and never shown again once answered —
+    /// "not asked" and "said no" are stored separately so a decline is a
+    /// decision rather than a default the app keeps re-litigating.
+    @Published var isAskingAboutUpdates = false
     /// Menu bar item. Created after init because it needs `self` for actions.
     private(set) var statusItem: StatusItemController?
 
@@ -133,6 +142,12 @@ final class AppEnvironment: ObservableObject {
         self.magnetFlow = MagnetFlowCenter()
         self.toasts = ToastCenter()
 
+        // No updater in the simulator. It is used for screenshots and UI work,
+        // and an update toast appearing over a demo would be both wrong and
+        // impossible to reproduce on purpose.
+        self.updates = simulate ? nil : UpdateController(settings: settings, toasts: toasts)
+        self.isAskingAboutUpdates = !simulate && !settings.hasAnsweredUpdateQuestion
+
         self.automation = AutomationCoordinator(
             library: library,
             settings: settings,
@@ -231,12 +246,33 @@ final class AppEnvironment: ObservableObject {
         }
         pushEngineConfiguration()
 
+        // The updater is not part of the engine configuration, but it is
+        // driven by a setting the same way. Without this the switch in
+        // Settings writes the preference and the running updater carries on
+        // doing whatever it was told at launch — a switch that only takes
+        // effect after a relaunch, which is exactly the class of dead
+        // control the settings sweep went looking for.
+        settings.$checksForUpdatesAutomatically
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                MainActor.assumeIsolated { self?.updates?.automaticChecksChanged(to: enabled) }
+            }
+            .store(in: &configCancellables)
+
         eventTask = Task.detached(priority: .utility) { [engine] in
             let stream = await engine.events
             for await event in stream {
                 await MainActor.run { self.route(event) }
             }
         }
+    }
+
+    /// Records the answer to the first-launch update question.
+    func answerUpdateQuestion(checkAutomatically: Bool) {
+        settings.checksForUpdatesAutomatically = checkAutomatically
+        settings.hasAnsweredUpdateQuestion = true
+        updates?.automaticChecksChanged(to: checkAutomatically)
+        isAskingAboutUpdates = false
     }
 
     /// Recomputes the session configuration and hands it to the engine if it

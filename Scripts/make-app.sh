@@ -13,7 +13,20 @@ CONFIG="debug"
 cd "$ROOT"
 swift build -c "$CONFIG"
 
+# Resolve Homebrew the same way Package.swift does, so a build that compiles
+# on a non-default prefix also bundles from it. These used to disagree: the
+# manifest was made portable while this script still read /opt/homebrew, which
+# would have failed at the CA bundle with a confusing message.
+BREW_PREFIX="${CURRENT_BREW_PREFIX:-}"
+if [[ -z "$BREW_PREFIX" ]]; then
+    for candidate in /opt/homebrew /usr/local; do
+        [[ -d "$candidate/include/libtorrent" ]] && BREW_PREFIX="$candidate" && break
+    done
+fi
+BREW_PREFIX="${BREW_PREFIX:-/opt/homebrew}"
+
 BIN=".build/arm64-apple-macosx/$CONFIG/Current"
+BUILT_PRODUCTS=".build/arm64-apple-macosx/$CONFIG"
 APP="$ROOT/.build/Current.app"
 FRAMEWORKS="$APP/Contents/Frameworks"
 
@@ -146,12 +159,41 @@ for dep in $(dependencies_of "$APP/Contents/MacOS/Current"); do
         "$APP/Contents/MacOS/Current" 2>/dev/null
 done
 
+# ---------------------------------------------------------------------------
+# Sparkle
+#
+# A framework, not a dylib, so the walker above cannot handle it: it is a
+# directory with versioned symlinks, its own code signature, an XPC service,
+# and two nested executables (Autoupdate and Updater.app) that do the actual
+# installing after Current has quit. Flattening any of that breaks updates in
+# ways that only show up when an update is attempted.
+#
+# `ditto` rather than `cp -R` because it preserves the symlink structure and
+# the existing signature exactly; `cp -R` on a versioned framework is a classic
+# way to end up with a bundle that passes a casual look and fails notarisation.
+# ---------------------------------------------------------------------------
+SPARKLE_SOURCE="$ROOT/$BUILT_PRODUCTS/Sparkle.framework"
+if [[ -d "$SPARKLE_SOURCE" ]]; then
+    ditto "$SPARKLE_SOURCE" "$FRAMEWORKS/Sparkle.framework"
+
+    # The executable looks for @rpath/Sparkle.framework/..., and SPM only gives
+    # it an @loader_path rpath — which for something in Contents/MacOS points at
+    # Contents/MacOS, not Contents/Frameworks. Without this the app dies at
+    # launch with a dyld "Library not loaded" the moment Sparkle is linked.
+    install_name_tool -add_rpath "@executable_path/../Frameworks" \
+        "$APP/Contents/MacOS/Current" 2>/dev/null || true
+else
+    echo "error: Sparkle.framework not found at $SPARKLE_SOURCE" >&2
+    echo "  the app links Sparkle; run: swift build -c $CONFIG" >&2
+    exit 1
+fi
+
 # The certificate bundle. Homebrew's OpenSSL has the location of the trust
 # store compiled in, pointing at a Homebrew directory no user has, so the
 # library ships with the file it needs instead. `LibtorrentEngine` points
 # OpenSSL at this copy on launch. Without it most trackers are HTTPS, every
 # announce fails verification, and it reads as a flaky network.
-CERT_SOURCE="/opt/homebrew/etc/openssl@3/cert.pem"
+CERT_SOURCE="$BREW_PREFIX/etc/openssl@3/cert.pem"
 if [[ -f "$CERT_SOURCE" ]]; then
     cp "$CERT_SOURCE" "$APP/Contents/Resources/cacert.pem"
 else

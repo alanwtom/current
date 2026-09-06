@@ -45,6 +45,16 @@ let package = Package(
         .executable(name: "Current", targets: ["CurrentApp"]),
         .library(name: "CurrentCore", targets: ["CurrentCore"]),
     ],
+    dependencies: [
+        // The only third-party Swift dependency, and it is here for a security
+        // reason rather than a convenience one: without an updater, a flaw in
+        // libtorrent or OpenSSL is permanent for everyone who has already
+        // downloaded the app, because there is no way to reach them.
+        //
+        // Sparkle's own UI is never used — see UpdateController. It draws stock
+        // Mac windows, which is the one thing this app is built not to do.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+    ],
     targets: [
         .target(
             name: "CurrentCore",
@@ -109,6 +119,7 @@ let package = Package(
                 "CurrentCore",
                 "CurrentSim",
                 "CurrentEngine",
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

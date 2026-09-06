@@ -56,6 +56,39 @@ SIGNER=$(security find-identity -v -p codesigning | grep "Developer ID Applicati
 print "  signing as: $SIGNER"
 print "  notarising with keychain profile: $PROFILE"
 
+# Sparkle's tools come from the resolved package rather than being installed
+# separately, so the signing tool always matches the framework being shipped.
+GENERATE_APPCAST="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
+[[ -x "$GENERATE_APPCAST" ]] || fail "Sparkle's generate_appcast is missing.
+  Resolve the package first:  swift build"
+
+if ! "$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_keys" -p >/dev/null 2>&1; then
+    fail "no Sparkle signing key in the keychain.
+  Every released update is signed with it, and a release without one cannot be
+  installed by anybody. Generate it once with:
+    .build/artifacts/sparkle/Sparkle/bin/generate_keys
+  then put the public half in Scripts/Info.plist as SUPublicEDKey and back the
+  private half up somewhere durable — losing it means no existing install can
+  ever be updated again."
+fi
+
+# ---------------------------------------------------------------------------
+# A release is a tag, and nothing else
+#
+# The version in the bundle now comes from `git describe`, so releasing from an
+# untagged or dirty tree would publish a build whose version is a guess — and,
+# worse, one nobody can check out again. Both of these are cheap to get wrong at
+# midnight and expensive to discover afterwards.
+# ---------------------------------------------------------------------------
+[[ -z "$(git -C "$ROOT" status --porcelain)" ]] \
+    || fail "the working tree is dirty. Commit or stash before releasing."
+
+TAG="$(git -C "$ROOT" describe --exact-match --tags HEAD 2>/dev/null || true)"
+[[ -n "$TAG" ]] || fail "HEAD is not tagged.
+  Tag the commit you intend to release first:  git tag -a v1.1.0 -m 'Current 1.1.0'"
+VERSION="${TAG#v}"
+print "  releasing: $TAG"
+
 # ---------------------------------------------------------------------------
 step "Building the release bundle"
 # ---------------------------------------------------------------------------
@@ -72,6 +105,33 @@ for lib in "$APP"/Contents/Frameworks/*.dylib(N); do
     codesign --force --options runtime --timestamp --sign "$SIGNER" "$lib"
     print "  signed ${lib:t}"
 done
+
+# Sparkle is a framework, and a framework signs from the inside out.
+#
+# It contains two XPC services, a helper app, and a standalone `Autoupdate`
+# binary that does the installing after Current has quit. Each is its own
+# signable unit, and signing the framework as a whole does NOT sign them —
+# `codesign --deep` claims to and is explicitly unsupported for submission.
+# Get the order wrong and everything looks fine locally, then notarisation
+# rejects the build with a message about a nested component, which is a long
+# way from the cause.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE" ]]; then
+    for nested in \
+        "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+        "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+        "$SPARKLE/Versions/B/Updater.app" \
+        "$SPARKLE/Versions/B/Autoupdate"
+    do
+        [[ -e "$nested" ]] || continue
+        codesign --force --options runtime --timestamp --sign "$SIGNER" "$nested"
+        print "  signed ${nested:t}"
+    done
+    # The framework itself last, so its seal covers everything above.
+    codesign --force --options runtime --timestamp --sign "$SIGNER" "$SPARKLE/Versions/B"
+    codesign --force --options runtime --timestamp --sign "$SIGNER" "$SPARKLE"
+    print "  signed Sparkle.framework"
+fi
 
 codesign --force --options runtime --timestamp --sign "$SIGNER" "$APP"
 print "  signed ${APP:t}"
@@ -132,13 +192,64 @@ xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
 xcrun stapler staple "$DMG"
 
 # ---------------------------------------------------------------------------
+step "Signing the update feed"
+#
+# The appcast is what every installed copy reads to learn a new version exists,
+# and its EdDSA signature is the only thing standing between a user and an
+# attacker-supplied "update". The private key lives in the login keychain and
+# must never enter this repository — `generate_appcast` reads it from there.
+#
+# Note this signs the *disk image*: Sparkle downloads and verifies the same file
+# a human would, so there is one artifact to trust rather than two.
+# ---------------------------------------------------------------------------
+APPCAST_DIR="$ROOT/.build/appcast"
+rm -rf "$APPCAST_DIR"; mkdir -p "$APPCAST_DIR"
+cp "$DMG" "$APPCAST_DIR/"
+
+# Release notes for this version, lifted from the changelog so the two can
+# never disagree.
+NOTES="$ROOT/.build/release-notes.md"
+python3 "$ROOT/Scripts/changelog-section.py" "$VERSION" > "$NOTES" || {
+    fail "no CHANGELOG.md section for $VERSION — add one before releasing"
+}
+
+"$GENERATE_APPCAST" \
+    --download-url-prefix "https://current.alantom.dev/" \
+    --link "https://current.alantom.dev" \
+    -o "$APPCAST_DIR/appcast.xml" \
+    "$APPCAST_DIR"
+
+grep -q "sparkle:edSignature" "$APPCAST_DIR/appcast.xml" \
+    || fail "the appcast carries no signature — updates would be refused by every client"
+print "  appcast signed"
+
+# ---------------------------------------------------------------------------
+step "Staging the site"
+#
+# `site/` deploys from this folder rather than from git, because Current.dmg is
+# deliberately not in the repository — see site/README.md. Both the image and
+# the feed have to be here before the deploy.
+# ---------------------------------------------------------------------------
+cp "$DMG" "$ROOT/site/Current.dmg"
+cp "$APPCAST_DIR/appcast.xml" "$ROOT/site/appcast.xml"
+print "  site/Current.dmg and site/appcast.xml updated"
+
+# ---------------------------------------------------------------------------
 step "Done"
 # ---------------------------------------------------------------------------
 SIZE=$(du -h "$DMG" | cut -f1)
 SHA=$(shasum -a 256 "$DMG" | cut -d' ' -f1)
+print "  version: $VERSION"
 print "  $DMG ($SIZE)"
 print "  sha256: $SHA"
 print ""
-print "  Publish the checksum alongside the download so people can verify it."
-print "  Test it the way a user will: upload it, download it in a browser,"
-print "  and open it on a Mac that has never had Xcode or Homebrew."
+print "  Two commands left, deliberately not automated — each one publishes:"
+print ""
+print "    cd site && vercel deploy --prod        # download page + update feed"
+print "    gh release create $TAG \\"
+print "        --title \"Current $VERSION\" --notes-file $NOTES \\"
+print "        $DMG"
+print ""
+print "  Update the SHA-256 on the download page to the one above."
+print "  Then check it the way a user will: download it in a browser and open it"
+print "  on a Mac that has never had Xcode or Homebrew."

@@ -70,10 +70,10 @@ Nothing here is optional; this is the difference between a build and a product.
 - [x] **Package as a DMG** with an Applications symlink so the install is a
       drag. Not yet done: a background image and window layout that make it
       obvious not to run the app from inside the image.
-- [ ] **Version numbering.** `Info.plist` is hardcoded to 1.0.0 build 1. The
-      build should take the version from the git tag and the build number from
-      something that always increases, or the updater in Phase 3 cannot tell
-      two releases apart.
+- [x] **Version numbering.** Done. `Scripts/make-app.sh` stamps the marketing
+      version from `git describe --tags` and the build number from the commit
+      count. An untagged checkout gets `0.0.0-dev`, which is deliberately
+      obvious so a fallback can never be mistaken for a release.
 
 **Verified, not assumed.** A copy of the finished image carrying the
 quarantine flag a browser attaches comes back from Gatekeeper as
@@ -102,18 +102,54 @@ a fourth of the same kind.
 
 ## Phase 3 — Be able to fix things after release
 
-- [ ] **Auto-update.** Sparkle is the standard. It needs an EdDSA key pair, an
-      appcast feed hosted somewhere stable, and the private key kept somewhere
-      safe — losing it means no existing install can ever be updated again.
-      **Ship this in 1.0, not 1.1.** Without it, the first bad build is
-      permanent for everyone who has already downloaded it.
+- [x] **Auto-update.** Done, and deliberately unlike a stock Sparkle
+      integration. Sparkle's engine is used; its interface is not — its windows
+      are stock Mac chrome, which is the one thing this app is built to avoid,
+      and they would be the only system UI it ever showed.
+      `Sources/CurrentApp/Updates/UpdateController.swift` implements
+      `SPUUserDriver` so the entire visible surface is one toast: *An update is
+      ready — Relaunch*. A background check that finds nothing, or fails, is
+      silent; only a check the user started from the menu talks back.
+
+      **It asks before it ever checks.** A card on first launch, stored as two
+      settings so "not asked" and "said no" are told apart. Until answered the
+      app makes no update request at all, which is what keeps the claim on the
+      download page true.
+
+      The private EdDSA key is in the login keychain and **must be backed up**.
+      Losing it means no existing install can ever be updated again. The public
+      half is `SUPublicEDKey` in `Scripts/Info.plist`; the feed is
+      `https://current.alantom.dev/appcast.xml`.
+
+      Two things that bite when touching this:
+
+      - **Sparkle is a framework, and it signs from the inside out.** Two XPC
+        services, a helper app and a standalone `Autoupdate` binary each sign as
+        their own unit. `codesign --deep` claims to handle this and is
+        unsupported for submission. Get the order wrong and everything looks
+        fine locally, then notarisation rejects the build with a message about a
+        nested component — a long way from the cause. `Scripts/release.sh` does
+        it in the right order.
+      - **`make-app.sh` uses `ditto`, not `cp -R`,** to bring the framework in.
+        A versioned framework is symlinks and its own signature, and flattening
+        either produces a bundle that passes a casual look and fails
+        notarisation.
 - [ ] **A way to hear about crashes.** The privacy promise rules out telemetry,
       and it should stay ruled out. The honest version is a "Report a problem"
       item that opens a prefilled issue and tells the user exactly which file to
       attach.
-- [ ] **Release automation.** Tag → build → sign → notarise → DMG → upload.
-      Doing this by hand is how an unsigned or unstapled build gets published at
-      midnight.
+- [x] **Release automation.** `Scripts/release.sh` refuses to run on a dirty
+      tree or an untagged HEAD, then builds, signs (including Sparkle's nested
+      binaries), notarises, staples, packages, notarises the image, signs the
+      appcast with the EdDSA key, and stages both the image and the feed into
+      `site/`. It stops one step short on purpose: the two commands that
+      actually publish — the site deploy and `gh release create` — are printed
+      for you to run, because a script that publishes as a side effect of being
+      run is how a half-finished release goes out.
+
+      Release notes come from `CHANGELOG.md` via `Scripts/changelog-section.py`,
+      so the changelog and the release can't disagree, and a version with no
+      changelog section fails the release rather than shipping empty notes.
 
 ## Phase 4 — The open-source side of v1.0
 
@@ -125,26 +161,24 @@ someone deciding whether to build it.
 - [x] **Screenshots in the README.** Three, taken against `-simulate` so they
       can be reproduced: the library, the card a magnet raises, the menu bar
       panel.
-- [ ] **Third-party licence notices.** The bundle now redistributes libtorrent
-      (BSD-3-Clause) and OpenSSL (Apache-2.0). Both require their notices to
-      travel with a binary distribution. A `THIRD-PARTY-NOTICES.md` in the repo
-      and a copy in the app bundle covers it. This became a real obligation the
-      moment the bundling work made those libraries ship with the app, and it
-      is cheap.
-- [ ] **Make it buildable by someone who isn't you.** `Package.swift` hardcodes
-      `/opt/homebrew`, so the build fails on an Intel Mac and anywhere Homebrew
-      isn't at the default prefix. Read the prefix from `brew --prefix` or an
-      environment variable and fall back to the current default. Right now the
-      honest README line would be "builds on Apple Silicon with Homebrew at the
-      default location", which is a small audience for contributors.
+- [x] **Third-party licence notices.** Done, and generated rather than written:
+      `Scripts/make-notices.sh` reads the licences Homebrew actually installed,
+      with versions and SPDX identifiers, so the file cannot quietly go stale
+      when a dependency moves. It lands in the repo and inside
+      `Contents/Resources`, since the obligation attaches to the binary.
+- [x] **Make it buildable by someone who isn't you.** `Package.swift` and
+      `make-app.sh` both resolve the prefix now: `CURRENT_BREW_PREFIX` if set,
+      else whichever of `/opt/homebrew` and `/usr/local` actually has
+      libtorrent's headers. They used to disagree, which would have compiled on
+      a non-default prefix and then failed at the CA bundle.
 - [ ] **A README written for a person landing cold.** Screenshots and the
       Apple Silicon requirement are in. Still missing: a download link, and an
       opening that leads with what the app is rather than a philosophy
       paragraph.
-- [ ] **`SECURITY.md`.** This app parses untrusted files and talks to untrusted
-      peers over the network. A stated disclosure route is basic hygiene for
-      anything with a socket.
-- [ ] **`CHANGELOG.md`**, starting at 1.0.0.
+- [x] **`SECURITY.md`.** Done, with GitHub private vulnerability reporting
+      enabled so the route is a button rather than an address. Secret scanning
+      and push protection are on too — there is a signing key in play now.
+- [x] **`CHANGELOG.md`**, starting at 1.0.0, and read by the release script.
 - [ ] **Tag `v1.0.0`** and cut a GitHub Release with the DMG and its checksum.
       Nothing before the tag is a version; it's just `main`.
 - [ ] **Land or drop the in-flight swarm-health work** before tagging. A
