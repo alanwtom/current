@@ -48,6 +48,21 @@ final class UpdateController {
 
         do {
             try updater.start()
+
+            // A test affordance, and the only way to check this path without
+            // waiting on Sparkle's scheduler.
+            //
+            // `automaticallyChecksForUpdates` does not mean "check now" — Sparkle
+            // spaces checks out on its own timer, which is right for a real
+            // install and useless for proving the update path works. Setting
+            // this variable asks for one check immediately, so
+            // Scripts/test-update.sh can watch an install actually become the
+            // next version. It does nothing unless the variable is set, and
+            // nothing at all if the user hasn't agreed to checks.
+            if ProcessInfo.processInfo.environment["CURRENT_UPDATE_CHECK_ON_LAUNCH"] != nil,
+               settings.checksForUpdatesAutomatically {
+                updater.checkForUpdatesInBackground()
+            }
         } catch {
             // A broken updater must never stop the app launching. There is
             // nothing useful to tell the user here — they didn't ask for an
@@ -174,19 +189,49 @@ private final class QuietUpdateDriver: NSObject, SPUUserDriver {
         // The whole visible surface of the updater: one toast with one button.
         // `coalesceKey` because a second check finding the same update must not
         // stack a second toast on the first.
+        //
+        // **Sparkle needs an answer, and exactly one.** This is the part that
+        // caught me out and is worth stating plainly: replying only when the
+        // button is pressed means an ignored toast never replies at all, and
+        // Sparkle then waits forever — the update sits downloaded on disk and
+        // is never installed, not on quit, not ever. It looks exactly like an
+        // updater that silently doesn't work, which is what the end-to-end test
+        // found.
+        //
+        // So there are two paths and both answer:
+        //
+        //   Relaunch  -> .install, restart now
+        //   ignored   -> .dismiss, which is not "no". It tells Sparkle to stop
+        //                waiting and install what it already downloaded the
+        //                next time the app quits.
+        //
+        // Ignoring the toast is meant to be the ordinary case — you get the
+        // update without ever being interrupted — so it has to be the case that
+        // works.
+        var hasReplied = false
+        func answer(_ choice: SPUUserUpdateChoice) {
+            guard !hasReplied else { return }
+            hasReplied = true
+            reply(choice)
+        }
+
         toasts.show(
             .success,
             title: "An update is ready",
-            message: "Relaunch Current to install it.",
+            message: "Relaunch Current to install it, or it will install when you quit.",
             actionTitle: "Relaunch",
             coalesceKey: "update.ready"
         ) {
-            reply(.install)
+            answer(.install)
         }
-        // Not answering is a valid answer: the toast dismisses itself, the
-        // update stays on disk, and Sparkle installs it the next time the app
-        // quits. Nothing is lost by ignoring it, which is why it can be a toast
-        // rather than a dialog.
+
+        // Comfortably longer than the toast's own life, so a press always wins
+        // the race. If it has gone unanswered by then, it was ignored.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(30))
+            answer(.dismiss)
+        }
+
         isUserInitiated = false
     }
 
