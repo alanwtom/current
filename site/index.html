@@ -891,7 +891,11 @@
      used between two paragraphs and too tight under an object this size. */
   .demo-host{position:relative; margin-bottom:var(--s7)}
   .demo-host::before{
-    content:""; position:absolute; inset:-8% -5% -14%; z-index:-1; pointer-events:none;
+    /* No horizontal spill: a negative inset widens the layout box, and with
+       the host's overflow visible that made the whole page scroll sideways by
+       40px. The blur spreads the light outward on its own — blur is ink, not
+       layout, so it costs nothing here. */
+    content:""; position:absolute; inset:-8% 0 -14%; z-index:-1; pointer-events:none;
     background:radial-gradient(58% 58% at 50% 42%,rgba(63,169,255,.24),transparent 70%);
     filter:blur(48px);
   }
