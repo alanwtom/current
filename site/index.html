@@ -155,36 +155,22 @@
   .cap{margin-top:var(--s5); font-size:13px; line-height:1.6; color:var(--secondary); max-width:620px}
   .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--secondary)}
 
-  /* ---- the piece field behind the first screen ---------------------------
-     A torrent arrives as thousands of small pieces, out of order. That is
-     what the background draws, and it is drawn in bg.js — everything here
-     just gives it somewhere to live.
+  /* There is no background layer, and that is deliberate.
 
-     What was here before was two blurred blobs and a grid, which is what
-     every dark landing page has and said nothing about this one.
+     This spent a while as an animated field: squares landing in bursts, pools
+     of colour drifting under them, the whole thing following the pointer. It
+     was carefully built and it was wrong — chunks of blocks moving around
+     behind the words, saying nothing about the app and competing with the one
+     thing on the screen that matters. A page whose argument is that software
+     should be quiet cannot have the noisiest hero of the three sites it was
+     copying from.
 
-     The layer scrolls off with the hero and is masked to nothing before the
-     first section, so the rest of the page stays the plain dark it was. It
-     sits under the content and takes no clicks.
-     --------------------------------------------------------------------- */
+     `isolation` and the z-index below are still needed: they keep the glow
+     behind the app window (`.demo-host::before`, which sits at z-index -1)
+     from escaping behind the page's own background.
+     ---------------------------------------------------------------------- */
   body{position:relative; isolation:isolate}
   main,footer{position:relative; z-index:1}
-
-  .bg{
-    position:absolute; left:0; right:0; top:0; z-index:0;
-    height:clamp(860px,132vh,1560px); overflow:hidden; pointer-events:none;
-  }
-  .bg-field{position:absolute; inset:0; width:100%; height:100%}
-
-  /* The light used to be a CSS radial gradient here. A gradient that wide and
-     that dark quantises into visible contour lines on an 8-bit screen — faint
-     striping across the hero that looked like a rendering fault, because it
-     was one. It is painted in the canvas now, into a small buffer that gets
-     scaled up, which interpolates the steps away. */
-
-  @media (max-width:700px){
-    .bg{height:clamp(620px,86vh,900px)}
-  }
 
   /* ---- hero ---- */
   .hero{padding:72px 0 40px}
@@ -944,7 +930,6 @@
   @media (prefers-reduced-motion:reduce){
     .rise,.rise-2,.rise-3,.rise-4{animation:none}
     .reveal{opacity:1; transform:none; filter:none; transition:none}
-    /* bg.js draws one still frame and never starts its loop. */
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -953,10 +938,6 @@
 </style>
 </head>
 <body>
-<div class="bg" aria-hidden="true">
-  <canvas class="bg-field" id="bg-field"></canvas>
-</div>
-
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="bar" id="bar">
@@ -1307,7 +1288,6 @@
 
 
 <script src="./nav.js" defer></script>
-<script src="./bg.js" defer></script>
 <script src="./reveal.js" defer></script>
 <script src="./demo.js" defer></script>
 </body>
