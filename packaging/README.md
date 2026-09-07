@@ -19,22 +19,52 @@ verifiable public interest". The tool is where the real threshold lives:
 **75 stars, or 30 forks, or 30 watchers.** Any one of the three. The repo is
 currently at 1 star, so this is a "come back later" rather than a "no".
 
-## It can go into your own tap today
+## It is live in a personal tap
 
-A tap is just a GitHub repo named `homebrew-<something>`, so:
-
-1. Create a public repo `alanwtom/homebrew-tap`.
-2. Put this file at `Casks/current.rb` in it.
-3. Anyone can then install with:
+<https://github.com/alanwtom/homebrew-tap>
 
 ```
 brew install --cask alanwtom/tap/current
 ```
 
-No approval, no notability rule, works immediately. Same command shape people
-already expect, just with your name in it. When the repo clears one of the
-three thresholds above, the identical file can be submitted to homebrew-cask
-and the shorter `brew install --cask current` starts working.
+That single command taps the repo and installs; no `brew tap` step needed. No
+approval and no notability rule applies to a personal tap. When Current clears
+one of the three thresholds above, the identical cask goes to homebrew-cask and
+the shorter `brew install --cask current` starts working — nothing in the file
+needs to change.
+
+Verified: `brew info --cask alanwtom/tap/current` resolves and reports
+"Required: arm64 architecture, macOS >= 26", which also confirms the
+`depends_on macos: :tahoe` semantics. `brew fetch --cask` downloads and matches
+the pinned checksum. CI passes on the published repo.
+
+**Not** verified: the actual install on a clean machine, because this one
+already has Current in /Applications from the update test and a cask install
+would refuse or overwrite it.
+
+## How the tap is hardened
+
+A tap is a place people run installs from, so the threat is someone changing a
+URL and a checksum together and every `brew install` fetching whatever they
+like. What is in place:
+
+- **Nothing in the repo can write to the repo.** One workflow, `contents: read`,
+  and the default workflow token is read-only at the repository level. Actions
+  cannot approve or open pull requests.
+- **`brew tap-new`'s scaffolding was deleted.** It ships a daily autobump and a
+  bottle publisher, both needing write access, for formulae this tap does not
+  have. Bumping stays manual on purpose: a bot that can bump a cask is a bot
+  that can rewrite a URL and a checksum in one commit, on a schedule.
+- **Only vetted actions can run** — GitHub's own plus `Homebrew/actions/*`, and
+  every use is pinned to a commit hash rather than a tag.
+- **`main` is protected**: no force pushes, no deletion, linear history, and CI
+  must pass. The required check is named `test` and the workflow's job is named
+  `test` — worth checking they match, because a required check that never
+  reports blocks every merge forever.
+- **Secret scanning and push protection are on**, and wiki and projects are off.
+- **CI re-audits each cask against its live download**, not just its syntax, so
+  an upstream release re-cut under an existing tag fails in CI rather than on
+  someone's laptop.
 
 ## Things in here that were not obvious
 
