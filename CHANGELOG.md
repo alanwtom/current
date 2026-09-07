@@ -9,6 +9,8 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-07
+
 ### Added
 
 - **Help → Report a Problem…** Opens a bug report with the details already
