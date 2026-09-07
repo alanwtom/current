@@ -9,6 +9,28 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+### Added
+
+- **Help → Report a Problem…** Opens a bug report with the details already
+  filled in — which version and build you're running, which macOS, which Mac.
+  If Current has crashed in the last two weeks it also finds the crash report,
+  reveals it in Finder and names it in the report, so attaching it is a drag
+  rather than a hunt through a folder you've never opened.
+
+  Still no telemetry, and there isn't going to be any. Nothing is sent unless
+  you choose to file the report.
+
+- **A designed install window.** Double-clicking the download now opens
+  something built for the job — the app, the Applications folder, and a current
+  running between them — instead of the plain white window every unpackaged Mac
+  app opens. It also says to eject the disk afterwards, which matters: an app
+  run from inside the disk image looks fine and quietly can't ever update
+  itself.
+
+- **Uninstall instructions**, on the download page and in the README. Three
+  files stay behind when you drag Current to the Trash; now they're written
+  down. Your downloads are never touched.
+
 ## [1.1.1] — 2026-09-06
 
 ### Fixed

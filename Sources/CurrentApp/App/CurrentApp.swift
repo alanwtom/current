@@ -112,6 +112,25 @@ struct CurrentApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             }
+
+            // The Help menu is replaced rather than added to, because the item
+            // SwiftUI puts there by default — "Current Help" — opens the help
+            // viewer looking for a help book this app does not ship, and fails
+            // with a dialog. An item that reliably does nothing useful is worse
+            // than no item.
+            //
+            // What's here instead is the app's entire crash reporting. There is
+            // no telemetry and there is not going to be any, so a problem only
+            // ever reaches us because someone chose to describe it — which
+            // means the cost of describing it is the only thing we control.
+            CommandGroup(replacing: .help) {
+                Button("Report a Problem…") { app.reportProblem() }
+                Button("Current on GitHub") {
+                    if let url = URL(string: "https://github.com/alanwtom/current") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
         }
 
         // There is no `Settings` scene any more: settings are one of the app's

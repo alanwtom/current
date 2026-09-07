@@ -165,10 +165,32 @@ a fourth of the same kind.
         A versioned framework is symlinks and its own signature, and flattening
         either produces a bundle that passes a casual look and fails
         notarisation.
-- [ ] **A way to hear about crashes.** The privacy promise rules out telemetry,
-      and it should stay ruled out. The honest version is a "Report a problem"
-      item that opens a prefilled issue and tells the user exactly which file to
-      attach.
+- [x] **A way to hear about crashes.** Done, and the privacy promise stays
+      intact — there is still no telemetry and there is not going to be any.
+      **Help → Report a Problem…** opens a prefilled GitHub issue carrying the
+      facts we would otherwise have to ask for and usually get wrong: the app
+      version *and* build number, the macOS build, and the Mac's model
+      identifier. A report filed from a `-simulate` build says so, since that
+      describes the simulation rather than the engine.
+
+      The part that makes it work is the crash log. If macOS has written one for
+      Current in the last two weeks, the newest is **revealed in Finder** and
+      named in the report, so the instruction is "drag the file that's already
+      selected" rather than "attach your crash log" — which sends people to a
+      folder they have never opened, and they don't go. `Retired` is searched
+      too, because a repeated crash fills the folder and gets the interesting
+      report moved there.
+
+      Two-week window on purpose: an old crash attached to an unrelated report
+      is worse than no crash at all, because it sends the reading of it
+      somewhere with nothing to do with the bug. `ProblemReport` in `CurrentCore`
+      is the pure part, with tests — including the one trap worth knowing, that
+      GitHub reads a `+` in a URL query as a space, so an unescaped one arrives
+      as a hole in the report.
+
+      The Help menu is replaced rather than added to: SwiftUI's default "Current
+      Help" opens the help viewer looking for a help book the app doesn't ship,
+      and fails with a dialog.
 - [x] **Release automation.** `Scripts/release.sh` refuses to run on a dirty
       tree or an untagged HEAD, then builds, signs (including Sparkle's nested
       binaries), notarises, staples, packages, notarises the image, signs the
@@ -221,10 +243,20 @@ someone deciding whether to build it.
       refuses a dirty tree, which turns that rule into a wall rather than a
       resolution — but the failure mode it exists for is committing something in
       a hurry to get past it.
-- [ ] `CODE_OF_CONDUCT.md` and a **pull request** template. Issue templates are
-      in (`bug_report`, `design_idea`, and a `config.yml` that points support
-      questions somewhere better); these two are the remainder. Conventional,
-      quick, and GitHub asks for them.
+- [x] `CODE_OF_CONDUCT.md` and a **pull request** template. Both in. The code
+      of conduct is short and in my own words rather than the full Contributor
+      Covenant text, and it says plainly that there is no committee and no
+      appeal process, because there is one maintainer — better than implying a
+      process that doesn't exist. It routes reports through GitHub's own **Report
+      abuse**, so **no email address of mine is published**; add one if you'd
+      rather be reachable directly.
+
+      The PR template is a checklist of the five rules that actually get broken:
+      tests for anything in `CurrentCore`, no `LTShim` outside `CurrentEngine`,
+      nothing from the system's design language, tokens instead of inline
+      numbers, and a keyboard path for every click. Plus the three-minute soak
+      for anything touching window frames or list content, since that is the
+      failure this app has died from twice.
 
 ### Saying what this is
 
@@ -255,13 +287,20 @@ trust it.
 - [x] **Say plainly what it is and what it runs on.** Apple Silicon, macOS 26+,
       the download size and the words "BitTorrent client" are all above the fold
       on both the page and the README.
-- [ ] **Uninstall instructions.** Still missing, and it is the last thing on
-      this list that a user actually runs into: the app leaves a library
-      database and the DHT routing table in
-      `~/Library/Application Support/Current`, and dragging the app to the Trash
-      does not remove them. Wanted in two places — the download page, and the
+- [x] **Uninstall instructions.** In both places — the download page and the
       README — because the person uninstalling is not necessarily the person who
       read either one when they installed.
+
+      Three paths, enumerated from a real install rather than from memory:
+      `~/Library/Application Support/Current` (the library database and the DHT
+      routing table), `~/Library/Preferences/org.current.torrent.plist` (window
+      frames, column widths, and Sparkle's own update state — easy to forget,
+      since the app's own settings are in the database, not here) and
+      `~/Library/Caches/org.current.torrent`.
+
+      It leads with what people actually worry about: **downloads are not
+      touched.** And it says what happens to magnet links, since the app claims
+      that association on first launch.
 
 ---
 
@@ -420,4 +459,5 @@ The failure mode this app has died from twice is a layout loop that takes
 
 - [ ] Install over an existing older version; settings and library survive.
 - [ ] Drag to Trash, then reinstall: does it come back clean or confused?
-- [ ] Know exactly what is left behind, and say so on the site.
+- [x] Know exactly what is left behind, and say so on the site. Enumerated from
+      a real install; the three paths are on the download page and in the README.

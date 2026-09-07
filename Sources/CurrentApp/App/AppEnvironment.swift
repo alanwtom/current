@@ -551,6 +551,111 @@ final class AppEnvironment: ObservableObject {
         library.togglePause(for: library.selection)
     }
 
+    // MARK: - Reporting a problem
+
+    /// Where issues go. Not read from the bundle or a setting — a report has
+    /// exactly one destination and a wrong one goes nowhere silently.
+    private static let repository = "alanwtom/current"
+
+    /// Opens a prefilled bug report, and puts the crash log in the user's hands
+    /// if there is one.
+    ///
+    /// This is the whole of the app's crash reporting, on purpose. The privacy
+    /// promise rules out telemetry and should keep ruling it out, which leaves
+    /// one honest option: make it easy for a person to tell us. So the facts we
+    /// would otherwise ask for are already filled in, and the crash report is
+    /// revealed in Finder rather than referred to — "attach your crash log"
+    /// sends people to a folder they have never opened, and they don't go.
+    ///
+    /// Opening a URL is the user's browser doing what the user asked. Nothing
+    /// is sent from here.
+    func reportProblem() {
+        let crash = newestCrashReport()
+
+        guard let url = ProblemReport.issueURL(
+            repository: Self.repository,
+            environment: currentEnvironment(),
+            crashReport: crash.map { PathFormatting.friendly($0) }
+        ) else { return }
+
+        // Revealed before the browser opens, so Finder ends up behind the page
+        // being typed into rather than on top of it.
+        if let crash {
+            NSWorkspace.shared.activateFileViewerSelecting([crash])
+            toasts.show(
+                .info,
+                title: "Crash report revealed in Finder",
+                message: "Drag it into the report to attach it.",
+                coalesceKey: "crash-report-revealed"
+            )
+        }
+
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The facts a reporter would otherwise have to look up, and would get
+    /// wrong — the build number especially, which is nowhere in the interface.
+    private func currentEnvironment() -> ProblemReport.Environment {
+        let info = Bundle.main.infoDictionary
+        return ProblemReport.Environment(
+            version: info?["CFBundleShortVersionString"] as? String ?? "unknown",
+            build: info?["CFBundleVersion"] as? String ?? "unknown",
+            system: ProcessInfo.processInfo.operatingSystemVersionString,
+            model: Self.hardwareModel(),
+            isSimulating: ProcessInfo.processInfo.arguments.contains("-simulate")
+        )
+    }
+
+    /// `Mac15,3`. The identifier rather than the marketing name, because it
+    /// says which chip and "MacBook Pro" doesn't.
+    private static func hardwareModel() -> String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "unknown" }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &bytes, &size, nil, 0) == 0 else { return "unknown" }
+        return String(cString: bytes)
+    }
+
+    /// The newest crash report macOS has written for this app, if it is recent
+    /// enough to plausibly be the one being reported.
+    ///
+    /// Both folders are searched: macOS moves reports into `Retired` once there
+    /// are enough of them, and a repeated crash is exactly the case that fills
+    /// the folder up — so the interesting report is the one most likely to have
+    /// been moved.
+    private func newestCrashReport() -> URL? {
+        let manager = FileManager.default
+        guard let logs = manager.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Logs/DiagnosticReports")
+        else { return nil }
+
+        let folders = [logs, logs.appendingPathComponent("Retired")]
+        var found: [(report: ProblemReport.CrashReport, url: URL)] = []
+
+        for folder in folders {
+            let files = (try? manager.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+            )) ?? []
+            for file in files {
+                guard let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate
+                else { continue }
+                found.append((
+                    ProblemReport.CrashReport(name: file.lastPathComponent, modified: modified),
+                    file
+                ))
+            }
+        }
+
+        guard let newest = ProblemReport.newestCrashReport(
+            among: found.map(\.report),
+            now: Date()
+        ) else { return nil }
+        return found.first { $0.report == newest }?.url
+    }
+
     func confirmRemoval(of ids: Set<TorrentID>) {
         guard !ids.isEmpty else { return }
         pendingRemoval = ids

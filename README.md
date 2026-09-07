@@ -137,6 +137,26 @@ It matters more than the average updater: Current bundles a torrent engine and a
 TLS library, and when those ship security fixes this is the only way one reaches
 a copy already downloaded.
 
+## Uninstalling
+
+Quit Current and drag it to the Trash. **Your downloads are not touched** —
+they are wherever you saved them, and removing the app never removes what it
+downloaded.
+
+Three things stay behind. They hold your library, your settings, and the list
+of peers Current has learned; delete them and a reinstall starts over as if it
+had never been installed:
+
+```sh
+rm -rf ~/Library/Application\ Support/Current
+rm -f  ~/Library/Preferences/org.current.torrent.plist
+rm -rf ~/Library/Caches/org.current.torrent
+```
+
+If Current was handling your magnet links, macOS hands them back to whatever
+had them before once it's gone — or you can set that yourself in System
+Settings, under Default Applications.
+
 ## Building
 
 Requirements: macOS 26+, Apple Silicon, Xcode 26+, Homebrew.
