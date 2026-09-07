@@ -3,14 +3,14 @@
     <channel>
         <title>Current</title>
         <item>
-            <title>1.1.1</title>
-            <pubDate>Sun, 06 Sep 2026 17:43:56 -0400</pubDate>
+            <title>1.2.0</title>
+            <pubDate>Mon, 07 Sep 2026 11:38:48 -0400</pubDate>
             <link>https://current.alantom.dev</link>
-            <sparkle:version>61</sparkle:version>
-            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+            <sparkle:version>85</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://current.alantom.dev/Current.dmg" length="10360022" type="application/octet-stream" sparkle:edSignature="gucDLajnoe+uJx8BAlIaP1rsvCtJ9KCANwxoT4XLfFP0ynd+7wzGEkoeLF5Z3xXQFv9d+VHaji0P7Fv7iamfAQ=="/>
+            <enclosure url="https://current.alantom.dev/Current.dmg" length="9973175" type="application/octet-stream" sparkle:edSignature="MTn/D/F3l53Ppy2ukK8pYa7jej1fzpatOn+A5oLuZ3fq7PQe/yDSnJWfWYhAzAZIdswzZ/Iz2eVbQNYnwiv2Dg=="/>
         </item>
     </channel>
 </rss>

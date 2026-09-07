@@ -8,7 +8,7 @@ Native macOS · Swift 6 · SwiftUI · libtorrent 2.x · Apple Silicon · macOS 2
 
 ### [Download for Mac →](https://current.alantom.dev)
 
-10.4 MB download, 30 MB installed · signed and notarised by Apple · free and MIT-licensed
+10 MB download, 30 MB installed · signed and notarised by Apple · free and MIT-licensed
 
 <img src="docs/images/library.png" alt="Current's library, with a torrent selected and its details panel open" width="900">
 
