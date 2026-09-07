@@ -33,7 +33,7 @@ utility, and none of them can be restyled far enough to stop.
 
 **Current is a client for a protocol.** It ships no trackers, no indexes and no
 content sources. It has no search, it cannot find anything, and it does not
-suggest anything to you. You bring the link. BitTorrent moves Linux images,
+suggest anything to you. BitTorrent moves Linux images,
 Internet Archive collections, scientific datasets and game patches every day,
 and that is what this is for.
 
