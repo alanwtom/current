@@ -60,9 +60,15 @@
   var SQUARE  = 13;     // the drawn square, so a 4pt gutter — the app's own
   var CORNER  = 2;
 
-  var HELD_ALPHA  = 0.10;   // a piece at rest, outside any pool
-  var FLARE_ALPHA = 0.62;   // the moment it lands
-  var FILL_TARGET = 0.26;   // how much of the field is held at once
+  // Turned down across the board from where this peaked. It had become the
+  // loudest thing on a page whose whole argument is that software should be
+  // quiet — a background you notice is a background that has failed. What is
+  // kept is the shape of it: pieces still land in bursts, the light still
+  // drifts, the pointer still leads it. It just does all of that under its
+  // breath now.
+  var HELD_ALPHA  = 0.075;  // a piece at rest, outside any pool
+  var FLARE_ALPHA = 0.44;   // the moment it lands
+  var FILL_TARGET = 0.20;   // how much of the field is held at once
 
   // The fade-in has to be far shorter than the flare, or a piece spends the
   // brightest part of its life still fading up and the landing never reads.
@@ -70,15 +76,15 @@
   var FLARE   = 1100;
   var RELEASE = 1300;
 
-  var DRIZZLE    = 5;     // pieces a second, always
-  var BURST_SIZE = 22;    // and a run of them arriving together
-  var BURST_RATE = 90;    // pieces a second inside a burst
-  var BURST_GAP  = 420;   // ms of quiet after one, plus up to as much again
+  var DRIZZLE    = 3;     // pieces a second, always
+  var BURST_SIZE = 16;    // and a run of them arriving together
+  var BURST_RATE = 60;    // pieces a second inside a burst
+  var BURST_GAP  = 850;   // ms of quiet after one, plus up to as much again
   var BURST_SPAN = 4;     // cells — how tight a burst lands
 
   // The pointer is the loudest thing in here, not a garnish.
-  var CURSOR_REACH = 320;   // px — how far its light carries
-  var CURSOR_LIFT  = 3.0;   // how much brighter a piece under it goes
+  var CURSOR_REACH = 270;   // px — how far its light carries
+  var CURSOR_LIFT  = 1.7;   // how much brighter a piece under it goes
   var CURSOR_EASE  = 0.075; // per frame — the lag that gives it weight
   var CURSOR_PULL  = 0.16;  // how much a burst prefers to land under it
   var TEXT_SHADE   = 0.24;  // how much of the field survives behind the words
@@ -103,20 +109,20 @@
     // its distance from the middle of the screen. All different, so the layers
     // slide over each other as you move rather than moving as one sheet —
     // which is the whole trick, and it doesn't work if they share a value.
-    { x: 0.22, y: 0.26, ax: 0.05, ay: 0.06, px: 31000, py: 23000, r: 560, hue: 0, a: 0.15, par: 0.05 },
-    { x: 0.34, y: 0.62, ax: 0.13, ay: 0.15, px: 15300, py: 11300, r: 260, hue: 1, a: 0.09, par: 0.14 },
-    { x: 0.12, y: 0.55, ax: 0.10, ay: 0.13, px: 19700, py: 16300, r: 200, hue: 0, a: 0.10, par: 0.20 },
-    { x: 0.50, y: 0.34, ax: 0.14, ay: 0.18, px:  9700, py: 12300, r: 230, hue: 0, a: 0.12, par: 0.11 },
-    { x: 0.81, y: 0.50, ax: 0.13, ay: 0.16, px: 13100, py:  8900, r: 175, hue: 1, a: 0.10, par: 0.24 },
-    { x: 0.71, y: 0.70, ax: 0.17, ay: 0.12, px: 17300, py: 11700, r: 245, hue: 0, a: 0.12, par: 0.08 },
-    { x: 0.91, y: 0.27, ax: 0.09, ay: 0.21, px: 10700, py: 15100, r: 150, hue: 1, a: 0.11, par: 0.28 },
-    { x: 0.67, y: 0.49, ax: 0.20, ay: 0.17, px: 21100, py: 14300, r: 295, hue: 0, a: 0.10, par: 0.17 },
-    { x: 0.87, y: 0.78, ax: 0.11, ay: 0.14, px: 12700, py: 19300, r: 190, hue: 1, a: 0.11, par: 0.13 }
+    { x: 0.22, y: 0.26, ax: 0.05, ay: 0.06, px: 46500, py: 34500, r: 560, hue: 0, a: 0.093, par: 0.05 },
+    { x: 0.34, y: 0.62, ax: 0.13, ay: 0.15, px: 22950, py: 16950, r: 260, hue: 1, a: 0.056, par: 0.14 },
+    { x: 0.12, y: 0.55, ax: 0.10, ay: 0.13, px: 29550, py: 24450, r: 200, hue: 0, a: 0.062, par: 0.20 },
+    { x: 0.50, y: 0.34, ax: 0.14, ay: 0.18, px: 14550, py: 18450, r: 230, hue: 0, a: 0.074, par: 0.11 },
+    { x: 0.81, y: 0.50, ax: 0.13, ay: 0.16, px: 19650, py: 13350, r: 175, hue: 1, a: 0.062, par: 0.24 },
+    { x: 0.71, y: 0.70, ax: 0.17, ay: 0.12, px: 25950, py: 17550, r: 245, hue: 0, a: 0.074, par: 0.08 },
+    { x: 0.91, y: 0.27, ax: 0.09, ay: 0.21, px: 16050, py: 22650, r: 150, hue: 1, a: 0.068, par: 0.28 },
+    { x: 0.67, y: 0.49, ax: 0.20, ay: 0.17, px: 31650, py: 21450, r: 295, hue: 0, a: 0.062, par: 0.17 },
+    { x: 0.87, y: 0.78, ax: 0.11, ay: 0.14, px: 19050, py: 28950, r: 190, hue: 1, a: 0.068, par: 0.13 }
   ];
 
-  var POOL_LIFT = 2.2;    // how much brighter a piece sitting in one is
-  var BREATH    = 0.30;   // how far the whole field rises and falls
-  var BREATH_MS = 5200;   // and how long one breath takes
+  var POOL_LIFT = 1.5;    // how much brighter a piece sitting in one is
+  var BREATH    = 0.16;   // how far the whole field rises and falls
+  var BREATH_MS = 7600;   // and how long one breath takes
 
   // The light buffer's scale, and it is a balance: coarser interpolates the
   // banding away more aggressively, finer puts the dither on smaller pixels so

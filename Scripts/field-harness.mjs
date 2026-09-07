@@ -150,7 +150,19 @@ function step(ms = 16) {
 }
 
 const isBlue = d => d.b - d.r > 40;
-const isLanding = d => d.a > 0.35;
+
+/* "Lit" has to mean *brighter than this field's own resting level*, not
+   brighter than some number I typed in. It was `alpha > 0.35`, and when the
+   whole field was turned down — the flare going from 0.62 to 0.36 — that
+   threshold sat above almost every piece and the harness reported a field with
+   nothing happening in it and twelve-second dead stretches. The animation was
+   fine; the ruler was wrong. */
+const litCount = () => {
+  if (!draws.length) return 0;
+  const mean = draws.reduce((s, d) => s + d.a, 0) / draws.length;
+  const bar = mean * 3.5;
+  return draws.filter(d => d.a > bar).length;
+};
 /* Total alpha drawn inside the words' own box, and outside it, per unit area.
    The field runs under the text now, so the check is no longer "none there" —
    it is "far dimmer there", which is what protects legibility. */
@@ -180,7 +192,7 @@ const lightPath = [];                       // where the field's light sits
 
 for (let i = 0; i < 3750; i++) {            // one minute, every frame
   step();
-  const lit = draws.filter(isLanding).length;
+  const lit = litCount();
 
   // the alpha-weighted centre of the whole field, and its total brightness
   let wsum = 0, wx = 0, wy = 0;

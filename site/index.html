@@ -316,35 +316,21 @@
   #s4:checked ~ .panels #p4{opacity:1; visibility:visible}
 
   /* ---- download ---- */
-  /* The closing card. It was a two-column layout with the button on the left
-     and a table of specs on the right, and it had a hole in the middle of it:
-     the left column's content is three lines tall and the right column's is
-     six, so a third of the card was empty. The table was also saying what the
-     hero already says a screen earlier.
-
-     Centred and stacked instead — one column, everything on the same axis,
-     which is what makes it read as the end of the page rather than another
-     section of it. The facts are one line, the reassurance is one line, and
-     the checksum sits under a hairline because it's for the handful of people
-     who verify a download, not for everyone else. */
-  .download{
-    /* Sized to its contents rather than the content width. Left at full width
-       it was a 1124px panel wrapped around a 44-character column, which reads
-       as an empty box with something in the middle of it rather than a card. */
-    max-width:660px; margin:0 auto;
-    background:var(--canvas); border-radius:20px; padding:52px 40px 40px;
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
-    text-align:center;
+  /* The end of the page is one line.
+     It was a card: icon, heading, button, specs, reassurance, checksum, on a
+     panel with its own border. All of it except the checksum was already said
+     in the hero one screen earlier, so the card was a second, quieter copy of
+     the page's own opening — and the more it was tidied the more obvious that
+     became. A line states the same thing without pretending to be a section. */
+  .dl-line{
+    display:flex; align-items:center; justify-content:center;
+    flex-wrap:wrap; gap:0 2px;
+    font-size:14px; color:var(--secondary);
   }
-  .download img{width:72px; height:72px; border-radius:17px; margin:0 auto}
-  .download h2{margin-top:var(--s5); font-size:1.55rem}
-  .download .sub{margin-top:var(--s2); font-size:14px; color:var(--secondary)}
-  .dl-col{max-width:56ch; margin:0 auto}
-  .download .btn{margin-top:var(--s7)}
-  .dl-facts{margin-top:var(--s5); font-size:13.5px; color:var(--text);
-            font-weight:600; font-variant-numeric:tabular-nums}
-  .dl-facts .dot{color:var(--quaternary); padding:0 7px; font-weight:400}
-  @media (max-width:640px){ .download{padding:40px var(--s6) var(--s7)} }
+  .dl-line img{width:26px; height:26px; border-radius:7px; margin-right:10px}
+  .dl-name{color:var(--text); font-weight:600}
+  .dl-size{font-variant-numeric:tabular-nums}
+  .dl-line .dot{color:var(--quaternary); padding:0 8px}
 
   /* Three columns, not space-between. `space-between` spreads the *gaps*
      evenly, which only centres the middle item when the outer two happen to be
@@ -932,9 +918,8 @@
    END CURRENT DEMO WIDGET — STYLES
    ======================================================================== */
 
-  .dl-note{margin:var(--s4) auto 0; font-size:14px; line-height:1.6; color:var(--secondary)}
   .sha{display:flex; align-items:baseline; justify-content:center; gap:10px; flex-wrap:wrap;
-       margin:36px 0 0; padding-top:20px; border-top:1px solid rgba(255,255,255,.06)}
+       margin:var(--s5) 0 0}
   .sha span{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
             color:var(--secondary); flex:none}
   .sha code{font-family:var(--mono); font-size:11.5px; line-height:1.6; color:var(--secondary);
@@ -1291,23 +1276,17 @@
 
   <section id="download" class="reveal tight">
     <div class="wrap">
-      <div class="download">
-        <img src="./icon.png" width="72" height="72" alt="Current's app icon: four pale blue waves narrowing down to a single dot on a dark blue rounded plate.">
-        <h2>Current</h2>
-        <p class="sub">Free and <a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT&#8209;licensed</a>.</p>
-
-        <a class="btn" href="./Current.dmg" download>
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 1.6v9.2M4.4 7.4 8 11l3.6-3.6M2.2 13.4h11.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Download Current.dmg
-        </a>
-
-        <p class="dl-facts">9.9&nbsp;MB<span class="dot" aria-hidden="true">&middot;</span>macOS&nbsp;26 or later<span class="dot" aria-hidden="true">&middot;</span>Apple&nbsp;Silicon</p>
-        <p class="dl-note dl-col">Drag it to Applications and open it &mdash; signed and notarised by Apple, so no security warnings.</p>
-
-        <p class="sha"><span>SHA&#8209;256</span><code>8d93873a0ffb4c4481a8bd0ed8d8011fb404610274a2ef2005dcb6b086da25be</code></p>
-      </div>
+      <p class="dl-line">
+        <img src="./icon.png" width="26" height="26" alt="">
+        <span class="dl-name">Current</span>
+        <span class="dot" aria-hidden="true">&middot;</span>
+        <a href="./Current.dmg" download>Download Current.dmg</a>
+        <span class="dot" aria-hidden="true">&middot;</span>
+        <span class="dl-size">9.9&nbsp;MB</span>
+        <span class="dot" aria-hidden="true">&middot;</span>
+        <a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT&#8209;licensed</a>
+      </p>
+      <p class="sha"><span>SHA&#8209;256</span><code>8d93873a0ffb4c4481a8bd0ed8d8011fb404610274a2ef2005dcb6b086da25be</code></p>
     </div>
   </section>
 
