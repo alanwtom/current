@@ -1,6 +1,6 @@
 cask "current" do
-  version "1.1.1"
-  sha256 "8d93873a0ffb4c4481a8bd0ed8d8011fb404610274a2ef2005dcb6b086da25be"
+  version "1.2.0"
+  sha256 "ae731ffb6b1e744df48f4f910decc876df3e0ff72c91f80ae8dd321e6f83556a"
 
   # The GitHub release asset rather than the download page, because a cask needs
   # a URL that is pinned to a version and never changes under it. The page's
@@ -14,8 +14,8 @@ cask "current" do
 
   livecheck do
     url "https://current.alantom.dev/appcast.xml"
-    # `&:short_version` because the download URL only carries "1.1.1". Without
-    # it livecheck reads Sparkle's "1.1.1,61" and the audit reports the cask as
+    # `&:short_version` because the download URL only carries "1.2.0". Without
+    # it livecheck reads Sparkle's "1.2.0,85" and the audit reports the cask as
     # out of step with its own update feed.
     strategy :sparkle, &:short_version
   end

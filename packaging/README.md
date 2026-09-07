@@ -80,7 +80,7 @@ like. What is in place:
   Homebrew would consider a self-updated copy out of date and reinstall over
   the top of it.
 - **`strategy :sparkle, &:short_version`** because the appcast advertises
-  `1.1.1,61` (version and build) while the download URL only carries `1.1.1`.
+  `1.2.0,85` (version and build) while the download URL only carries `1.2.0`.
   Without the modifier the audit reports the cask as out of step with its own
   update feed.
 - **The `zap` list is the real set of paths the app writes**, read off a running
@@ -93,8 +93,22 @@ like. What is in place:
 Version and checksum are the only two lines that change:
 
 ```bash
-V=1.1.2
 shasum -a 256 site/Current.dmg | cut -d' ' -f1   # -> sha256
 ```
 
 `brew bump-cask-pr` automates this once the cask is in a tap.
+
+**Nothing does this for you, and that is how it goes stale.** `Scripts/release.sh`
+rebuilds the disk image, signs the appcast and copies both into `site/` — it does
+not touch this file, and the "what's left to do" list it prints at the end did not
+mention it either. So 1.2.0 shipped, the download page and the update feed were
+correct, and the cask sat on 1.1.1 for a while: a fresh `brew install --cask`
+handed people the previous version, which Sparkle then quietly updated out from
+under them. `Scripts/release.sh` prints the reminder now.
+
+**Bump it in two places, and the tap is the one that matters.** This copy is the
+source of truth to read; `alanwtom/homebrew-tap` is what `brew install` actually
+fetches. Send the tap a pull request rather than pushing to its `main` — branch
+protection there lets an admin push straight through, but its CI re-audits the
+cask against the *live* download, which is exactly the check that catches a
+wrong checksum before somebody's install breaks instead of after.

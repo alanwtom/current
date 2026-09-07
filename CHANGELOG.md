@@ -107,7 +107,8 @@ First public release.
 - Keyboard paths for every action, and a command palette.
 - Signed with a Developer ID and notarised by Apple.
 
-[Unreleased]: https://github.com/alanwtom/current/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/alanwtom/current/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/alanwtom/current/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/alanwtom/current/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/alanwtom/current/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/alanwtom/current/releases/tag/v1.0.0
