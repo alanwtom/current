@@ -83,6 +83,44 @@ and a runtime fault in the demo stopped the reveal observer running, which left
 every section below the hero at `opacity: 0` — a blank page. Separate files, and
 a three-second failsafe in `reveal.js`, mean the text shows whatever happens.
 
+## The hero's background
+
+`ribbon.js` draws the dot field behind the headline: three slow waves running
+left to right, with a grid of dots over them that answer with their size and
+colour depending on how close they are to a wave. No dependency, no WebGL —
+about a millisecond of Canvas 2D a frame.
+
+It is the second attempt. The first was bursts of squares over drifting colour,
+and it came out because it was the loudest thing on a page arguing that software
+should be quiet. What keeps this one in: one hue family, a brightest dot that is
+62% opaque and under 3px wide, twenty seconds for a full pass, and a mask that
+ends it before the screenshot. If it ever starts feeling loud, the dial is the
+colour ramp at the top of the file.
+
+Four things it has to keep doing, each of which was a bug first:
+
+- **Nothing on a phone.** Under 720px the hero's text runs wall to wall and
+  there is no empty space for a background, so the dots landed in the words.
+  `.ribbon` is `display:none` there and the script sees the zero-size canvas
+  and never starts.
+- **State the canvas height in CSS.** A canvas is a replaced element, so
+  `height:auto` uses its own intrinsic aspect ratio and the `bottom` of an
+  inset is ignored silently. It was 640px tall on a 511px hero, and since the
+  script then matches its backing store to whatever it measured, the wrong size
+  was self-consistent and looked intentional.
+- **Draw after every resize.** Setting a canvas's width clears it, and there
+  may be no next animation frame to redraw in — Reduce Motion has no loop, and
+  the loop that exists stops when the hero scrolls away or the tab goes to the
+  background.
+- **Draw the first frame synchronously.** A page loaded in a background tab
+  isn't rendered, so `requestAnimationFrame` never fires and an
+  `IntersectionObserver` never reports anything — the same trap `reveal.js` has
+  a failsafe for. Without it the hero visibly fills in when you switch to the
+  tab.
+
+Reduce Motion draws one frame and stops: no timer, and no pointer listener, so
+there is nothing left that could move.
+
 ## Type and motion
 
 Montserrat 500 with about -0.02em tracking for display, DM Sans for body, on a

@@ -155,22 +155,87 @@
   .cap{margin-top:var(--s5); font-size:13px; line-height:1.6; color:var(--secondary); max-width:620px}
   .label{font-size:11px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--secondary)}
 
-  /* There is no background layer, and that is deliberate.
+  /* ---- the background ----------------------------------------------------
+     There is one, and it took two goes.
 
-     This spent a while as an animated field: squares landing in bursts, pools
-     of colour drifting under them, the whole thing following the pointer. It
-     was carefully built and it was wrong — chunks of blocks moving around
-     behind the words, saying nothing about the app and competing with the one
-     thing on the screen that matters. A page whose argument is that software
-     should be quiet cannot have the noisiest hero of the three sites it was
-     copying from.
+     The first was an animated field of squares landing in bursts over pools of
+     drifting colour, following the pointer. It was carefully built and it was
+     wrong — chunks of blocks moving around behind the words, saying nothing
+     about the app and competing with the one thing on the screen that matters.
+     A page whose argument is that software should be quiet cannot have the
+     noisiest hero of the three sites it was copying from. So it came out, and
+     for a while there was nothing here at all.
 
-     `isolation` and the z-index below are still needed: they keep the glow
-     behind the app window (`.demo-host::before`, which sits at z-index -1)
-     from escaping behind the page's own background.
+     What's here now is a dot matrix with three slow ribbons of light moving
+     under it (`ribbon.js`). It is the same idea as the thing that got removed,
+     and the difference is entirely in the restraint: it is one hue family
+     rather than many, the brightest dot is 62% opaque and under 3px wide, a
+     full pass takes about twenty seconds, and it is masked out of existence
+     before the app window starts. It reads as texture behind the headline
+     rather than as an event.
+
+     If it ever starts feeling loud again, the dial is the ramp at the top of
+     `ribbon.js`, not this rule.
+
+     `isolation` and the z-index here do two jobs. They keep the glow behind
+     the app window (`.demo-host::before`, at z-index -1) from escaping behind
+     the page's own background — and they are what puts `main` above the canvas,
+     which sits at z-index 0 with no background of its own so the ground shows
+     through the gaps between the dots.
      ---------------------------------------------------------------------- */
   body{position:relative; isolation:isolate}
   main,footer{position:relative; z-index:1}
+
+  /* The canvas is a child of the hero and sized from it, rather than a fixed
+     height hung off the top of the page. That is what makes it end in the right
+     place: the hero's box stops exactly where the app window starts, so a
+     height of "the hero, plus the header above it" stays correct when the
+     headline rewraps to two lines, or four. A hard-coded height was right at
+     1280px wide and wrong at every other size.
+
+     It has to be an explicit height rather than the obvious `bottom:0`, for
+     the reason in the next comment. */
+  .hero{position:relative; isolation:isolate}
+  .hero > .wrap{position:relative; z-index:1}
+  /* The height is stated, not inferred, and that is not a style choice.
+     A canvas is a replaced element, so `height:auto` takes its *intrinsic*
+     aspect ratio and the `bottom` of an inset is ignored outright — no error,
+     no warning. `inset:-56px 0 0 0` therefore gave a canvas 640px tall on a
+     511px hero, and because the script then resizes the backing store to match
+     what it measured, the wrong size was self-consistent and looked deliberate.
+     It was only visibly wrong at window sizes nobody had looked at yet.
+
+     56px is the header: 8px of padding above a 48px pill. */
+  .ribbon{
+    position:absolute; top:-56px; left:0; z-index:0;
+    width:100%; height:calc(100% + 56px);
+    /* Never the thing that gets clicked: it lies under the headline and the
+       download button, which is also why ribbon.js listens for the pointer on
+       the window rather than on the canvas. */
+    pointer-events:none;
+    /* A mask, not a gradient laid over the top: the page's ground has to show
+       through the holes between the dots, and an overlay would fill them in.
+
+       Fades in at both ends. The bottom is obvious — the screenshot below is
+       the thing being looked at down there, and dots crowding its corners
+       would read as dirt on the page. The top matters just as much and is less
+       obvious: the canvas reaches up behind the header, and a ribbon passing
+       through `Source` and `Download` makes the nav look like it needs
+       cleaning. So the field starts below the links, not behind them. */
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 17%,#000 68%,transparent 100%);
+            mask-image:linear-gradient(to bottom,transparent 0,#000 17%,#000 68%,transparent 100%);
+  }
+
+  /* Not on a phone, and this is the whole reason the desktop version works.
+     The field lives in the empty right-hand third of the hero — the headline
+     is 15ch wide and there is nothing beside it. On a narrow screen the text
+     runs wall to wall and the hero has no empty space at all, so the dots land
+     in the middle of the words. There is nowhere to put it, so it doesn't go
+     anywhere. ribbon.js sees the zero-size canvas and never starts its loop.
+
+     720px is the page's existing threshold for "this is a phone" — the same
+     one that crops the screenshots down to the part that's readable. */
+  @media (max-width:720px){ .ribbon{display:none} }
 
   /* ---- hero ---- */
   .hero{padding:72px 0 40px}
@@ -964,6 +1029,7 @@
 <main id="main">
 
   <div class="hero" id="top">
+    <canvas class="ribbon" id="ribbon" aria-hidden="true"></canvas>
     <div class="wrap">
       <h1 class="rise">Torrenting is a background activity.</h1>
       <p class="lede rise-2">A native Mac torrent client that stays out of the way. Free and open source.</p>
@@ -1310,6 +1376,7 @@
 
 
 
+<script src="./ribbon.js" defer></script>
 <script src="./nav.js" defer></script>
 <script src="./reveal.js" defer></script>
 <script src="./demo.js" defer></script>
