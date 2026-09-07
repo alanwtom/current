@@ -5,24 +5,38 @@
 //   swift Scripts/make-dmg-window.swift art   <staging-folder>
 //   swift Scripts/make-dmg-window.swift store <mounted-volume>
 //
-// `art` renders the background into <staging-folder>/.background/, so the disk
-// image is sized with the artwork already inside it. `store` writes the Finder
-// window itself — size, position, icon size, where the two icons sit, which
-// picture is behind them — onto a mounted read-write image.
+// `art` renders the picture into <staging-folder>/.background/, so the disk
+// image is sized with it already inside. `store` writes the Finder window
+// itself — size, position, icon size, where the two icons sit, which picture is
+// behind them — onto a mounted read-write image.
 //
-// The picture is a seascape at dusk, and the whole thing is built out of `~`,
-// `≈`, `-` and `·` in a monospaced font: an empty sky at the top where the two
-// icons stand, the last of the light along the horizon, and a sea of wave marks
-// receding towards it. Between the app and the Applications folder runs a
-// current of the same marks, ending in an arrowhead, which is the app's own
-// language doing the job the usual grey arrow does.
+// **The picture is one thing: a current running from the app into the
+// Applications folder.** A run of `~` and `≈` marks in accent blue, ending in
+// an arrowhead — the app's own language for "this is happening", doing the job
+// the usual big grey arrow does. Everything else is transparent, so the window
+// is Finder's own: its background, its item names, in whichever appearance the
+// machine is set to.
 //
-// **The artwork and the geometry live in one file on purpose.** They are one
-// design: the current has to land exactly where Finder puts the two icons, and
-// the horizon has to land exactly where Finder draws their names. Split across
-// two scripts they drift the first time either is nudged, and the failure is
-// silent — the picture still looks fine on its own, it just stops agreeing with
-// the window.
+// It used to be a full seascape at dusk with the two icons standing against the
+// sky and two lines of instructions along the bottom. That is gone deliberately,
+// and one thing went with it worth knowing about: a line saying to eject the
+// disk after dragging, because **an app run from inside the image looks
+// completely fine and silently cannot ever update itself** — Sparkle can't write
+// to a read-only volume. Nothing warns about that now. If it ever turns into a
+// support question, that is the answer, and the window is where it used to be
+// said.
+//
+// Losing the artwork also removed the hardest constraint in here. Finder draws
+// the item names in the system text colour — black in Light Mode, white in Dark
+// — straight over the background, and we get no say in it, so a picture behind
+// them had to hit one tone that both could be read against. On transparency the
+// problem doesn't exist: the names sit on Finder's own background, which is
+// already the right colour for the appearance it's in.
+//
+// **The picture and the geometry still live in one file on purpose.** The
+// current has to start and end exactly where Finder puts the two icons, and the
+// failure is silent if they drift — the arrow still looks fine on its own, it
+// just stops pointing at anything.
 //
 // ## Why this writes .DS_Store by hand
 //
@@ -38,7 +52,7 @@
 // view options on the volume root, and an icon position for each of the two
 // items. See `writeStore` for the layout.
 //
-// ## Four things Finder does that you would not guess
+// ## Five things Finder does that you would not guess
 //
 // Every one of these was found by rendering something, mounting it and looking,
 // and every one fails silently — the window just comes up wrong, or plain
@@ -51,16 +65,22 @@
 //   — `tiffutil -cathidpicheck`, and a single page tagged 144 dpi — are read
 //   back correctly by AppKit and ignored by Finder. So the artwork is 1x, and
 //   slightly soft on a Retina display, and there is no lever here to pull.
+// - **Transparency composites over Finder's own background,** which is what lets
+//   the picture be one arrow and nothing else. Worth stating because the
+//   plausible alternative — Finder flattening the image onto white — would look
+//   correct in Light Mode and put a white slab behind the icons in Dark, and
+//   whoever changes this next will be running in one appearance or the other.
 // - **`backgroundType` is 2 for a picture and 1 for a colour.** With 2 and a
 //   picture Finder cannot resolve, it draws neither — not even the colour also
 //   stored beside it — so a broken reference looks exactly like a default
-//   window. Testing with `1` and a garish red is the quickest way to prove the
-//   plist is being read at all.
+//   window. Since the picture is now *mostly* transparent, a resolve failure and
+//   a success look far more alike than they used to: the tell is the arrow.
 // - **`backgroundImageAlias` will not take a bookmark.** See `aliasRecord`.
-// - **The title bar is 32pt, not 28.** So the artwork is drawn 28pt taller than
-//   the window's content and clipped, and nothing important goes near the
-//   bottom edge: if the assumption is ever wrong in the other direction, a short
-//   picture leaves a strip of Finder's own white along the bottom.
+// - **The image's top-left corner is the top-left of the window's *content*,**
+//   under the title bar rather than behind it — so a y in the picture is the same
+//   y Finder puts an icon at, which is why `L` has one set of numbers for both.
+//   It is drawn a little taller than the content and clipped, out of caution
+//   rather than need now that the bottom of it is empty.
 
 import AppKit
 import Foundation
@@ -71,8 +91,14 @@ import Foundation
 // Everything is in points, top-left origin, matching Finder's icon view.
 
 enum L {
-    /// The window's content area — and so the visible part of the artwork.
-    static let content = CGSize(width: 640, height: 424)
+    /// The window's content area — and so the visible part of the picture.
+    ///
+    /// **Sized to the two icons and nothing else**, now that there is nothing
+    /// else. It was 424 tall to make room for a seascape and two lines of
+    /// instructions below the icons; with those gone the same window was two
+    /// thirds empty, which reads as a layout that failed rather than a spare
+    /// one. The icons and their names are vertically centred in what's left.
+    static let content = CGSize(width: 640, height: 300)
 
     /// Drawn but clipped. See the note at the top of the file.
     static let overdraw: CGFloat = 28
@@ -84,7 +110,7 @@ enum L {
     /// A Finder window with no toolbar. Only used to turn the content height we
     /// want into the frame height `.DS_Store` stores. **Measured, not assumed:**
     /// the obvious guess is 28, it is 32, and being wrong by four points slides
-    /// the whole picture up and leaves a strip of Finder's white along the bottom.
+    /// the whole picture relative to the icons Finder places over it.
     static let titleBar: CGFloat = 32
 
     /// Where the window opens, measured from the bottom-left of the screen the
@@ -97,68 +123,29 @@ enum L {
 
     /// The two icons, and the line the current runs along between them. Finder
     /// centres the icon *image* on these, with the name below.
-    static let app = CGPoint(x: 168, y: 186)
-    static let drop = CGPoint(x: 472, y: 186)
-    static var waterline: CGFloat { app.y }
-
-    /// Where Finder writes the two names — measured off a render, not guessed:
-    /// the text lands at y 256–268 for a 112pt icon at 12pt text. Wave marks are
-    /// held back here so the names have something quiet to sit on.
-    static let labelBand: CGFloat = 262
-    static let labelHeight: CGFloat = 30
-    static let labelWidth: CGFloat = 154
-
-    /// The two lines of words, down on the wet sand where the tone is dark
-    /// enough for light grey text.
-    static let captionTop: CGFloat = 368
-    static let captionBottom: CGFloat = 392
-
-    /// The horizon: sky above it, water below, and the brightest tone in the
-    /// picture along it.
     ///
-    /// **This is placed by the item names, not by taste.** It has to be light
-    /// where Finder writes them and dark everywhere the picture's own words are,
-    /// so it sits on `labelBand` and the glow is wide enough to cover the whole
-    /// height of the text. Everything else in the composition follows from that
-    /// one constraint — which is the useful kind of constraint, because a
-    /// horizon is the one thing that is *allowed* to be the brightest line in a
-    /// seascape.
-    static let horizon: CGFloat = 260
-    static let glowWidth: CGFloat = 74
+    /// The y is what centres the pair in the window: an icon and its name
+    /// together stand about 138pt tall, so in a 300pt window the block starts at
+    /// 81 and the icon's middle lands 56 below that. Change `content.height` and
+    /// this has to move with it, or the two icons sit high in an empty window.
+    static let app = CGPoint(x: 168, y: 137)
+    static let drop = CGPoint(x: 472, y: 137)
 
-    /// How lit the water or sky is at a given height: 1 along the horizon,
-    /// falling away above and below. Wave marks read their colour off this, so
-    /// ripples go dark on the lit water and pale out in the dark.
-    static func litness(_ y: CGFloat, driftedBy drift: CGFloat = 0) -> CGFloat {
-        bell(y, horizon + drift, glowWidth)
-    }
-
-    /// Sky at the top, the glow at the horizon, water darkening to the bottom.
-    static let seascape: CGGradient = {
-        let stops: [(y: CGFloat, colour: NSColor)] = [
-            (0, P.skyTop),
-            (168, P.skyMid),
-            (243, P.skyHorizon),
-            (259, P.glow),
-            (286, P.waterLit),
-            (350, P.waterDeep),
-            (452, P.waterFloor),
-        ]
-        let height = stops.last!.y
-        return CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: stops.map { $0.colour.cgColor } as CFArray,
-            locations: stops.map { $0.y / height }
-        )!
-    }()
+    /// The height the current runs along — the icons' own middle, so it comes
+    /// out of one and into the other rather than passing under them.
+    static var waterline: CGFloat { app.y }
 }
 
 // MARK: - Palette
 //
-// The same colours as the app icon and the website: deep blue ink, one accent.
-// The sea is grey-blue and stays that way — in this app colour identifies
-// something rather than decorating it, so the only coloured things in here are
-// the current and the drop target, and they are saying the same sentence.
+// One colour. In this app accent means "this is happening, or this is where it
+// goes", which is exactly what the arrow is saying, and there is nothing else in
+// the picture to give a colour to.
+//
+// It has to work on Finder's background in *both* appearances — near-white in
+// Light Mode, near-black in Dark — which a mid-tone saturated blue does and a
+// pale or a dark one wouldn't. This is the app's accent unchanged, which is the
+// reason it lands in the middle of that range.
 
 enum P {
     static func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
@@ -170,55 +157,7 @@ enum P {
         )
     }
 
-    // Dusk, top to bottom: night sky, the last of the light on the horizon,
-    // then water getting darker as it comes towards you.
-    static let skyTop = rgb(0x04060E)
-    static let skyMid = rgb(0x0C1428)
-    static let skyHorizon = rgb(0x3E4E71)
-    static let glow = rgb(0x717F98)      // the horizon itself — see L.horizon
-    static let waterLit = rgb(0x475677)
-    static let waterDeep = rgb(0x111A31)
-    static let waterFloor = rgb(0x05080F)
-
-    static let foam = rgb(0xC6D4EC)      // wave marks on the dark water
-    static let ripple = rgb(0x16203A)    // and the same marks on the lit water
-    static let accent = rgb(0x3FA9FF)    // the current, and the drop target
-    static let captionStrong = rgb(0xC2CBDD)
-    static let captionQuiet = rgb(0x77839C)
-}
-
-// MARK: - Small helpers
-
-/// Deterministic, so re-running the script produces the same picture. A picture
-/// that reshuffles every build makes a one-line change look like a redesign.
-struct RNG {
-    private var s: UInt64
-    init(_ seed: UInt64) { s = seed }
-    mutating func next() -> UInt64 {
-        s = s &* 6364136223846793005 &+ 1442695040888963407
-        return s >> 11
-    }
-    mutating func unit() -> CGFloat { CGFloat(next() % 100_000) / 100_000 }
-    mutating func int(_ n: Int) -> Int { n <= 0 ? 0 : Int(next() % UInt64(n)) }
-    mutating func pick<T>(_ xs: [T]) -> T { xs[int(xs.count)] }
-}
-
-func bell(_ x: CGFloat, _ centre: CGFloat, _ width: CGFloat) -> CGFloat {
-    let t = (x - centre) / width
-    return exp(-t * t)
-}
-
-func smoothstep(_ edge0: CGFloat, _ edge1: CGFloat, _ x: CGFloat) -> CGFloat {
-    let t = min(max((x - edge0) / (edge1 - edge0), 0), 1)
-    return t * t * (3 - 2 * t)
-}
-
-func radial(_ colour: NSColor, _ peak: CGFloat) -> CGGradient {
-    CGGradient(
-        colorsSpace: CGColorSpaceCreateDeviceRGB(),
-        colors: [colour.withAlphaComponent(peak).cgColor, colour.withAlphaComponent(0).cgColor] as CFArray,
-        locations: [0, 1]
-    )!
+    static let accent = rgb(0x3FA9FF)
 }
 
 // MARK: - Text
@@ -237,10 +176,10 @@ func draw(
     s.draw(at: CGPoint(x: p.x - box.width / 2, y: p.y - box.height / 2))
 }
 
-/// The sea is drawn one character at a time, so each mark needs to land with its
-/// *ink* centred on the wave row — not its line box, which is mostly air above a
-/// tilde. This nudge is that difference, as a fraction of the font size, and it
-/// was set by looking at a render rather than by reading a font metric.
+/// The current is drawn one character at a time, so each mark needs to land with
+/// its *ink* on the line — not its line box, which is mostly air above a tilde.
+/// This nudge is that difference, as a fraction of the font size, and it was set
+/// by looking at a render rather than by reading a font metric.
 let inkNudge: CGFloat = 0.30
 
 func drawMark(_ ch: String, size: CGFloat, colour: NSColor, centre: CGPoint) -> CGFloat {
@@ -253,211 +192,12 @@ func drawMark(_ ch: String, size: CGFloat, colour: NSColor, centre: CGPoint) -> 
 
 // MARK: - The picture
 
-/// How far the horizon has wandered from dead straight at a given x.
-///
-/// Two slow sines beating against each other. A ruler-straight line of light
-/// reads as a design element someone left in; a wandering one reads as water,
-/// and it costs one line.
-func horizonDrift(_ x: CGFloat) -> CGFloat {
-    5 * sin(x / 176 + 0.7) + 2.5 * sin(x / 63)
-}
-
 func drawBackground(into ctx: CGContext) {
     let W = L.canvas.width, H = L.canvas.height
 
-    // ----------------------------------------------------------- the seascape
-    //
-    // Night sky at the top, the last of the light along the horizon, water
-    // getting darker as it comes towards you. Drawn in narrow vertical slices so
-    // the horizon can wander with `horizonDrift` rather than lying flat.
-    //
-    // **The tone along the horizon is calculated, not picked.** It is the one
-    // part of this picture with a correct answer: Finder draws the two item
-    // names in the system text colour — black in Light Mode, white in Dark —
-    // straight over whatever is here, and we get no say in it. One tone has to
-    // work against both, and the best any tone can do is where the two contrast
-    // ratios meet: (L+0.05)/0.05 = 1.05/(L+0.05), so L = 0.179 and both come out
-    // at 4.6:1. `P.glow` is tuned so the pixels under the two names measure
-    // 0.17–0.19, which lands every name in both appearances at 4.4:1 or better.
-    //
-    // Lighten it and Dark Mode loses the names; darken it and Light Mode does.
-    // Nothing tests this, so if you touch `P.glow`, re-render and measure the
-    // pixels where the names actually land.
-    let slice: CGFloat = 2
-    var bx: CGFloat = 0
-    while bx < W {
-        ctx.saveGState()
-        ctx.clip(to: CGRect(x: bx, y: 0, width: slice, height: H))
-        let drift = horizonDrift(bx + slice / 2)
-        ctx.drawLinearGradient(
-            L.seascape,
-            start: CGPoint(x: 0, y: drift),
-            end: CGPoint(x: 0, y: H + drift),
-            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-        )
-        ctx.restoreGState()
-        bx += slice
-    }
-
-    // Two glows, one behind each icon. The app's is the light it is standing in
-    // front of: both it and the sky behind it are deep navy, and without this
-    // its top half half disappears. The folder's is accent, because that is the
-    // colour this app uses for the place a thing is going.
-    for (centre, colour, peak, radius) in [
-        (L.app, P.skyHorizon, CGFloat(0.30), CGFloat(122)),
-        (L.drop, P.accent, CGFloat(0.22), CGFloat(116)),
-    ] {
-        ctx.saveGState()
-        ctx.translateBy(x: centre.x, y: centre.y + 4)
-        ctx.scaleBy(x: 1, y: 0.82)
-        ctx.drawRadialGradient(
-            radial(colour, peak),
-            startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: radius, options: []
-        )
-        ctx.restoreGState()
-    }
-
-    // -------------------------------------------------------------- the sea
-    //
-    // Everything below the horizon, in perspective: at the horizon the marks are
-    // tiny and packed together, and they grow and spread as the water comes
-    // forward. The row *spacing* is what does the work — evenly spaced rows read
-    // as a pattern, geometrically spaced ones read as distance. The sky above
-    // stays empty on purpose; the icons and the current are up there, and they
-    // need the quiet.
-    //
-    // Each mark takes its colour from how lit the water is under it: dark
-    // ripples on the bright water near the horizon, pale foam out on the dark
-    // water below. Everything in one colour flattened the whole sea into a
-    // texture; the inversion is what gives it depth.
-    var rng = RNG(0x0C17_7E17)
-    var rows: [(y: CGFloat, size: CGFloat)] = []
-    var y: CGFloat = L.horizon + 3
-    var gap: CGFloat = 3.4
-    while y < H + 24 {
-        rows.append((y: y, size: min(gap * 2.1, 26)))
-        y += gap
-        gap *= 1.155
-    }
-
-    for row in rows {
-        // Nearly nothing at the horizon, then ripples, then loose water.
-        let near = smoothstep(L.horizon, H, row.y)
-        let glyphs: [String] = near < 0.16
-            ? ["-", "~", "-", "-", "~", "-"]
-            : (near < 0.52 ? ["~", "~", "≈", "~", "-", "~"] : ["~", "~", "·", "~", "≈", "~"])
-
-        let amp = min(row.size * 0.22, 6)
-        let wavelength = 120 + rng.unit() * 140
-        let phase = rng.unit() * .pi * 2
-
-        var x = -30 - rng.unit() * 50
-        while x < W + 40 {
-            let advance = row.size * 0.60
-            // Runs, not scatter. Single marks with gaps between them read as
-            // noise; a run of them reads as the crest of something.
-            let run = 2 + rng.int(6)
-            // Each run rides a little above or below its row, so the sea does
-            // not lay itself out in visible courses like brickwork.
-            let jitter = (rng.unit() - 0.5) * min(row.size * 0.30, 5)
-            for _ in 0..<run {
-                let yy = row.y + jitter + amp * sin(x / wavelength * .pi * 2 + phase)
-                let lit = L.litness(yy, driftedBy: horizonDrift(x))
-
-                var a = (0.14 + 0.22 * (1 - lit)) * (0.78 + 0.22 * rng.unit())
-                // Quiet at the edges, so the sea doesn't collide with the
-                // window frame, and quiet as the water reaches the bottom.
-                a *= 0.62 + 0.38 * bell(x, W / 2, 340)
-                a *= 1 - smoothstep(L.content.height - 64, L.content.height + 6, row.y)
-
-                // Hold back where Finder will draw the two item names, and
-                // across the water the picture's own words sit on. Both
-                // clearings fade rather than stop: a hard-edged one leaves a
-                // visible empty rectangle in the middle of the sea.
-                for centre in [L.app.x, L.drop.x] {
-                    let near = bell(x, centre, L.labelWidth / 2) * bell(yy, L.labelBand, L.labelHeight)
-                    a *= 1 - 0.90 * near
-                }
-                let words = max(bell(yy, L.captionTop, 20), bell(yy, L.captionBottom, 20))
-                a *= 1 - 0.88 * words
-
-                if a > 0.012 {
-                    let colour = lit > 0.5
-                        ? P.ripple.withAlphaComponent(a * lit)
-                        : P.foam.withAlphaComponent(a * (1 - lit * 0.8))
-                    _ = drawMark(
-                        rng.pick(glyphs), size: row.size, colour: colour,
-                        centre: CGPoint(x: x, y: yy)
-                    )
-                }
-                x += advance
-            }
-            x += advance * CGFloat(1 + rng.int(2))
-        }
-    }
-
-    // ------------------------------------------------------------- the sky
-    //
-    // Long, flat, very faint runs of dashes up where there is nothing else.
-    // The top third of the window is sky the icons stand against, and it wants
-    // texture rather than incident — anything with contrast up here competes
-    // with the one thing this window is asking someone to do.
-    var cloud = RNG(0xC10D_5)
-    for band in 0..<5 {
-        let cy = 34 + CGFloat(band) * 22 + cloud.unit() * 8
-        var kx = -40 - cloud.unit() * 80
-        while kx < W + 40 {
-            let size: CGFloat = 13 + cloud.unit() * 5
-            let advance = size * 0.60
-            let run = 6 + cloud.int(16)
-            for _ in 0..<run {
-                var a = 0.07 * (0.5 + 0.5 * cloud.unit())
-                a *= 0.35 + 0.65 * bell(kx, W / 2 + 60, 300)
-                _ = drawMark(
-                    cloud.unit() < 0.25 ? "~" : "-", size: size,
-                    colour: P.foam.withAlphaComponent(a),
-                    centre: CGPoint(x: kx, y: cy)
-                )
-                kx += advance
-            }
-            kx += advance * CGFloat(2 + cloud.int(6))
-        }
-    }
-
-    // ---------------------------------------------------------- the current
-    //
-    // The one thing in the window that is trying to say something: a run of
-    // wave marks flowing out of the app and into the folder, brightening as it
-    // arrives. It is the app's own language for "this is happening" — the icon
-    // is four of these stacked — doing the job the usual big grey arrow does.
-    let streamStart = L.app.x + L.iconSize / 2 + 16
-    let streamEnd = L.drop.x - L.iconSize / 2 - 22
-    var cx = streamStart
-    var stream = RNG(0x57_2EAA)
-    while cx < streamEnd {
-        let t = (cx - streamStart) / (streamEnd - streamStart)
-        let size: CGFloat = 19
-        let yy = L.waterline + sin(t * .pi * 2.2) * 3.4
-        let a = 0.30 + 0.55 * t
-        let w = drawMark(
-            stream.unit() < 0.22 ? "≈" : "~", size: size,
-            colour: P.accent.withAlphaComponent(a),
-            centre: CGPoint(x: cx, y: yy)
-        )
-        cx += w * 1.02
-    }
-    // It arrives as an arrowhead, because at this point the picture should stop
-    // being poetic and start being an instruction.
-    _ = drawMark(">", size: 23, colour: P.accent.withAlphaComponent(0.92),
-                 centre: CGPoint(x: streamEnd + 6, y: L.waterline))
-
-    // ------------------------------------------------------- the drop target
-    //
-    // Accent light pooling around the folder, because in this app accent means
-    // "this is happening, or this is where it goes". The first version of this
-    // was the dashed rounded box every installer draws; against soft water it
-    // read as a stray rectangle someone forgot to delete, and the arrow was
-    // already doing the pointing.
+    // Nothing fills the canvas. It stays transparent and Finder's own
+    // background shows through, which is the whole design — see the top of the
+    // file. Everything below draws the one thing that is in the picture.
 
     // ------------------------------------------------------------- the ruler
     //
@@ -477,20 +217,50 @@ func drawBackground(into ctx: CGContext) {
             draw("\(gy)", size: 9, colour: .systemGreen, at: CGPoint(x: 16, y: CGFloat(gy) + 10))
         }
     }
-    // ------------------------------------------------------------- the words
+
+    // ---------------------------------------------------------- the current
     //
-    // Two lines: what to do, then the one thing people get wrong. Running the
-    // app from the disk image works well enough to look fine and quietly breaks
-    // updates, because Sparkle cannot write to a read-only volume — so it is
-    // worth a sentence here rather than a support email later.
-    draw(
-        "DRAG CURRENT INTO APPLICATIONS", size: 11, weight: .semibold,
-        colour: P.captionStrong, at: CGPoint(x: L.content.width / 2, y: L.captionTop), tracking: 1.9
-    )
-    draw(
-        "Then eject the disk — Current can't update itself from here.", size: 11.5,
-        colour: P.captionQuiet, at: CGPoint(x: L.content.width / 2, y: L.captionBottom)
-    )
+    // A run of wave marks flowing out of the app and into the folder, ending in
+    // an arrowhead. It is the app's own language for "this is happening" — the
+    // icon is four of these stacked — doing the job the usual big grey arrow
+    // does, and it is now the only thing in the window that isn't Finder's.
+    //
+    // It starts and ends against the icons rather than at fixed x's, so moving
+    // either icon moves the arrow with it. The gap at the head is bigger than
+    // the one at the tail to leave the arrowhead somewhere to sit.
+    let streamStart = L.app.x + L.iconSize / 2 + 16
+    let streamEnd = L.drop.x - L.iconSize / 2 - 22
+
+    var cx = streamStart
+    var index = 0
+    while cx < streamEnd {
+        let t = (cx - streamStart) / (streamEnd - streamStart)
+
+        // A slow rise and fall, so the run reads as moving water rather than a
+        // dashed line. One full wave across the gap, three points either way.
+        let yy = L.waterline + sin(t * .pi * 2.2) * 3.4
+
+        // Brightening as it arrives, but starting well up: the earlier version
+        // began at 0.30 alpha, which was right against dark water and is
+        // nearly invisible on Finder's near-white background in Light Mode.
+        let a = 0.55 + 0.45 * t
+
+        // Every fourth mark is a double, which is the app icon's own rhythm.
+        // Deterministic on the index rather than seeded randomness — with only
+        // a dozen marks left, random spacing read as a mistake rather than as
+        // texture, and this way the picture is identical on every build.
+        let w = drawMark(
+            index % 4 == 2 ? "≈" : "~", size: 19,
+            colour: P.accent.withAlphaComponent(a),
+            centre: CGPoint(x: cx, y: yy)
+        )
+        cx += w * 1.02
+        index += 1
+    }
+
+    // It arrives as an arrowhead, at full strength, because this is the part
+    // that is actually an instruction.
+    _ = drawMark(">", size: 23, colour: P.accent, centre: CGPoint(x: streamEnd + 6, y: L.waterline))
 }
 
 // MARK: - Rendering
@@ -502,8 +272,8 @@ func render(scale: CGFloat) -> NSBitmapImageRep {
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
     )!
-    // Points, not pixels, and reported to AppKit as such, so the @2x rep pairs
-    // with the @1x one in a single TIFF instead of being a second picture.
+    // Points, not pixels, and reported to AppKit as such — so the size that
+    // comes back out of the file is the size the geometry in `L` assumes.
     rep.size = L.canvas
 
     let nsCtx = NSGraphicsContext(bitmapImageRep: rep)!
@@ -532,18 +302,25 @@ func writeArt(to staging: String) throws {
     // oversight and there is no fix for it — see the note at the top of the
     // file: Finder draws this picture one point per pixel and ignores both
     // documented ways of pairing an @1x and an @2x image in one file. A
-    // two-page TIFF here doesn't get you a sharp window, it gets you the
-    // top-left quarter of the artwork at four times the size.
+    // two-page image here doesn't get you a sharp window, it gets you the
+    // top-left quarter of the picture at four times the size.
+    //
+    // **PNG, not TIFF, and the reason is the download.** TIFF stores this
+    // uncompressed, so the old seascape cost 1.1 MB and this arrow on
+    // transparency would cost the same — a megabyte of identical empty pixels,
+    // inside a file people download. PNG collapses it to a few KB. Finder
+    // reads either, and neither format is what the alias record cares about.
     let art = render(scale: 1)
-    let out = dir.appendingPathComponent("background.tiff")
-    try art.representation(using: .tiff, properties: [:])!.write(to: out)
+    let out = dir.appendingPathComponent("background.png")
+    try art.representation(using: .png, properties: [:])!.write(to: out)
 
     // Cheap proof the picture comes back at the size the geometry assumes, so
     // a canvas change that AppKit quietly rounds can't slide the whole window.
     guard let check = NSImage(contentsOf: out), check.size == L.canvas
-    else { throw Err("the TIFF came back \(NSImage(contentsOf: out)?.size.debugDescription ?? "unreadable"), not \(L.canvas)") }
+    else { throw Err("the picture came back \(NSImage(contentsOf: out)?.size.debugDescription ?? "unreadable"), not \(L.canvas)") }
 
-    print("  background \(Int(L.canvas.width))×\(Int(L.canvas.height)) @1x → \(out.path)")
+    let kb = (try? Data(contentsOf: out).count).map { $0 / 1024 } ?? 0
+    print("  background \(Int(L.canvas.width))×\(Int(L.canvas.height)) @1x, \(kb) KB → \(out.path)")
 }
 
 // MARK: - The Finder window (.DS_Store)
@@ -710,9 +487,9 @@ func iloc(_ p: CGPoint) -> [UInt8] {
 
 func writeStore(volume: String, appName: String) throws {
     let vol = URL(fileURLWithPath: volume)
-    let background = vol.appendingPathComponent(".background/background.tiff")
+    let background = vol.appendingPathComponent(".background/background.png")
     guard FileManager.default.fileExists(atPath: background.path) else {
-        throw Err("no .background/background.tiff on \(volume) — run the `art` step first")
+        throw Err("no .background/background.png on \(volume) — run the `art` step first")
     }
 
     // Finder stores a reference to the picture, not the picture itself.

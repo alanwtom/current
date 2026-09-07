@@ -20,12 +20,12 @@ notes, so this file is the single place release notes are written.
   Still no telemetry, and there isn't going to be any. Nothing is sent unless
   you choose to file the report.
 
-- **A designed install window.** Double-clicking the download now opens
-  something built for the job — the app, the Applications folder, and a current
-  running between them — instead of the plain white window every unpackaged Mac
-  app opens. It also says to eject the disk afterwards, which matters: an app
-  run from inside the disk image looks fine and quietly can't ever update
-  itself.
+- **A laid-out install window.** Double-clicking the download now opens a
+  window sized for the job, with the app on the left, the Applications folder on
+  the right, and a blue current running between them — instead of two icons
+  dropped in a default window at whatever size Finder felt like. It follows
+  your Mac's light or dark appearance, because everything except the arrow is
+  transparent.
 
 - **Uninstall instructions**, on the download page and in the README. Three
   files stay behind when you drag Current to the Trash; now they're written

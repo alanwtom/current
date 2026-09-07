@@ -73,34 +73,44 @@ Nothing here is optional; this is the difference between a build and a product.
       which is the first thing anyone sees. Credentials live in a keychain
       profile, never in the repo.
 - [x] **Package as a DMG** with an Applications symlink so the install is a
-      drag, and a designed install window rather than the default one:
-      `Scripts/make-dmg-window.swift` draws the background and sets the window
-      size, icon positions and icon size, and the window says in words to drag
-      the app across and then eject the disk. That last line is the point of it
-      — an app run from inside the image looks fine and silently cannot update
-      itself, because Sparkle can't write to a read-only volume.
+      drag, and a laid-out install window rather than the default one:
+      `Scripts/make-dmg-window.swift` sets the window size, the icon size and
+      where the two icons sit, and draws the one thing in the picture — a
+      current of `~` marks running out of the app and into the Applications
+      folder, ending in an arrowhead. Everything else is transparent, so the
+      window is Finder's own background and Finder's own item names, in
+      whichever appearance the machine is set to.
 
       It writes `.DS_Store` itself rather than driving Finder over AppleScript,
-      so a release never waits on an Automation permission prompt. Two things in
-      there are measured against the running system and will silently stop
-      matching if macOS changes them: the title bar is 32pt, and the tone under
-      the item names is picked so black text (Light Mode) and white text (Dark
-      Mode) both clear 4.4:1. Re-render and look at it after a macOS upgrade.
+      so a release never waits on an Automation permission prompt.
 
-      Two things about it that need a person, not a test:
+      **Verified in Finder, which is the only place it can be.** A finished
+      image mounts, opens at exactly 640×332, composites the arrow over
+      Finder's background, and lands both icons where the picture expects them.
+      Every way this fails is silent — a plain default window, or icons sitting
+      somewhere the arrow isn't pointing — so re-check it by eye after a macOS
+      upgrade rather than trusting that it still works. Light Mode is confirmed
+      on a real window; Dark Mode has only been checked by compositing the
+      picture over Finder's dark background, and the accent blue reads clearly
+      on both.
 
-      - **Open a finished image in Finder and actually look at it**, in both
-        light and dark mode. Everything up to that point can be checked
-        automatically and is — the artwork renders, the volume mounts as
-        `/Volumes/Current`, the window state writes, and it survives the
-        conversion to a compressed image. Whether *Finder honours it* is the one
-        part no script here can see, and every way it fails, fails silently: a
-        window that comes up plain white, or default, or with the icons landing
-        somewhere the picture isn't expecting them.
-      - **The artwork is about 2 MB of the download.** The background picture
-        and the volume icon are real files inside the image. The README and the
-        download page both state a size, so re-check it against what the release
-        script prints rather than assuming the old number still holds.
+      Two things here are still measured against the running system: the Finder
+      title bar is 32pt (the obvious guess is 28), and the icon centre is placed
+      to keep the pair vertically centred, so changing the window height means
+      moving it too.
+
+      **This used to be a seascape**, with the app standing against a dusk sky
+      and two lines of instructions along the bottom. It went, deliberately, and
+      one thing worth knowing went with it: a line telling people to eject the
+      disk after dragging. Nothing warns about that now, and the failure it
+      warned about is real and silent — an app run from inside the image looks
+      completely fine and can never update itself, because Sparkle cannot write
+      to a read-only volume. If that ever becomes a support question, that is
+      the answer.
+
+      One upside beyond the look: the picture is a 6 KB PNG rather than a 1.1 MB
+      uncompressed TIFF, so the artwork is now a rounding error in the download
+      rather than a fifth of it.
 - [x] **Version numbering.** Done. `Scripts/make-app.sh` stamps the marketing
       version from `git describe --tags` and the build number from the commit
       count. An untagged checkout gets `0.0.0-dev`, which is deliberately
