@@ -28,11 +28,11 @@ reason to want the reach.
 
 ### 2. Apple Silicon only?
 
-The build is arm64. Universal would mean building libtorrent *and* OpenSSL for
-Intel too, which is real work for a shrinking audience.
+**Decided: Apple Silicon only.** Universal would mean building libtorrent *and*
+OpenSSL for Intel too, which is real work for a shrinking audience.
 
-- [ ] Decide. Recommendation: **Apple Silicon only**, stated plainly on the
-      download page so nobody wastes a download.
+It says so where someone would find out too late otherwise — the download page
+and the first line of the README both state it, next to the macOS version.
 
 ### 3. Apple Developer Program — $99/year
 
@@ -42,10 +42,15 @@ actually missing was one certificate type.
 
 ### 4. Where the download lives
 
-GitHub Releases is free, handles large files, and gives a stable URL for the
-update feed to point at.
+**Decided, and it ended up the other way round from the recommendation here.**
+The download page at `current.alantom.dev` serves the disk image itself, and
+the update feed points at the same place — so there is one URL a build has to
+be reachable at, and it is one we control. A GitHub Release is still cut for
+each tag, carrying the same image, because that is where anyone reading the
+repository looks for it.
 
-- [ ] Decide. Recommendation: **GitHub Releases**, with a simple landing page.
+The image is deliberately **not** in git; `site/` deploys from the folder the
+release script stages, not from a commit. See `site/README.md`.
 
 ---
 
@@ -68,8 +73,34 @@ Nothing here is optional; this is the difference between a build and a product.
       which is the first thing anyone sees. Credentials live in a keychain
       profile, never in the repo.
 - [x] **Package as a DMG** with an Applications symlink so the install is a
-      drag. Not yet done: a background image and window layout that make it
-      obvious not to run the app from inside the image.
+      drag, and a designed install window rather than the default one:
+      `Scripts/make-dmg-window.swift` draws the background and sets the window
+      size, icon positions and icon size, and the window says in words to drag
+      the app across and then eject the disk. That last line is the point of it
+      — an app run from inside the image looks fine and silently cannot update
+      itself, because Sparkle can't write to a read-only volume.
+
+      It writes `.DS_Store` itself rather than driving Finder over AppleScript,
+      so a release never waits on an Automation permission prompt. Two things in
+      there are measured against the running system and will silently stop
+      matching if macOS changes them: the title bar is 32pt, and the tone under
+      the item names is picked so black text (Light Mode) and white text (Dark
+      Mode) both clear 4.4:1. Re-render and look at it after a macOS upgrade.
+
+      Two things about it that need a person, not a test:
+
+      - **Open a finished image in Finder and actually look at it**, in both
+        light and dark mode. Everything up to that point can be checked
+        automatically and is — the artwork renders, the volume mounts as
+        `/Volumes/Current`, the window state writes, and it survives the
+        conversion to a compressed image. Whether *Finder honours it* is the one
+        part no script here can see, and every way it fails, fails silently: a
+        window that comes up plain white, or default, or with the icons landing
+        somewhere the picture isn't expecting them.
+      - **The artwork is about 2 MB of the download.** The background picture
+        and the volume icon are real files inside the image. The README and the
+        download page both state a size, so re-check it against what the release
+        script prints rather than assuming the old number still holds.
 - [x] **Version numbering.** Done. `Scripts/make-app.sh` stamps the marketing
       version from `git describe --tags` and the build number from the commit
       count. An untagged checkout gets `0.0.0-dev`, which is deliberately
@@ -171,21 +202,29 @@ someone deciding whether to build it.
       else whichever of `/opt/homebrew` and `/usr/local` actually has
       libtorrent's headers. They used to disagree, which would have compiled on
       a non-default prefix and then failed at the CA bundle.
-- [ ] **A README written for a person landing cold.** Screenshots and the
-      Apple Silicon requirement are in. Still missing: a download link, and an
-      opening that leads with what the app is rather than a philosophy
-      paragraph.
+- [x] **A README written for a person landing cold.** It opens with what the
+      app is, a download link, the requirements, and the real download size —
+      then the screenshots, and only after all of that the reasoning about why
+      it looks the way it does.
 - [x] **`SECURITY.md`.** Done, with GitHub private vulnerability reporting
       enabled so the route is a button rather than an address. Secret scanning
       and push protection are on too — there is a signing key in play now.
 - [x] **`CHANGELOG.md`**, starting at 1.0.0, and read by the release script.
-- [ ] **Tag `v1.0.0`** and cut a GitHub Release with the DMG and its checksum.
-      Nothing before the tag is a version; it's just `main`.
-- [ ] **Land or drop the in-flight swarm-health work** before tagging. A
-      half-finished feature sitting uncommitted at tag time is the kind of thing
-      that gets committed in a hurry and breaks the release build.
-- [ ] `CODE_OF_CONDUCT.md` and a PR template. Conventional, quick, and GitHub
-      asks for them.
+- [x] **Tag `v1.0.0`** and cut a GitHub Release with the DMG and its checksum.
+      Done, and twice more since: `v1.1.0`, then `v1.1.1` to fix an updater that
+      downloaded an update and never installed it.
+- [x] **Land or drop the in-flight swarm-health work.** Landed —
+      `CurrentCore/SwarmHealth.swift`, and it gates automatic cleanup.
+
+      The reason it was on this list still stands, though, so keep applying it:
+      **nothing half-finished sits uncommitted at tag time.** The release script
+      refuses a dirty tree, which turns that rule into a wall rather than a
+      resolution — but the failure mode it exists for is committing something in
+      a hurry to get past it.
+- [ ] `CODE_OF_CONDUCT.md` and a **pull request** template. Issue templates are
+      in (`bug_report`, `design_idea`, and a `config.yml` that points support
+      questions somewhere better); these two are the remainder. Conventional,
+      quick, and GitHub asks for them.
 
 ### Saying what this is
 
@@ -207,13 +246,22 @@ trust it.
 
 ## Phase 5 — What people see before they download
 
-- [ ] Landing page or a README that opens with screenshots.
-- [ ] Release notes.
-- [ ] Say plainly: Apple Silicon, minimum macOS, and that it is a BitTorrent
-      client — people should know what they are installing.
-- [ ] Uninstall instructions. The app leaves a database and DHT state in
+- [x] **A landing page.** `site/` — it serves the download and the update feed
+      as well as making the case, so there is one place a build is reachable
+      from.
+- [x] **Release notes**, from `CHANGELOG.md` rather than written at release
+      time, so the changelog and the GitHub Release cannot disagree. A version
+      with no changelog section fails the release.
+- [x] **Say plainly what it is and what it runs on.** Apple Silicon, macOS 26+,
+      the download size and the words "BitTorrent client" are all above the fold
+      on both the page and the README.
+- [ ] **Uninstall instructions.** Still missing, and it is the last thing on
+      this list that a user actually runs into: the app leaves a library
+      database and the DHT routing table in
       `~/Library/Application Support/Current`, and dragging the app to the Trash
-      does not remove them.
+      does not remove them. Wanted in two places — the download page, and the
+      README — because the person uninstalling is not necessarily the person who
+      read either one when they installed.
 
 ---
 

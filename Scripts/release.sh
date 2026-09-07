@@ -174,14 +174,48 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Building the disk image"
+#
+# Three passes rather than one, because the install window is designed rather
+# than default: build it writable, dress it, then compress it.
+#
+#   1. stage the app, the Applications symlink and the background artwork
+#   2. create a *read-write* image and mount it, so `make-dmg-window.swift` can
+#      write the Finder window state onto the volume
+#   3. convert to a compressed read-only image, which is what ships
+#
+# The window state has to be written to a mounted volume because the reference
+# to the background picture is a Carbon alias record — volume identity, file id,
+# path — and none of that exists until the volume does. See the script.
 # ---------------------------------------------------------------------------
-rm -rf "$STAGE" "$DMG"
+RW="$ROOT/.build/Current-rw.dmg"
+rm -rf "$STAGE" "$DMG" "$RW"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # so the install is a drag
+swift "$ROOT/Scripts/make-dmg-window.swift" art "$STAGE"
 
-hdiutil create -volname "Current" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-rm -rf "$STAGE"
+# The volume has to come up as exactly /Volumes/Current: the alias record is
+# built against wherever this mounts, and a copy of Current.dmg already open
+# would push us to "/Volumes/Current 1" and bake that path in.
+if [[ -d /Volumes/Current ]]; then
+    fail "a volume is already mounted at /Volumes/Current.
+  Eject it first (it is probably an older Current.dmg), then run this again."
+fi
+
+# Sized by hand with room to spare. Auto-sizing a read-write image leaves so
+# little slack that writing .DS_Store onto it can fail for want of a block.
+SIZE_MB=$(( $(du -sm "$STAGE" | cut -f1) + 16 ))
+hdiutil create -volname "Current" -srcfolder "$STAGE" -ov \
+    -format UDRW -fs HFS+ -size "${SIZE_MB}m" "$RW" >/dev/null
+
+MOUNT=$(hdiutil attach "$RW" -nobrowse -noverify -readwrite | tail -1 | awk -F'\t' '{print $3}')
+[[ "$MOUNT" == "/Volumes/Current" ]] || fail "the image mounted at '$MOUNT', not /Volumes/Current"
+swift "$ROOT/Scripts/make-dmg-window.swift" store "$MOUNT"
+sync
+hdiutil detach "$MOUNT" -quiet
+
+hdiutil convert -format UDZO -imagekey zlib-level=9 "$RW" -o "$DMG" >/dev/null
+rm -rf "$STAGE" "$RW"
 
 # The disk image gets signed and notarised too. A stapled app inside an
 # unnotarised .dmg still warns on the *download*, which is the first thing
