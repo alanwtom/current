@@ -117,13 +117,23 @@ global.cancelAnimationFrame = () => { rafQueue = []; };
 global.setTimeout = () => 0;
 global.clearTimeout = () => {};
 global.CanvasRenderingContext2D = function () {};
+/* Listeners bg.js registers, kept so the test can drive a pointer. */
+const listeners = {};
+const listen = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+
 global.window = {
-  matchMedia: () => ({ matches: false }),   // motion allowed, no pointer
+  // motion allowed, and a fine pointer present so the pointer path is wired
+  matchMedia: q => ({ matches: q.indexOf('hover') !== -1 }),
   devicePixelRatio: 1,
   performance: global.performance,
-  addEventListener: () => {},
+  addEventListener: listen,
   requestAnimationFrame: global.requestAnimationFrame,
 };
+global.document.addEventListener = listen;
+
+function movePointer(x, y) {
+  (listeners.pointermove || []).forEach(fn => fn({ clientX: x, clientY: y }));
+}
 
 eval(fs.readFileSync(SOURCE, 'utf8'));
 
@@ -141,21 +151,31 @@ function step(ms = 16) {
 
 const isBlue = d => d.b - d.r > 40;
 const isLanding = d => d.a > 0.35;
-const overText = () => draws.filter(
-  d => d.x < TEXT.right && d.x + d.w > TEXT.left
-    && d.y < TEXT.bottom && d.y + d.h > TEXT.top
-).length;
+/* Total alpha drawn inside the words' own box, and outside it, per unit area.
+   The field runs under the text now, so the check is no longer "none there" —
+   it is "far dimmer there", which is what protects legibility. */
+function textVsRest() {
+  let inside = 0, outside = 0, nIn = 0, nOut = 0;
+  for (const d of draws) {
+    const within = d.x < TEXT.right && d.x + d.w > TEXT.left
+                && d.y < TEXT.bottom && d.y + d.h > TEXT.top;
+    if (within) { inside += d.a; nIn++; } else { outside += d.a; nOut++; }
+  }
+  return { inside: nIn ? inside / nIn : 0, outside: nOut ? outside / nOut : 0 };
+}
 
 // --- measure -------------------------------------------------------------
 step();
-const startedOverText = overText();
+let dimmestBehindText = Infinity, brightestBehindText = 0;
+let shadeSum = 0, shadeN = 0;
 
 for (let i = 0; i < 2100; i++) step();      // let it settle, ~35s
 const settled = draws.length;
 
 let peakAlpha = 0, peakLit = 0, dead = 0, worstDead = 0;
 let busy = 0, quiet = 0, sum = 0, textHits = 0;
-let totalMin = Infinity, totalMax = 0, leftOfText = 0;
+let totalMin = Infinity, totalMax = 0;
+const bothSides = { left: false, right: false };
 const lightPath = [];                       // where the field's light sits
 
 for (let i = 0; i < 3750; i++) {            // one minute, every frame
@@ -170,15 +190,27 @@ for (let i = 0; i < 3750; i++) {            // one minute, every frame
   sum += lit;
   peakLit = Math.max(peakLit, lit);
   peakAlpha = Math.max(peakAlpha, draws.reduce((m, d) => Math.max(m, d.a), 0));
-  textHits += overText();
-  leftOfText += draws.filter(d => d.x + d.w <= TEXT.right).length;
+  {
+    const t = textVsRest();
+    if (t.inside > 0) {
+      const r = t.outside / t.inside;
+      dimmestBehindText = Math.min(dimmestBehindText, r);
+      shadeSum += r; shadeN++;
+    }
+  }
+  for (const d of draws) {
+    if (d.x < TEXT.right && d.x + d.w > TEXT.left && d.y < TEXT.bottom && d.y + d.h > TEXT.top)
+      brightestBehindText = Math.max(brightestBehindText, d.a);
+  }
+  bothSides.left = bothSides.left || draws.some(d => d.x + d.w < TEXT.left);
+  bothSides.right = bothSides.right || draws.some(d => d.x > TEXT.right);
   if (lit === 0) { dead += 16; worstDead = Math.max(worstDead, dead); } else dead = 0;
   if (lit > 12) busy++; else if (lit < 3) quiet++;
 }
 
 for (let i = 0; i < 26000; i++) step();     // out to roughly eight minutes
 const late = draws.length;
-const lateOverText = overText();
+const lateText = textVsRest();
 
 console.log(`\nafter a minute of running:`);
 console.log(`  pieces held           ${settled}`);
@@ -195,7 +227,8 @@ for (const [x, y] of lightPath) {
   spanY = [Math.min(spanY[0], y), Math.max(spanY[1], y)];
 }
 console.log(`  centre of light       moves ${(spanX[1]-spanX[0]).toFixed(0)}px across, ${(spanY[1]-spanY[0]).toFixed(0)}px down, ${travel.toFixed(0)}px travelled`);
-console.log(`  pieces left of the words  ${leftOfText}`);
+console.log(`  pieces on both sides  left ${bothSides.left}, right ${bothSides.right}`);
+console.log(`  behind the words      ${(shadeSum / shadeN).toFixed(1)}x dimmer on average (${dimmestBehindText.toFixed(1)}x when a pool passes under it), brightest piece ${brightestBehindText.toFixed(2)} alpha`);
 console.log(`  overall brightness    swings ${(100*(totalMax-totalMin)/totalMax).toFixed(0)}% between its dimmest and brightest`);
 console.log(`  after eight minutes   ${late} pieces held\n`);
 
@@ -207,11 +240,81 @@ check('it has a rhythm — busy moments and quiet ones', busy > 0 && quiet > 0);
 check('the light drifts rather than sitting still', spanX[1] - spanX[0] > 30 || spanY[1] - spanY[0] > 30);
 check('the field breathes', (totalMax - totalMin) / totalMax > 0.1);
 check('never dead for longer than four seconds', worstDead < 4000);
-check('nothing is ever drawn over the headline',
-      startedOverText === 0 && textHits === 0 && lateOverText === 0);
-check('no pieces anywhere left of the words', leftOfText === 0);
+// The minimum is not the test: it dips whenever a pool of light drifts under
+// the text, which is the effect doing its job rather than a fault. What has to
+// hold is that it is typically much dimmer there, and that no single piece
+// behind the words ever gets bright enough to blink.
+check('the field is typically far dimmer behind the words',
+      shadeSum / shadeN > 2);
+check('a piece flaring behind the words stays dim', brightestBehindText < 0.2);
+check('the field is full bleed, not one column', bothSides.left && bothSides.right);
 check('the field settles rather than filling solid', Math.abs(late - settled) / settled < 0.25);
 check('still alive after eight minutes', late > 0);
+
+// --- the pointer ---------------------------------------------------------
+//
+// Everything above runs with the pointer parked in the middle. These move it
+// and check the field actually answers, which is the whole point of it.
+
+function brightnessNear(x, y, radius) {
+  let sum = 0;
+  for (const d of draws) {
+    if (Math.hypot(d.x - x, d.y - y) < radius) sum += d.a;
+  }
+  return sum;
+}
+
+const settle = n => { for (let i = 0; i < n; i++) step(); };
+
+// Four spots the field actually reaches: outside the words, above the bottom
+// fade. The pointer is parked on each in turn and the brightness at *every*
+// spot is averaged over a stretch of frames, which gives a full matrix: each
+// spot's brightness with the pointer on it, and its brightness on the
+// occasions the pointer was somewhere else.
+//
+// Measuring one spot once was not enough. The pools drift through these
+// positions on their own, so a single reading can be brighter for reasons that
+// have nothing to do with the pointer — which is exactly what made the first
+// version of this check fail on a field that was working.
+const SPOTS = [[1150, 250], [420, 520], [1280, 560], [300, 200]];
+const AVG_FRAMES = 40;
+
+const grid = SPOTS.map(() => SPOTS.map(() => 0));
+SPOTS.forEach((held, h) => {
+  movePointer(held[0], held[1]);
+  settle(150);
+  for (let f = 0; f < AVG_FRAMES; f++) {
+    step();
+    SPOTS.forEach((at, a) => { grid[h][a] += brightnessNear(at[0], at[1], 140) / AVG_FRAMES; });
+  }
+});
+
+const ratios = SPOTS.map((_, i) => {
+  const on = grid[i][i];
+  const off = SPOTS.reduce((sum, __, h) => h === i ? sum : sum + grid[h][i], 0) / (SPOTS.length - 1);
+  return { on, off, ratio: on / off };
+});
+
+const poolsRight = (movePointer(1150, 250), settle(150), pools.map(p => p.x));
+const poolsLeft = (movePointer(240, 520), settle(150), pools.map(p => p.x));
+
+// how far each pool slid between those two pointer positions, and whether
+// they slid by *different* amounts — sliding as one sheet would be no better
+// than not sliding at all
+const slides = poolsRight.map((x, i) => Math.abs(x - (poolsLeft[i] || 0)));
+const slideSpread = Math.max(...slides) - Math.min(...slides);
+
+console.log(`with a pointer:`);
+ratios.forEach((r, i) => console.log(
+  `  spot ${i + 1} at ${String(SPOTS[i]).padEnd(10)}  ${r.on.toFixed(1)} lit / ${r.off.toFixed(1)} unlit  =  ${r.ratio.toFixed(2)}x`));
+console.log(`  pools slid            ${slides.map(v => Math.round(v)).join(', ')}px`);
+console.log(`  spread between them   ${Math.round(slideSpread)}px\n`);
+
+check('the pointer lights the field under it, wherever it goes',
+      ratios.every(r => r.ratio > 1.4));
+check('the pools are dragged by the pointer', Math.max(...slides) > 20);
+check('and dragged by different amounts, so they slide over each other',
+      slideSpread > 20);
 
 // --- look at it ----------------------------------------------------------
 if (WANT_FRAMES) {

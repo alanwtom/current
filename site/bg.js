@@ -17,13 +17,20 @@
  *   registers at all: technically animated, visually frozen. Everything here
  *   now turns over in seconds.
  *
+ * It covers the whole screen and the text sits on top of it, which is the one
+ * thing worth taking from Codex's hero — theirs is a pre-rendered video, not
+ * code, and despite appearances it doesn't answer the pointer at all. Ours
+ * does: the pointer carries a light with it, drags nine layers of colour past
+ * each other at nine different rates, and pulls a wake of arriving pieces
+ * along behind it.
+ *
  * Two rules it can't break:
  *
- * - **Nothing to the left of the words.** The clear area is measured from the
- *   headline itself, and it is one-sided — the field starts after the text's
- *   right edge and runs to the window edge. It used to be a plain distance,
- *   which meant the whole left gutter qualified: on a wide display that put a
- *   large block of squares out there with nothing to do and nowhere to go.
+ * - **The words stay readable.** The field runs under them at a bit over a
+ *   quarter strength. It was a hole for a while, then a column to the right of
+ *   the text — both wrong, for the same reason: the headline, its sentence and
+ *   the download row span nearly the whole content width between them, so
+ *   anything that avoids them avoids most of the screen.
  * - **It stops dead when scrolled past.** A background still painting while
  *   nobody is looking is a battery drain.
  *
@@ -69,7 +76,13 @@
   var BURST_GAP  = 420;   // ms of quiet after one, plus up to as much again
   var BURST_SPAN = 4;     // cells — how tight a burst lands
 
-  var CURSOR_REACH = 150; // px — pieces near the pointer brighten
+  // The pointer is the loudest thing in here, not a garnish.
+  var CURSOR_REACH = 320;   // px — how far its light carries
+  var CURSOR_LIFT  = 3.0;   // how much brighter a piece under it goes
+  var CURSOR_EASE  = 0.075; // per frame — the lag that gives it weight
+  var CURSOR_PULL  = 0.16;  // how much a burst prefers to land under it
+  var TEXT_SHADE   = 0.24;  // how much of the field survives behind the words
+  var GAIN_EASE    = 0.04;  // how fast it arrives and leaves
 
   // --- the light -----------------------------------------------------------
   //
@@ -83,17 +96,22 @@
   var TEAL   = [45, 212, 191];
 
   var POOLS = [
-    // The big quiet one behind the headline. Ambient only — no squares live
-    // over there — and it is what keeps the left of the screen from being the
-    // flat black this all started as.
-    { x: 0.26, y: 0.24, ax: 0.05, ay: 0.06, px: 31000, py: 23000, r: 560, hue: 0, a: 0.15 },
-
-    { x: 0.62, y: 0.30, ax: 0.15, ay: 0.19, px:  9700, py: 12300, r: 210, hue: 0, a: 0.13 },
-    { x: 0.81, y: 0.50, ax: 0.13, ay: 0.16, px: 13100, py:  8900, r: 175, hue: 1, a: 0.10 },
-    { x: 0.71, y: 0.70, ax: 0.17, ay: 0.12, px: 17300, py: 11700, r: 245, hue: 0, a: 0.12 },
-    { x: 0.91, y: 0.27, ax: 0.09, ay: 0.21, px: 10700, py: 15100, r: 150, hue: 1, a: 0.11 },
-    { x: 0.67, y: 0.49, ax: 0.20, ay: 0.17, px: 21100, py: 14300, r: 295, hue: 0, a: 0.10 },
-    { x: 0.87, y: 0.78, ax: 0.11, ay: 0.14, px: 12700, py: 19300, r: 190, hue: 1, a: 0.11 }
+    // The big slow one, over on the left behind the headline: mostly ambient,
+    // and what keeps that side of the screen from reading as flat black.
+    //
+    // `par` is how far this pool is dragged by the pointer, as a fraction of
+    // its distance from the middle of the screen. All different, so the layers
+    // slide over each other as you move rather than moving as one sheet —
+    // which is the whole trick, and it doesn't work if they share a value.
+    { x: 0.22, y: 0.26, ax: 0.05, ay: 0.06, px: 31000, py: 23000, r: 560, hue: 0, a: 0.15, par: 0.05 },
+    { x: 0.34, y: 0.62, ax: 0.13, ay: 0.15, px: 15300, py: 11300, r: 260, hue: 1, a: 0.09, par: 0.14 },
+    { x: 0.12, y: 0.55, ax: 0.10, ay: 0.13, px: 19700, py: 16300, r: 200, hue: 0, a: 0.10, par: 0.20 },
+    { x: 0.50, y: 0.34, ax: 0.14, ay: 0.18, px:  9700, py: 12300, r: 230, hue: 0, a: 0.12, par: 0.11 },
+    { x: 0.81, y: 0.50, ax: 0.13, ay: 0.16, px: 13100, py:  8900, r: 175, hue: 1, a: 0.10, par: 0.24 },
+    { x: 0.71, y: 0.70, ax: 0.17, ay: 0.12, px: 17300, py: 11700, r: 245, hue: 0, a: 0.12, par: 0.08 },
+    { x: 0.91, y: 0.27, ax: 0.09, ay: 0.21, px: 10700, py: 15100, r: 150, hue: 1, a: 0.11, par: 0.28 },
+    { x: 0.67, y: 0.49, ax: 0.20, ay: 0.17, px: 21100, py: 14300, r: 295, hue: 0, a: 0.10, par: 0.17 },
+    { x: 0.87, y: 0.78, ax: 0.11, ay: 0.14, px: 12700, py: 19300, r: 190, hue: 1, a: 0.11, par: 0.13 }
   ];
 
   var POOL_LIFT = 2.2;    // how much brighter a piece sitting in one is
@@ -108,10 +126,15 @@
 
   // --- state ---------------------------------------------------------------
   var cols = 0, rows = 0, count = 0, room = 0, cap = 0, cssW = 0, cssH = 0;
-  var weight, phase, stamp;   // 0 empty, 1 arriving/held, 2 releasing
+  var weight, flareMul, phase, stamp;   // 0 empty, 1 arriving/held, 2 releasing
   var live = [];              // indices currently drawing anything
   var held = [];              // indices in phase 1, oldest first
-  var cursorX = -1e4, cursorY = -1e4, cursorSeen = 0;
+  // Where the pointer is, where the field thinks it is, and how much it is
+  // listening. The eased position is what everything reads: chasing the real
+  // one exactly makes the field feel nailed to the cursor, and the small lag
+  // is most of what makes it feel like it has weight.
+  var pointerX = 0, pointerY = 0, pointerIn = 0;
+  var aimX = 0, aimY = 0, gain = 0;
   var running = false, last = 0, owed = 0, raf = 0;
   var burstLeft = 0, burstOwed = 0, burstX = 0, burstY = 0, burstNext = 0;
   var textBox = null;
@@ -144,19 +167,40 @@
     };
   }
 
-  /* How much of the field is allowed to exist at a point.
-     Nothing at all to the left of the words; a margin to their right before it
-     starts; gone before the section below. */
+  /* How much of the field is allowed to exist at a point: everywhere, dimmer
+     behind the words, faded at the edges, gone before the section below.
+
+     This was a column on the right for a while, which fixed one problem and
+     created a worse one — half the screen with nothing happening in it. It
+     went one-sided because of a stagnant block of squares in the left gutter,
+     but the fault there was that nothing in that block ever moved, not that it
+     was on the left. The pointer drives the whole field now, so there is no
+     stagnant corner left to hide. */
+  /* How much of the words' shade applies at a point: 1 in the open, down to
+     TEXT_SHADE over the text. Kept separately from the weight because the
+     flare is damped by it a second time — a resting piece behind the sentence
+     is texture, but one flaring at full strength is a light blinking behind
+     small grey type, which is the difference between a background and a
+     distraction. */
+  function shadeAt(x, y) {
+    if (!textBox) return 1;
+    var ox = Math.max(textBox.l - x, x - textBox.r, 0);
+    var oy = Math.max(textBox.t - y, y - textBox.b, 0);
+    var out = Math.min(1, Math.sqrt(ox * ox + oy * oy) / 96);
+    return TEXT_SHADE + (1 - TEXT_SHADE) * out * out;
+  }
+
   function weightAt(x, y, w, h) {
-    // One-sided, at every height: the field is a column to the right of the
-    // words and nothing else. Allowing it below them as well left a band of
-    // squares under the download button, on the left, where they mostly sat
-    // still — the single thing about this that looked worst.
-    var clear = 1;
-    if (textBox) {
-      if (x <= textBox.r) return 0;
-      clear = Math.min(1, (x - textBox.r) / 110);
-    }
+    // The field runs under the words as well, at a fraction of its strength.
+    //
+    // A hole was the wrong shape for "full bleed": the headline, the sentence
+    // under it and the download row together span nearly the whole content
+    // width, so cutting them out leaves two thin strips at the sides and not
+    // much else. Codex's hero runs its whole animation under the text and puts
+    // the text on top; at this alpha the pieces behind a 54px headline are
+    // texture rather than clutter, and there is no legibility to lose against
+    // white type on near-black.
+    var clear = shadeAt(x, y);
 
     // Off well before the section below starts — most of the lower half is
     // behind the app window anyway, and drawing under it is unseen work.
@@ -164,12 +208,16 @@
       ? Math.max(0, 1 - (y - h * FADE_FROM) / (h * (1 - FADE_FROM)))
       : 1;
 
-    // A touch under the chrome bar, and fading into the right edge rather
-    // than stopping at it in a straight line.
+    // A touch under the chrome bar, and fading into both edges rather than
+    // stopping at them in a straight line.
     var top = y < h * 0.05 ? y / (h * 0.05) : 1;
-    var side = Math.min(1, (w - x) / (w * 0.10));
+    var side = Math.min(1, Math.min(x, w - x) / (w * 0.07));
 
-    return clear * clear * bottom * top * side;
+    // `clear` is not squared here on purpose: the rim easing above already
+    // does that shaping, and squaring it a second time took the field behind
+    // the words from a quarter strength to a sixteenth, which is invisible
+    // rather than subtle.
+    return clear * bottom * top * side;
   }
 
   function build() {
@@ -188,6 +236,7 @@
     count = cols * rows;
 
     weight = new Float32Array(count);
+    flareMul = new Float32Array(count);
     phase = new Uint8Array(count);
     stamp = new Float64Array(count);
     live = [];
@@ -201,6 +250,7 @@
       var y = ((i / cols) | 0) * PITCH + SQUARE / 2;
       var v = weightAt(x, y, w, h);
       weight[i] = v < 0.06 ? 0 : v;   // below this it would never be seen
+      flareMul[i] = shadeAt(x, y);
       if (weight[i] > 0) room++;
     }
     cap = Math.round(room * FILL_TARGET);
@@ -306,10 +356,10 @@
       }
     }
 
-    if (cursorSeen && Math.random() < 0.35) {
-      for (tries = 0; tries < 12; tries++) {
-        var cx = Math.round((cursorX + (Math.random() - 0.5) * CURSOR_REACH * 2) / PITCH);
-        var cy = Math.round((cursorY + (Math.random() - 0.5) * CURSOR_REACH * 2) / PITCH);
+    if (gain > 0.05 && Math.random() < 0.55 * gain) {
+      for (tries = 0; tries < 14; tries++) {
+        var cx = Math.round((aimX + (Math.random() - 0.5) * CURSOR_REACH) / PITCH);
+        var cy = Math.round((aimY + (Math.random() - 0.5) * CURSOR_REACH) / PITCH);
         if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
         i = cy * cols + cx;
         if (weight[i] > 0 && phase[i] === 0) return i;
@@ -344,6 +394,22 @@
   }
 
   function openBurst(now) {
+    // Most bursts land near the pointer while there is one, so moving the
+    // mouse across the field pulls a wake of arrivals along behind it.
+    if (gain > 0.4 && Math.random() < 0.7) {
+      for (var t2 = 0; t2 < 20; t2++) {
+        var bx = Math.round((aimX + (Math.random() - 0.5) * CURSOR_REACH * 1.4) / PITCH);
+        var by = Math.round((aimY + (Math.random() - 0.5) * CURSOR_REACH * 1.4) / PITCH);
+        if (bx < 0 || by < 0 || bx >= cols || by >= rows) continue;
+        var bi = by * cols + bx;
+        if (weight[bi] < 0.2 || phase[bi] !== 0) continue;
+        burstX = bx; burstY = by;
+        burstLeft = BURST_SIZE + rand(BURST_SIZE);
+        burstOwed = 0;
+        return;
+      }
+    }
+
     for (var tries = 0; tries < 30; tries++) {
       var i = rand(count);
       if (weight[i] < 0.35 || phase[i] !== 0) continue;
@@ -369,12 +435,14 @@
   /* Where each pool has drifted to this frame. Worked out once per frame —
      the piece loop below runs several hundred times. */
   function placePools(now) {
+    var offX = (aimX - cssW / 2) * gain;
+    var offY = (aimY - cssH / 2) * gain;
     var out = [];
     for (var i = 0; i < POOLS.length; i++) {
       var p = POOLS[i];
       out.push({
-        x: (p.x + p.ax * Math.sin(now / p.px * TAU)) * cssW,
-        y: (p.y + p.ay * Math.cos(now / p.py * TAU)) * cssH,
+        x: (p.x + p.ax * Math.sin(now / p.px * TAU)) * cssW + offX * p.par,
+        y: (p.y + p.ay * Math.cos(now / p.py * TAU)) * cssH + offY * p.par,
         r: p.r, hue: p.hue, a: p.a
       });
     }
@@ -472,22 +540,25 @@
       var wave = 1 + BREATH * Math.sin(now / BREATH_MS * TAU - (x + y) * 0.0035);
 
       var near = 0;
-      if (cursorSeen) {
-        var dx = x - cursorX, dy = y - cursorY;
+      if (gain > 0.01) {
+        var dx = x - aimX, dy = y - aimY;
         var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < CURSOR_REACH) { near = 1 - d / CURSOR_REACH; near *= near; }
+        if (d < CURSOR_REACH) {
+          near = 1 - d / CURSOR_REACH;
+          near *= near;   // a bright core that still carries to the edge
+          near *= gain;
+        }
       }
 
       var alpha = weight[i] * body
-        * (HELD_ALPHA * wave * (1 + POOL_LIFT * lift)
-           + FLARE_ALPHA * flare
-           + 0.10 * near);
+        * (HELD_ALPHA * wave * (1 + POOL_LIFT * lift + CURSOR_LIFT * near)
+           + FLARE_ALPHA * flare * flareMul[i]);
 
       if (alpha < 0.004) { still.push(i); continue; }
 
       // Grey at rest; the pool's own hue where the light is; accent as it
       // lands, because a landing is the app's "this is happening".
-      var tint = Math.min(1, flare + near * 0.75 + lift * 0.7);
+      var tint = Math.min(1, flare + near * 1.4 + lift * 0.7);
       var c = teal ? TEAL : ACCENT;
       var r = Math.round(255 + (c[0] - 255) * tint);
       var g = Math.round(255 + (c[1] - 255) * tint);
@@ -512,6 +583,13 @@
 
     var dt = Math.min(now - last, 250);
     last = now;
+
+    // Frame-rate independent easing, so the lag feels the same at 60 and 120Hz.
+    var step = 1 - Math.pow(1 - CURSOR_EASE, dt / 16.7);
+    aimX += (pointerX - aimX) * step;
+    aimY += (pointerY - aimY) * step;
+    var gstep = 1 - Math.pow(1 - GAIN_EASE, dt / 16.7);
+    gain += (pointerIn - gain) * gstep;
 
     owed += (dt / 1000) * DRIZZLE;
     while (owed >= 1) { land(now, false); owed -= 1; }
@@ -572,11 +650,21 @@
   if (!reduceMotion
       && window.matchMedia
       && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    // Start it in the middle, so the first movement eases out from the centre
+    // rather than flying in from a corner.
+    aimX = pointerX = cssW / 2;
+    aimY = pointerY = cssH / 2;
+
     window.addEventListener('pointermove', function (event) {
       var box = canvas.getBoundingClientRect();
-      cursorX = event.clientX - box.left;
-      cursorY = event.clientY - box.top;
-      cursorSeen = 1;
+      pointerX = event.clientX - box.left;
+      pointerY = event.clientY - box.top;
+      pointerIn = 1;
     }, { passive: true });
+
+    // Leaving the window puts the light back where it was rather than
+    // stranding it wherever the pointer happened to exit.
+    document.addEventListener('mouseleave', function () { pointerIn = 0; });
+    document.addEventListener('mouseenter', function () { pointerIn = 1; });
   }
 })();
