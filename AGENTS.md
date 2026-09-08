@@ -606,8 +606,6 @@ New layout arithmetic goes in `WindowLayout` with a test, and the tests sweep
 sizes rather than checking one. A single assertion at one comfortable size is
 exactly what missed both bugs above.
 
-`plans/README.md` has the full audit these came out of.
-
 ## Conventions
 
 - Swift 6 language mode is on for every target. New concurrent code should compile

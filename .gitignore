@@ -23,3 +23,7 @@ site/Current.dmg
 
 # Session-local editor/agent config, not part of the project.
 .claude/
+
+# Working notes: design audits, unsent drafts, anything written to me rather
+# than to someone reading the repo. These were public once; keep them local.
+plans/
