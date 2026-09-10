@@ -151,23 +151,12 @@ struct SettingsSurface: View {
                 }
             }
             .scrollIndicators(.never)
-            // Only as tall as the rows when there's room, so the footer stays at
-            // the bottom of the card rather than being pushed there by a greedy
-            // scroll view.
+            // Only as tall as the rows when there's room. A `ScrollView` left to
+            // itself takes every spare point, which makes the rail's rows the
+            // full height of the card and its scroll bar appear over nothing.
             .frame(maxHeight: SettingsChrome.railRowsHeight)
 
             Spacer(minLength: 0)
-
-            // The privacy line lives here rather than buried in General,
-            // because it is the app's actual position and worth stating
-            // wherever someone is poking at settings.
-            Text("No accounts, no analytics, no tracking. Everything stays on this Mac.")
-                .typeStyle(Typo.caption)
-                .foregroundStyle(Theme.textQuaternary)
-                .fixedSize(horizontal: false, vertical: true)
-                // The card's margin, so the bottom-left corner has the same gap
-                // as the bottom-right one.
-                .padding(SettingsChrome.inset)
         }
         // Gives up width to the pane in a shrunken card, down to its own floor —
         // clamping the card alone only moved the problem into the pane.
@@ -318,11 +307,18 @@ struct SettingsSurface: View {
 
 /// A settings row: name and explanation on the left, control on the right.
 ///
-/// This shape replaces `LabeledContent` and `Form`, and it is the reason the
-/// panes read as sentences rather than as a database form. Every setting in this
-/// app can explain itself — that is the same principle the Rules tab follows —
-/// and putting the explanation *under the label* rather than in a separate
-/// paragraph is what makes room for it.
+/// This shape replaces `LabeledContent` and `Form`, and putting the explanation
+/// *under the label* rather than in a separate paragraph is what makes room for
+/// one when a setting needs it.
+///
+/// **`detail` is optional and most rows leave it empty.** Every setting used to
+/// carry a sentence, which sounds like generosity and reads like being talked
+/// down to: "Ask where to save each download" does not need a paragraph, and a
+/// pane of them buries the two or three settings that genuinely are unguessable.
+/// The bar a `detail` or a group `footer` has to clear is that it says something
+/// the label and the control can't — what the app will do on its own, what a
+/// switch leaves alone, or a consequence that isn't reversible. Network and the
+/// automatic-cleanup switch clear it. Notifications and Updates don't.
 struct SettingRow<Control: View>: View {
     let title: String
     var detail: String?

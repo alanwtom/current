@@ -275,9 +275,8 @@ enum SettingsChrome {
     ///
     /// The rail scrolls now — the card shrinks with the window, so the rows are
     /// not always guaranteed their room — and a `ScrollView` is greedy: left to
-    /// itself it takes every spare point and pushes the footer to the bottom of
-    /// a mostly-empty column. Capping it at the rows' own height means it only
-    /// scrolls when it genuinely has to.
+    /// itself it takes every spare point in the column. Capping it at the rows'
+    /// own height means it only scrolls when it genuinely has to.
     static let railRowsHeight: CGFloat = Size.sidebarRow * 8 + 7
 
     /// The close button hangs into the right margin by its own slack.

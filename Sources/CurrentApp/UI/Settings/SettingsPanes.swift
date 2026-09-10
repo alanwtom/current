@@ -11,6 +11,11 @@ import CurrentCore
 /// the two side by side is the whole decision. Each tile is a miniature of the
 /// real window — chrome, sidebar, a row, the accent — drawn from the same tokens
 /// the app itself uses, so it can't drift out of date.
+/// The written description under the tiles is gone on purpose — a picture of
+/// the theme and the word "Dark" under it is the whole setting, and a sentence
+/// restating them was the clearest case in the app of text that did no work.
+/// The strings still exist and are still read aloud by VoiceOver, which has no
+/// picture to go on.
 struct AppearancePane: View {
     @EnvironmentObject private var settings: SettingsStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -27,11 +32,6 @@ struct AppearancePane: View {
                         tile(mode)
                     }
                 }
-
-                Text(settings.appearance.detail)
-                    .typeStyle(Typo.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .animation(Motion.adaptive(Motion.quick, reduceMotion: reduceMotion), value: settings.appearance)
             }
         }
     }
@@ -175,7 +175,9 @@ struct GeneralPane: View {
 
     var body: some View {
         SettingsPane {
-            SettingsGroup(title: "Downloads", footer: askFooter) {
+            SettingsGroup(title: "Downloads") {
+                // The path is the setting's value, not an explanation of it —
+                // there is nowhere else in the app that says where downloads go.
                 SettingRow(
                     title: "Save to",
                     detail: settings.downloadsFolder.path
@@ -190,14 +192,8 @@ struct GeneralPane: View {
                 )
             }
 
-            SettingsGroup(
-                title: "Magnet links",
-                footer: "You can change this back at any time in System Settings under Default Applications."
-            ) {
-                SettingRow(
-                    title: "Open magnet links with Current",
-                    detail: "Clicking a magnet link anywhere on your Mac hands it to this app."
-                ) {
+            SettingsGroup(title: "Magnet links") {
+                SettingRow(title: "Open magnet links with Current") {
                     Button("Make Default") {
                         NSWorkspace.shared.setDefaultApplication(
                             at: Bundle.main.bundleURL,
@@ -208,34 +204,13 @@ struct GeneralPane: View {
                 }
             }
 
-            SettingsGroup(title: "Updates", footer: updatesFooter) {
+            SettingsGroup(title: "Updates") {
                 ToggleRow(
                     title: "Check for updates automatically",
-                    detail: "Asks current.alantom.dev whether a newer version exists. Nothing else is sent.",
                     isOn: $settings.checksForUpdatesAutomatically
                 )
             }
         }
-    }
-
-    /// Why this switch is worth leaving on, without nagging about it.
-    ///
-    /// The honest argument is a security one: the app bundles a torrent engine
-    /// and a TLS library, both of which ship fixes, and without a check there
-    /// is no way for one to reach a copy already downloaded.
-    private var updatesFooter: String {
-        settings.checksForUpdatesAutomatically
-            ? "Current checks in the background and tells you once an update is ready to install. It never installs anything without you relaunching."
-            : "Current will not check. Security fixes to the torrent engine won't reach this copy unless you download a new version yourself."
-    }
-
-    /// Says what the switch above actually does in each position, because "ask
-    /// where to save" reads the same whether it's on or off until you know
-    /// which folder it falls back to.
-    private var askFooter: String {
-        settings.asksForDownloadLocation
-            ? "Every download offers a folder before it starts, beginning with the one above. Ticking \"Remember this location\" there turns this off."
-            : "Downloads go straight to the folder above without asking."
     }
 
     private func chooseFolder() {
@@ -313,9 +288,11 @@ struct BandwidthPane: View {
                 RateRow(label: "Limit upload speed", detail: nil, bytesPerSecond: $settings.normalUploadLimit)
             }
 
+            // The only part of this group that isn't on screen: these limits are
+            // also what the battery rules in Power switch to.
             SettingsGroup(
                 title: "Reduced speeds",
-                footer: "A slower set you can switch to when you need the connection for something else. Also used automatically on battery, if that's enabled in Power."
+                footer: "Also used automatically on battery, if that's enabled in Power."
             ) {
                 RateRow(label: "Limit download speed", detail: nil, bytesPerSecond: $settings.reducedDownloadLimit)
                 Hairline()
@@ -336,10 +313,7 @@ struct BandwidthPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            SettingsGroup(
-                title: "Queue",
-                footer: "Anything past these waits its turn, instead of every torrent starting at once and splitting the line."
-            ) {
+            SettingsGroup(title: "Queue") {
                 SettingRow(title: "Download at most") {
                     CurrentStepper(value: $settings.maxActiveDownloads, range: 1...20, unit: "at a time")
                 }
@@ -430,10 +404,7 @@ struct StoragePane: View {
 
     var body: some View {
         SettingsPane {
-            SettingsGroup(
-                title: "Budget",
-                footer: "When the budget runs low, Current suggests the completed downloads that are safest to remove. Always reversible — files go to the Trash."
-            ) {
+            SettingsGroup(title: "Budget") {
                 ToggleRow(
                     title: "Limit torrent storage",
                     isOn: Binding(
@@ -461,8 +432,12 @@ struct StoragePane: View {
                 }
             }
 
+            // Stays, and stays long. This is the one switch in the app that
+            // moves someone's files without being asked, so the gate it applies
+            // and the fact that it is reversible are the setting, not a gloss on
+            // it — see the automation rules in AGENTS.md.
             SettingsGroup(
-                footer: "Automatic cleanup only removes torrents whose seeding goals are met and whose swarms are healthy. Rare torrents are always kept, and files move to the Trash — so cleanup is reversible."
+                footer: "Only removes torrents whose seeding goals are met and whose swarms are healthy. Rare torrents are always kept, and files move to the Trash — so this is reversible."
             ) {
                 ToggleRow(
                     title: "Clean up automatically when over budget",
@@ -522,9 +497,6 @@ struct SeedingPane: View {
                     ),
                     options: Self.options
                 )
-                Text("Each torrent can override this from its Rules tab in the details panel.")
-                    .typeStyle(Typo.caption)
-                    .foregroundStyle(Theme.textTertiary)
             }
         }
     }
@@ -555,9 +527,11 @@ struct PowerPane: View {
 
     var body: some View {
         SettingsPane {
+            // Both switches say "downloads", so the thing worth saying is what
+            // they leave alone.
             SettingsGroup(
                 title: "On battery",
-                footer: "Seeding continues on battery regardless — it's light work. Only downloads pause or slow down."
+                footer: "Seeding continues on battery either way. Only downloads pause or slow down."
             ) {
                 ToggleRow(title: "Pause downloads", isOn: $settings.pauseDownloadsOnBattery)
                 Hairline()
@@ -575,7 +549,7 @@ struct PowerPane: View {
                 // download is exactly as useful on mains power, and more so.
                 ToggleRow(
                     title: "Prevent sleep while downloading",
-                    detail: "Only while something is actually transferring. Closing the lid still sleeps.",
+                    detail: "Closing the lid still sleeps.",
                     isOn: $settings.preventSleepWhileDownloading
                 )
             }
@@ -590,10 +564,7 @@ struct NotificationsPane: View {
 
     var body: some View {
         SettingsPane {
-            SettingsGroup(
-                title: "Notify me when",
-                footer: "Current never notifies about routine events — no “peer connected”, no “ratio increased”."
-            ) {
+            SettingsGroup(title: "Notify me when") {
                 ToggleRow(title: "A download completes", isOn: $settings.notifyOnCompletion)
                 Hairline()
                 ToggleRow(title: "A download fails", isOn: $settings.notifyOnFailure)

@@ -144,6 +144,24 @@ someone actually measured, and both were wrong before they were:
   (`SettingsChrome.headerTrailing`), because a 13pt glyph centred in a 26pt frame
   is optically 6.5pt further in than it measures.
 
+**A setting explains itself or says nothing.** Most controls in Settings are a
+label and a switch, and that is the finished state — no `detail` line, no group
+`footer`. Every one of them used to carry a sentence, and the effect was the
+opposite of helpful: "Ask where to save each download" was followed by a
+paragraph saying it asks where to save each download, and the two or three
+settings that genuinely can't be guessed were buried in the noise. The bar a
+sentence has to clear is that it says something neither the label nor the
+control can — what the app will do on its own, what a switch deliberately
+leaves alone, a cross-reference to another pane, or a consequence that isn't
+reversible. Network clears it on nearly every row, and the automatic-cleanup
+switch clears it because it moves files without being asked. Notifications,
+Updates, Magnet links and Appearance clear it nowhere, and now say nothing.
+
+The other half of this: **the app's privacy position is not a settings row.**
+"No accounts, no analytics, no tracking" sat in the bottom corner of the
+settings rail, where it was a slogan on a piece of furniture — the website is
+where a claim like that belongs, and it is still there.
+
 **Colour carries state and outcome. It never decorates.**
 
 | Hue | Means |
