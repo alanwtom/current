@@ -976,12 +976,11 @@
   .sha code{font-family:var(--mono); font-size:11.5px; line-height:1.6; color:var(--secondary);
             word-break:break-all; letter-spacing:.02em}
 
-  /* Uninstalling. Deliberately the quietest thing on the page and the last
-     thing on it — but it has to *be* here, because the honest version of "no
-     accounts, nothing leaves your Mac" includes saying what stays on it. */
-  .paths{margin:var(--s4) 0 0; padding:0; list-style:none}
-  .paths li{font-family:var(--mono); font-size:12px; line-height:1.9;
-            color:var(--secondary); word-break:break-all}
+  /* Uninstalling lives on its own unlisted page (uninstall.html) with its own
+     styles. It has to be written down somewhere — the honest version of "no
+     accounts, nothing leaves your Mac" includes saying what stays on it — but
+     it was the last thing on the front page, and how to remove the app is not
+     what the front page is for. */
 
   /* The window sits in its own pool of light, so it reads as an object on the
      page rather than a rectangle cut out of it. */
@@ -1344,21 +1343,6 @@
     </div>
   </section>
 
-  <section id="uninstall" class="reveal tight">
-    <div class="wrap">
-      <div class="col-wide">
-        <h2>Uninstalling.</h2>
-        <p class="body">Quit Current and drag it to the Trash. Your downloaded files are wherever you saved them and are not touched &mdash; deleting the app never deletes what it downloaded.</p>
-        <p class="body">Three things stay behind, holding your library, your settings and the list of peers Current has learned. Delete them and Current starts over as if newly installed:</p>
-        <ul class="paths">
-          <li>~/Library/Application Support/Current</li>
-          <li>~/Library/Preferences/org.current.torrent.plist</li>
-          <li>~/Library/Caches/org.current.torrent</li>
-        </ul>
-        <p class="body">If Current was opening your magnet links, macOS hands them back to your previous app once Current is gone. You can also set that yourself in System Settings, under Default Applications.</p>
-      </div>
-    </div>
-  </section>
 
 </main>
 
@@ -1367,6 +1351,8 @@
     <span>Current</span>
     <span>MIT&#8209;licensed &middot; Apple&nbsp;Silicon</span>
     <span>
+      <a href="./uninstall">Uninstalling</a>
+      <span class="dot" aria-hidden="true">&middot;</span>
       <a href="https://github.com/alanwtom/current">Source on GitHub</a>
       <span class="dot" aria-hidden="true">&middot;</span>
       <a href="https://alantom.dev">alantom.dev</a>

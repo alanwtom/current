@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Uninstalling Current</title>
+<meta name="description" content="How to remove Current from your Mac, and what it leaves behind.">
+<!-- Deliberately unlisted: nothing on the site links here, and search engines
+     are asked to leave it alone. It exists so the answer is written down
+     somewhere honest, not so it competes with the front page. -->
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://current.alantom.dev/uninstall">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" type="image/png" href="./icon.png">
+<link rel="apple-touch-icon" href="./icon.png">
+<style>
+  @font-face{font-family:'DM Sans';src:url('./fonts/dmsans-latin.woff2') format('woff2');
+    font-weight:100 1000; font-style:normal; font-display:swap;}
+
+  :root{
+    --text:#ededf0;
+    --secondary:#a1a1aa;
+    --quaternary:#52525b;
+    --accent:#3fa9ff;
+    --ground:#0a0a0a;
+    --r-4:4px; --r-6:6px;
+    --s1:4px; --s3:8px; --s4:12px; --s5:16px; --s6:20px; --s7:28px;
+    --sans:'DM Sans',-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+
+  *,*::before,*::after{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--text);
+    font-family:var(--sans); font-size:16px; line-height:1.55;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  img{display:block; max-width:100%; height:auto}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline; text-underline-offset:3px}
+  h1{margin:0; font-weight:600; letter-spacing:-.028em;
+     font-size:clamp(1.5rem,3.4vw,1.9rem); line-height:1.15}
+  p{margin:0}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:var(--r-4)}
+
+  .wrap{max-width:760px; margin:0 auto; padding:0 var(--s7)}
+  .mark{display:inline-flex; align-items:center; gap:var(--s3);
+        font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
+  .mark:hover{text-decoration:none}
+  .mark img{width:22px; height:22px; border-radius:var(--r-6)}
+  header{padding:var(--s6) 0}
+  main{padding:44px 0 0}
+  .body{margin-top:var(--s5); font-size:15.5px; line-height:1.65; color:var(--secondary)}
+  .body + .body{margin-top:var(--s4)}
+  .paths{margin:var(--s4) 0 0; padding:0; list-style:none}
+  .paths li{font-family:var(--mono); font-size:12px; line-height:1.9;
+            color:var(--secondary); word-break:break-all}
+  footer{padding:44px 0 64px; font-size:13px; color:var(--quaternary)}
+  footer a{color:var(--secondary)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="mark" href="./"><img src="./icon.png" alt="" width="22" height="22"><span>Current</span></a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <h1>Uninstalling.</h1>
+    <p class="body">Quit Current and drag it to the Trash. Your downloaded files are wherever you saved them and are not touched &mdash; deleting the app never deletes what it downloaded.</p>
+    <p class="body">Three things stay behind, holding your library, your settings and the list of peers Current has learned. Delete them and Current starts over as if newly installed:</p>
+    <ul class="paths">
+      <li>~/Library/Application Support/Current</li>
+      <li>~/Library/Preferences/org.current.torrent.plist</li>
+      <li>~/Library/Caches/org.current.torrent</li>
+    </ul>
+    <p class="body">If Current was opening your magnet links, macOS hands them back to your previous app once Current is gone. You can also set that yourself in System Settings, under Default Applications.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="./">Back to Current</a>
+  </div>
+</footer>
+
+</body>
+</html>
