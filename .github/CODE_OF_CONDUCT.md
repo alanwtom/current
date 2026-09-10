@@ -52,7 +52,7 @@ exist.
 Requests for content — asking where to download something, or for help finding
 it — aren't a conduct problem, they're just out of scope. Current has no
 search, no trackers and no indexes. Those issues get closed unanswered; see the
-[Scope](README.md#scope) section.
+[Scope](../README.md#scope) section.
 
 ---
 

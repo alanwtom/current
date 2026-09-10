@@ -15,5 +15,5 @@ contact_links:
       Please report privately rather than opening a public issue. This link
       goes straight to the private advisory form.
   - name: How to build it, and what a PR needs
-    url: https://github.com/alanwtom/current/blob/main/CONTRIBUTING.md
+    url: https://github.com/alanwtom/current/blob/main/.github/CONTRIBUTING.md
     about: Build instructions and the bar for a change to be merged.

@@ -51,10 +51,10 @@ interface bug from an engine one.
 - Reports about what some third party is hosting — this project hosts nothing
   and has no relationship with any tracker or index.
 
-**Security reports don't go in issues at all.** See [SECURITY.md](SECURITY.md)
+**Security reports don't go in issues at all.** See [SECURITY.md](.github/SECURITY.md)
 for the private route.
 
-**Pull requests are welcome**, and [CONTRIBUTING.md](CONTRIBUTING.md) sets the
+**Pull requests are welcome**, and [CONTRIBUTING.md](.github/CONTRIBUTING.md) sets the
 bar — the short version is that the reasoning behind a change matters as much as
 the change. One behaviour per PR. This is solo-maintained, so reviews can be
 slow; that is a queue, not disinterest. If you're planning something large, open
@@ -194,7 +194,7 @@ swift test
 | `Sources/CurrentApp` | SwiftUI/AppKit application |
 | `docs/ARCHITECTURE.md` | How it all fits together |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening pull requests.
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) before opening pull requests.
 
 ## License
 

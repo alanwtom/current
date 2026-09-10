@@ -65,10 +65,10 @@ echo "  version: $SHORT_VERSION ($BUILD_VERSION)"
 # (Apache-2.0) and Boost (BSL-1.0) all require their notice to travel with a
 # binary distribution, and this is the binary distribution. Regenerate with
 # Scripts/make-notices.sh after upgrading a dependency.
-if [[ -f "$ROOT/THIRD-PARTY-NOTICES.md" ]]; then
-    cp "$ROOT/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"
+if [[ -f "$ROOT/docs/THIRD-PARTY-NOTICES.md" ]]; then
+    cp "$ROOT/docs/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"
 else
-    echo "error: THIRD-PARTY-NOTICES.md missing — run: Scripts/make-notices.sh" >&2
+    echo "error: docs/THIRD-PARTY-NOTICES.md missing — run: Scripts/make-notices.sh" >&2
     exit 1
 fi
 

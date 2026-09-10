@@ -1,6 +1,6 @@
 # Third-party notices
 
-Current is MIT licensed (see [LICENSE](LICENSE)). It **redistributes** the
+Current is MIT licensed (see [LICENSE](../LICENSE)). It **redistributes** the
 components below inside `Current.app`, each of which carries its own licence.
 Their full texts follow, as those licences require.
 

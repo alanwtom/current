@@ -14,7 +14,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/THIRD-PARTY-NOTICES.md"
+OUT="$ROOT/docs/THIRD-PARTY-NOTICES.md"
 
 say() { print -P "%F{cyan}==>%f $1" }
 die() { print -P "%F{red}error:%f $1" >&2; exit 1 }
@@ -30,7 +30,7 @@ tmp="$(mktemp)"
 {
   print "# Third-party notices"
   print ""
-  print "Current is MIT licensed (see [LICENSE](LICENSE)). It **redistributes** the"
+  print "Current is MIT licensed (see [LICENSE](../LICENSE)). It **redistributes** the"
   print "components below inside \`Current.app\`, each of which carries its own licence."
   print "Their full texts follow, as those licences require."
   print ""
