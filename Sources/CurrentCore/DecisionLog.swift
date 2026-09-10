@@ -9,6 +9,7 @@ public struct DecisionRecord: Identifiable, Equatable, Sendable {
         case cleanedUp = "Cleaned up"
         case pausedForBattery = "Paused to save battery"
         case magnetTimedOut = "Magnet never resolved"
+        case bindingLost = "Stopped: connection unavailable"
     }
 
     public var id: UUID

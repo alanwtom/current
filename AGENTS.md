@@ -356,6 +356,75 @@ reason it wasn't there: the panel exists on every Mac, takes the keyboard, and
 is the only surface available when the window is closed. Everything that needs
 an *answer* still belongs in the window.
 
+## Confining transfers to one connection (the VPN binding)
+
+The Network pane can restrict every transfer to one network device — a VPN
+tunnel, or a named interface. `NetworkBinding` in `CurrentCore` is the pure
+part; `NetworkMonitor` in the app lists interfaces and resolves the choice
+against them; the shim applies it. Six things here are not obvious and all of
+them were paid for:
+
+- **Binding takes two libtorrent settings, not one.** `listen_interfaces`
+  covers incoming connections, the DHT, UDP tracker announces and — in 2.x —
+  HTTP tracker announces. Outgoing peer connections are bound *separately* by
+  `outgoing_interfaces`. Set only the first and peers still get reached over
+  whatever route the kernel prefers, which is the leak every comparable client
+  has shipped at some point.
+- **The unbound case is the bug, not just the absence of a feature.** Listening
+  on `0.0.0.0` makes libtorrent open one listen socket per interface and
+  announce from each — so with a VPN up, the tracker is told the tunnel address
+  *and* the real one.
+- **Never store the device name for "my VPN".** macOS renumbers `utun` on every
+  reconnect and leaves the dead ones behind until reboot, so a saved `utun4` is
+  wrong the first time the tunnel drops and returns. `NetworkBinding.activeVPN`
+  stores the *intent* and is resolved against the current snapshot every time.
+  Which tunnel counts is decided by the system's own routing (the primary
+  interface), not by the name.
+- **The indicator reads the engine, not the setting.** `listen_succeeded_alert`
+  and `listen_failed_alert` are forwarded through the shim so the pane can show
+  the address libtorrent actually bound to. Showing the user's *choice* back to
+  them is unfalsifiable, and "the screen said bound while traffic went
+  elsewhere" is the whole failure class here.
+- **Addresses come back scoped.** A real bind reports its IPv6 link-local
+  address as `fe80::…%en0`, and the interface list deliberately excludes
+  link-local (every interface on macOS has one, so counting them would make
+  "this connection has IPv6" true everywhere and kill the warning about an
+  IPv4-only tunnel). `ListenState.confirms` therefore treats a `%device` suffix
+  as evidence in itself. An earlier version compared addresses only and
+  reported a leak on every single successful bind.
+- **libtorrent posts listen alerts only when the setting actually changes.**
+  Re-applying an identical `listen_interfaces` emits nothing, and a binding
+  switched to a device that doesn't exist goes quiet rather than reporting a
+  failure. So `NetworkMonitor` clears its listen state whenever the resolved
+  outcome changes; otherwise the readout keeps showing sockets that were torn
+  down.
+- **Being blocked is a standing condition, not an event.** Stopping transfers
+  when the connection goes is done in `LibraryStore` — on the way in, per
+  snapshot — and not as a sweep at the moment the outcome flips. A sweep can
+  only ever act on the library as it stands at that instant, and torrents keep
+  arriving after that: restoring from disk happens well after the binding is
+  resolved, so a Mac that launched with the VPN down stopped *nothing*. Those
+  torrents were rewritten to read as stopped by `blockedByNetwork()` and never
+  told to stop, so the moment the tunnel came back they carried on — the one
+  thing this feature promises can't happen. Two rules fall out of it: the
+  engine's own state decides what to stop (a stored snapshot has already been
+  rewritten to look stopped, so reading that finds nothing to do), and the
+  number written to the decision log is what was *actually* stopped, reported
+  by the store, because the count taken when the connection dropped is zero on
+  exactly the launch that is about to stop six things.
+
+Two supporting rules: the session now starts with **no listen sockets at all**
+and the app's first `apply` opens them (same fail-closed reasoning as UPnP and
+LSD — a test that creates an engine and skips `apply` has no networking), and
+the OS port fallback is switched **off** while confined, because a bind that
+fails has to fail rather than quietly land somewhere else.
+
+`.unavailable` is a real instruction meaning "bind to nothing", and is not the
+same value as `.unrestricted`. Keeping them as separate cases rather than an
+optional device name is deliberate: they want opposite behaviour and an
+optional lets a caller confuse them. There is no setting to carry on without
+the connection you asked for, and there should not be one.
+
 ## Where a download goes
 
 The save folder is chosen on the confirm card, not at add time, and that

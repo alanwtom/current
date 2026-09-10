@@ -43,6 +43,13 @@ struct ChromeBar: View {
             // The combined rates are the first thing to go when the window gets
             // narrow. They are a nicety; the add button is not, and at 500pt the
             // two together pushed it off the right edge entirely.
+            // Ahead of the rates, and it survives the compact layout the rates
+            // don't. "Nothing is moving because the connection you asked for is
+            // gone" outranks "here is how fast nothing is moving", and this is
+            // the only place the window says it at all — the setting behind it
+            // is four clicks deep in a pane you last opened a month ago.
+            blockedMarker
+
             if !isCompact {
                 ActivityReadout()
             }
@@ -92,6 +99,48 @@ struct ChromeBar: View {
     }
 
     // MARK: - Pieces
+
+    /// Shown only while the engine is blocked from the network, and it is a
+    /// button: the answer is in the Network pane, so the thing that tells you
+    /// takes you there.
+    ///
+    /// Amber rather than red — nothing is broken and nothing was lost. The
+    /// connection you insisted on isn't there, which is a thing you can go and
+    /// fix. It carries a word as well as a glyph, because an unlabelled amber
+    /// dot in a title bar is a puzzle, and this appears at the exact moment
+    /// somebody is already confused about why their downloads stopped.
+    @ViewBuilder
+    private var blockedMarker: some View {
+        if store.transfersBlocked {
+            Button {
+                app.settingsTab = .network
+                app.isSettingsVisible = true
+            } label: {
+                HStack(spacing: Space.xs) {
+                    Image(systemName: "network.slash")
+                        .font(.system(size: 10, weight: .semibold))
+                    if !isCompact {
+                        Text("Transfers stopped")
+                            .typeStyle(Typo.caption)
+                    }
+                }
+                .foregroundStyle(Theme.warning)
+                .padding(.horizontal, Space.m)
+                .frame(height: Size.controlS)
+                .background(
+                    Capsule(style: .continuous).fill(Theme.warning.opacity(0.13))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Theme.warning.opacity(0.22), lineWidth: Size.hairline)
+                )
+            }
+            .buttonStyle(.plain)
+            .pressable()
+            .help("Transfers are confined to a connection that isn't available. Open Network settings.")
+            .transition(.opacity)
+        }
+    }
 
     private var sidebarToggle: some View {
         Button {

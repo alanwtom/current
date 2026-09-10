@@ -17,6 +17,7 @@ typedef enum {
     LT_EVENT_ERROR = 3,
     LT_EVENT_REMOVED = 4,
     LT_EVENT_RESUME_DATA = 5,
+    LT_EVENT_LISTEN = 6,
 } lt_event_kind;
 
 /* Values for lt_error_info.error_kind, matching EngineFailure.Kind in Swift. */
@@ -103,6 +104,23 @@ typedef struct {
     int64_t size;
 } lt_resume_data_info;
 
+/* Payload for LT_EVENT_LISTEN: one listen socket opened, or failed to.
+ *
+ * Several of these arrive per bind — TCP and UDP, IPv4 and IPv6 — so the app
+ * collects them rather than treating any one as the whole answer.
+ *
+ * `device` is only populated on failure: libtorrent's success notice carries
+ * the bound address and not the interface it belongs to, so the app matches the
+ * address back to a device using its own interface list. That asymmetry is the
+ * library's, not ours. */
+typedef struct {
+    const char* device;           /* interface aimed at; "" on success */
+    const char* address;          /* local address bound, or attempted */
+    int port;
+    int succeeded;                /* 1 = listening, 0 = bind failed */
+    const char* message;          /* technical detail when succeeded == 0 */
+} lt_listen_info;
+
 /*
  * Called on an engine-owned background thread whenever something notable
  * happens. All payload pointers are only valid until the callback returns;
@@ -155,6 +173,31 @@ typedef struct {
     int enable_lsd;
     int enable_port_mapping;
     int encryption_policy;
+    /*
+     * Confine every transfer to one network device — the VPN-binding setting.
+     *
+     * NULL or "" uses every interface, which is what the app did before this
+     * existed. A device name ("utun6", "en0") binds both halves: the listen
+     * sockets, which also carry DHT, UDP tracker announces and — in
+     * libtorrent 2.x — HTTP tracker announces, and outgoing peer connections,
+     * which are a separate setting and leak if you set only the first.
+     *
+     * Pass the device *name*, never an address. libtorrent will bind the socket
+     * to the device itself where the OS allows it, and only fall back to one of
+     * its addresses otherwise; binding to an address alone does not guarantee
+     * the traffic uses that adapter.
+     */
+    const char* bind_device;
+    /*
+     * Hard stop: the user asked for a device and it isn't there.
+     *
+     * Distinct from bind_device being NULL, and the difference is the whole
+     * point — one means "use anything", this means "use nothing". Set, the shim
+     * configures no listen sockets at all and points outgoing connections at a
+     * device that cannot exist, so the engine cannot fall back to the real
+     * connection while the app pauses transfers above it.
+     */
+    int block_network;
 } lt_settings;
 
 /* Returns 0 on success, -1 if the session is gone. */

@@ -260,6 +260,29 @@ final class AutomationCoordinator {
         }
     }
 
+    // MARK: - Network binding
+
+    /// Files the reason transfers were stopped because the connection they were
+    /// confined to went away.
+    ///
+    /// Written here rather than where the stop happens, so it sits in the same
+    /// log as every other automatic action — this is the one people will go
+    /// looking for after finding their downloads paused.
+    func recordBindingLost(reason: String, affected: Int) {
+        log(
+            .bindingLost,
+            torrentID: nil,
+            name: nil,
+            reasons: [
+                reason,
+                affected == 1
+                    ? "1 transfer was stopped"
+                    : "\(affected) transfers were stopped",
+                "Nothing will restart on its own — start them when the connection is back",
+            ]
+        )
+    }
+
     // MARK: - Decisions
 
     private func log(

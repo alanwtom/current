@@ -2,6 +2,10 @@ import XCTest
 import CryptoKit
 @testable import CurrentCore
 @testable import CurrentEngine
+// For `NetworkMonitor`: the binding tests below deliberately find an interface
+// through the same code the app uses, so a fault in that enumeration fails here
+// too rather than being papered over by a hand-written address.
+@testable import CurrentApp
 
 /// The only tests that touch a real network and a real swarm.
 ///
@@ -73,6 +77,12 @@ final class RealNetworkTests: XCTestCase {
 
         let engine = LibtorrentEngine()
         let events = await engine.events
+        // The session opens no listen sockets until it is configured — see
+        // `lt_session_create`, which fails closed so that a VPN-confined user
+        // never gets a moment of announcing from their real address. The app
+        // pushes its configuration during init; a test has to do the same or it
+        // has no networking at all.
+        await engine.apply(EngineConfiguration())
         let id = try await engine.addTorrentFile(torrent, saveDirectory: directory)
 
         // Fifteen minutes is generous for ~700 MB from a well-seeded swarm and
@@ -147,6 +157,12 @@ final class RealNetworkTests: XCTestCase {
 
         let engine = LibtorrentEngine()
         let events = await engine.events
+        // The session opens no listen sockets until it is configured — see
+        // `lt_session_create`, which fails closed so that a VPN-confined user
+        // never gets a moment of announcing from their real address. The app
+        // pushes its configuration during init; a test has to do the same or it
+        // has no networking at all.
+        await engine.apply(EngineConfiguration())
         let id = try await engine.addTorrentFile(torrent, saveDirectory: directory)
 
         // Peers, not bytes: the announce is what is being tested, and a peer
@@ -170,6 +186,217 @@ final class RealNetworkTests: XCTestCase {
         XCTAssertTrue(
             sawPeers,
             "no peer was reached through an HTTPS tracker in two minutes — the likeliest cause is that the bundled CA file is missing or not being used, which makes every HTTPS announce fail verification silently"
+        )
+    }
+
+    // MARK: - Confining transfers to one connection
+
+    /// Gathers the engine's listen reports so a binding can be checked against
+    /// what actually happened.
+    ///
+    /// Two things here are load-bearing, and both were learned the hard way:
+    ///
+    /// - The waiting is done with a **sleep, not by reading the stream**. A
+    ///   session that is listening nowhere emits nothing at all, so a
+    ///   `for await` loop that checks its deadline on each event waits forever
+    ///   in exactly the cases these tests exist to cover.
+    /// - The collector is **reset after the binding is applied**. A fresh
+    ///   session binds to everything before the test reconfigures it, and
+    ///   libtorrent does not always report the resulting teardown — so the
+    ///   pre-binding successes have to be discarded rather than contradicted.
+    ///
+    /// `discardingInitialReports` exists because libtorrent only re-opens its
+    /// listen sockets when the setting genuinely changes — applying a value it
+    /// already holds emits nothing. A test that reconfigures to the *same*
+    /// binding therefore has to keep the creation-time reports rather than
+    /// wait for replacements that will never come.
+    /// A port nothing else on the machine is likely to want.
+    ///
+    /// Not 6881. Binding switches the OS port fallback *off* on purpose — a
+    /// bind that fails has to fail rather than quietly land somewhere else — so
+    /// a test on the default port fails the moment a real copy of Current (or
+    /// any other torrent client) is running on the same Mac. That is correct
+    /// behaviour and a useless test, and it cost a confusing hour.
+    private static let testPort = 51999
+
+    private func listenAddresses(
+        of engine: LibtorrentEngine,
+        events: AsyncStream<EngineEvent>,
+        binding: BindingOutcome,
+        seconds: TimeInterval = 6,
+        discardingInitialReports: Bool = true
+    ) async -> (addresses: Set<String>, failures: [String]) {
+        actor Collector {
+            private var state = ListenState.unknown
+            private var failures: [String] = []
+
+            func apply(_ report: ListenReport) {
+                state.apply(report)
+                if !report.succeeded { failures.append(report.message) }
+            }
+            func reset() {
+                state = .unknown
+                failures = []
+            }
+            func result() -> (Set<String>, [String]) { (state.addresses, failures) }
+        }
+
+        let collector = Collector()
+        let reader = Task {
+            for await event in events {
+                if case .listenChanged(let report) = event {
+                    await collector.apply(report)
+                }
+            }
+        }
+        defer { reader.cancel() }
+
+        // Let the session's own creation-time bind finish being reported first,
+        // then throw those away — the order matters, because resetting *after*
+        // the new bind would discard the very reports being measured.
+        try? await Task.sleep(for: .seconds(3))
+        await engine.apply(
+            EngineConfiguration(listenPort: Self.testPort, binding: binding)
+        )
+        if discardingInitialReports { await collector.reset() }
+
+        try? await Task.sleep(for: .seconds(seconds))
+        let (addresses, failures) = await collector.result()
+        return (addresses, failures)
+    }
+
+    /// The engine must report where it *really* bound, not where it was asked
+    /// to. Without this the app's binding indicator is unfalsifiable — which is
+    /// how every comparable client has ended up showing "bound" while traffic
+    /// went out the real connection.
+    func testTheEngineReportsTheAddressItActuallyListensOn() async throws {
+        try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
+
+        let engine = LibtorrentEngine()
+        let events = await engine.events
+        let result = await listenAddresses(
+            of: engine, events: events, binding: .unrestricted,
+            discardingInitialReports: false
+        )
+
+        XCTAssertFalse(
+            result.addresses.isEmpty,
+            "the engine opened no listen sockets at all, so nothing downstream can confirm a binding"
+        )
+    }
+
+    /// An unconfined session listens on more than one interface, which is the
+    /// fault this feature fixes rather than a nicety.
+    ///
+    /// Listening on `0.0.0.0` makes libtorrent open a socket per interface and
+    /// announce from each, so a machine with a VPN up tells the tracker both
+    /// the tunnel address and the real one. Skipped on a machine with only one
+    /// usable interface, where there is nothing to demonstrate.
+    func testAnUnconfinedSessionListensOnEveryInterface() async throws {
+        try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
+
+        let usable = await MainActor.run { NetworkMonitor().selectableInterfaces }
+        try XCTSkipUnless(usable.count > 1, "only one usable interface on this Mac")
+
+        let engine = LibtorrentEngine()
+        let events = await engine.events
+        let result = await listenAddresses(
+            of: engine, events: events, binding: .unrestricted,
+            discardingInitialReports: false
+        )
+
+        print("  unconfined, listening on: \(result.addresses.sorted())")
+        XCTAssertGreaterThan(
+            result.addresses.count, 1,
+            "expected an unconfined session to listen on several addresses"
+        )
+    }
+
+    /// A device that cannot exist must produce no listen sockets.
+    ///
+    /// This is the shape of a dropped VPN, and the assertion is the one that
+    /// matters: **not** that it fails over to the real connection. An interface
+    /// name is capped at 15 characters by the OS and cannot contain a hyphen,
+    /// so nothing on any Mac matches this.
+    func testBindingToADeviceThatCannotExistListensNowhere() async throws {
+        try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
+
+        let engine = LibtorrentEngine()
+        let events = await engine.events
+        let result = await listenAddresses(
+            of: engine, events: events,
+            binding: .bound(device: "current-nodev", carriesIPv6: false)
+        )
+
+        XCTAssertTrue(
+            result.addresses.isEmpty,
+            "bound to a nonexistent device and still listening on \(result.addresses) — the binding is not being applied"
+        )
+    }
+
+    /// Losing the connection has to mean nothing is listening, and it must not
+    /// be treated as "no binding requested".
+    func testALostConnectionListensNowhere() async throws {
+        try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
+
+        let engine = LibtorrentEngine()
+        let events = await engine.events
+        let result = await listenAddresses(
+            of: engine, events: events,
+            binding: .unavailable(reason: "no VPN")
+        )
+
+        XCTAssertTrue(
+            result.addresses.isEmpty,
+            "a blocked network is still listening on \(result.addresses)"
+        )
+    }
+
+    /// **The test that proves the feature.** Bound to a device that exists,
+    /// every listen socket must sit on one of that device's own addresses and
+    /// on no others.
+    ///
+    /// Uses a real interface on the machine running the tests rather than
+    /// loopback: libtorrent declines to open listen sockets on `lo0` at all, so
+    /// a loopback test proves only that nothing happened. The production
+    /// enumeration path is used to find one, so a bug in that shows up here too.
+    func testBindingToARealDeviceListensOnlyOnThatDevice() async throws {
+        try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
+
+        let candidates = await MainActor.run {
+            NetworkMonitor().selectableInterfaces.filter {
+                $0.kind == .ordinary && $0.hasIPv4
+            }
+        }
+        guard let target = candidates.first else {
+            throw XCTSkip("no ordinary interface with an address to bind to")
+        }
+
+        let engine = LibtorrentEngine()
+        let events = await engine.events
+        let result = await listenAddresses(
+            of: engine, events: events,
+            binding: .bound(device: target.name, carriesIPv6: target.hasIPv6)
+        )
+
+        print("  bound to \(target.name), listening on: \(result.addresses.sorted())")
+        XCTAssertFalse(
+            result.addresses.isEmpty,
+            "nothing bound to \(target.name) at all: \(result.failures)"
+        )
+
+        // Checked through the same call the settings screen uses, so this
+        // proves the *indicator* as well as the binding. An earlier version
+        // compared addresses by hand here and passed while the real check was
+        // reporting a leak on every bind.
+        let state = ListenState(addresses: result.addresses)
+        XCTAssertEqual(
+            state.confirms(device: target.name, addresses: target.addresses), true,
+            """
+            bound to \(target.name) and listening on \(result.addresses.sorted()), \
+            but that device only has \(target.addresses.sorted()) — \
+            either traffic is leaving by another interface, or the check is wrong
+            """
         )
     }
 }

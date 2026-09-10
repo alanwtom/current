@@ -22,6 +22,8 @@ final class AppEnvironment: ObservableObject {
     let sidebarCounts: SidebarCounts
     /// Combined transfer rates for the chrome bar, coalesced to 1 Hz.
     let activity: ActivityModel
+    /// Network interfaces, and the binding resolved against them.
+    let network: NetworkMonitor
     let magnetFlow: MagnetFlowCenter
     let toasts: ToastCenter
     /// Nil under `-simulate`: a demo build has no business phoning a feed.
@@ -139,6 +141,7 @@ final class AppEnvironment: ObservableObject {
         self.cleanup = cleanup
         self.sidebarCounts = SidebarCounts(library: library, cleanup: cleanup)
         self.activity = ActivityModel(library: library)
+        self.network = NetworkMonitor()
         self.magnetFlow = MagnetFlowCenter()
         self.toasts = ToastCenter()
 
@@ -240,11 +243,44 @@ final class AppEnvironment: ObservableObject {
             publisher
                 .throttle(for: .seconds(0.4), scheduler: RunLoop.main, latest: true)
                 .sink { [weak self] _ in
-                    MainActor.assumeIsolated { self?.pushEngineConfiguration() }
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.network.updateBinding(self.settings.networkBinding)
+                        self.pushEngineConfiguration()
+                    }
                 }
                 .store(in: &configCancellables)
         }
-        pushEngineConfiguration()
+
+        // The library is what actually stops transfers, because torrents go on
+        // arriving after the connection has gone — restored from disk at
+        // launch, or handed over by the engine a moment later. It reports how
+        // many it stopped each time, and *that* is the number worth writing
+        // down: the count taken at the moment the connection dropped is zero on
+        // a Mac that launched without one, which is precisely when the most
+        // torrents are about to be stopped.
+        library.onStoppedByNetwork = { [weak self] count in
+            guard let self else { return }
+            self.automation.recordBindingLost(
+                reason: self.network.outcome.explanation,
+                affected: count
+            )
+        }
+
+        // A binding that has just been lost is not throttled with everything
+        // else. The engine is told immediately, and transfers stop.
+        network.onOutcomeChanged = { [weak self] outcome in
+            self?.bindingChanged(to: outcome)
+        }
+        network.updateBinding(settings.networkBinding)
+
+        // Launching already blocked is a real case, and it used to be the
+        // quietest one: the engine was configured correctly and nothing else
+        // ran, because the callback above only fires on a *change*. Restored
+        // torrents then sat there labelled "Downloading" against an engine
+        // with no sockets. Going through the same path as a VPN dropping means
+        // one behaviour for one situation.
+        bindingChanged(to: network.outcome)
 
         // The updater is not part of the engine configuration, but it is
         // driven by a setting the same way. Without this the switch in
@@ -279,10 +315,60 @@ final class AppEnvironment: ObservableObject {
     /// actually changed.
     private func pushEngineConfiguration() {
         let onBattery = power.isOnBattery || power.isLowPowerMode
-        let configuration = settings.engineConfiguration(onBattery: onBattery)
+        let configuration = settings.engineConfiguration(
+            onBattery: onBattery,
+            binding: network.outcome
+        )
         guard configuration != appliedConfiguration else { return }
         appliedConfiguration = configuration
         Task { [engine] in await engine.apply(configuration) }
+    }
+
+    /// Acts on the binding being gained, changed or lost.
+    ///
+    /// The engine is reconfigured first, because that is what actually closes
+    /// the sockets — and then transfers are stopped, because that is what makes
+    /// it visible and stops the queue starting anything new. Both halves are
+    /// needed: the engine block prevents bytes moving, the stop prevents the
+    /// app looking like it is still working, and it is also what stops
+    /// everything starting again by itself when the connection returns.
+    ///
+    /// There is deliberately no setting to carry on without the connection you
+    /// asked for. A switch reading "keep going if the VPN drops" is the one
+    /// most likely to be on and forgotten at the moment it matters most.
+    private func bindingChanged(to outcome: BindingOutcome) {
+        pushEngineConfiguration()
+
+        // The library owns both halves from here: it rewrites every row, and it
+        // stops whatever the engine still considers live — including torrents
+        // that only turn up later. One rule in one place, because the version
+        // that stopped transfers from here could only ever act on the library
+        // as it stood at that instant.
+        //
+        // Set before the early return below: coming back has to clear it, not
+        // just leaving.
+        library.setTransfersBlocked(outcome.blocksTransfers)
+
+        guard outcome.blocksTransfers else {
+            // The connection is back. Nothing is resumed automatically —
+            // a torrent that stopped for this reason is left for you to start,
+            // the same way `pendingRemoval` never acts on its own. Resuming a
+            // swarm join on a network that has only just settled is how you
+            // announce from the wrong address.
+            return
+        }
+
+        toasts.show(
+            .warning,
+            title: "Transfers stopped",
+            message: outcome.explanation,
+            actionTitle: "Settings",
+            coalesceKey: "network.binding",
+            action: { [weak self] in
+                self?.settingsTab = .network
+                self?.isSettingsVisible = true
+            }
+        )
     }
 
     /// Plain-language reason the current speed limits are what they are, for
@@ -325,6 +411,9 @@ final class AppEnvironment: ObservableObject {
             if case .selecting(let selectingID) = magnetFlow.stage, selectingID == id {
                 magnetFlow.dismiss()
             }
+
+        case .listenChanged(let report):
+            network.apply(report)
         }
     }
 
@@ -359,6 +448,20 @@ final class AppEnvironment: ObservableObject {
 
     func addMagnet(_ uri: String) async {
         let hint = DropParser.nameHint(fromMagnet: uri)
+
+        // Blocked from the network, a magnet cannot resolve — it has no
+        // metadata and no way to fetch any. Starting the flow anyway put up a
+        // "Resolving magnet…" card that spun for the full two-minute timeout
+        // and then gave up, which is indistinguishable from the app being
+        // broken and is what made this feature look like it did nothing.
+        //
+        // The link is still kept. Losing what someone clicked would be the
+        // wrong lesson to draw from "don't pretend to work".
+        if library.transfersBlocked {
+            await addWhileBlocked(uri, name: hint)
+            return
+        }
+
         magnetFlow.beginResolving(nameHint: hint)
         do {
             let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder)
@@ -366,6 +469,32 @@ final class AppEnvironment: ObservableObject {
         } catch {
             magnetFlow.resolveFailed(message: error.localizedDescription)
             let failure = (error as? EngineFailure) ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
+            toasts.show(.warning, title: failure.title, message: failure.explanation)
+        }
+    }
+
+    /// Takes the magnet, parks it, and says so. No flow card, because there is
+    /// no question to ask yet: which files and where it goes are decided from
+    /// metadata that cannot arrive until the connection is back.
+    private func addWhileBlocked(_ uri: String, name: String?) async {
+        do {
+            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder)
+            library.registerAdded(id, name: name, magnet: uri, saveDirectory: settings.downloadsFolder)
+            await engine.pause(id)
+            toasts.show(
+                .warning,
+                title: "Added, but not started",
+                message: network.outcome.explanation,
+                actionTitle: "Settings",
+                coalesceKey: "network.binding",
+                action: { [weak self] in
+                    self?.settingsTab = .network
+                    self?.isSettingsVisible = true
+                }
+            )
+        } catch {
+            let failure = (error as? EngineFailure)
+                ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
             toasts.show(.warning, title: failure.title, message: failure.explanation)
         }
     }

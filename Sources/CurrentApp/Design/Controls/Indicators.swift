@@ -107,6 +107,7 @@ struct StatePill: View {
         switch state {
         case .resolving: return "sparkle.magnifyingglass"
         case .downloading: return "arrow.down"
+        case .paused(.connectionUnavailable): return "network.slash"
         case .paused: return "pause.fill"
         case .seeding: return "arrow.up"
         case .completed: return "checkmark"
@@ -123,6 +124,7 @@ struct StatePill: View {
             switch origin {
             case .seedGoalReached: return "Goal met"
             case .battery: return "On battery"
+            case .connectionUnavailable: return "No connection"
             default: return "Paused"
             }
         case .seeding: return "Seeding"
@@ -138,6 +140,10 @@ struct StatePill: View {
         case .downloading, .checking: return Theme.downloading
         case .seeding: return Theme.seeding
         case .completed: return Theme.complete
+        // Amber, not grey: this is the one stopped state you can do something
+        // about, and what you do about it is outside the app — turn the VPN
+        // back on. Grey would file it with "paused", which needs nothing.
+        case .paused(.connectionUnavailable): return Theme.warning
         // Not a state so much as the absence of one.
         case .paused, .resolving: return Theme.textTertiary
         }

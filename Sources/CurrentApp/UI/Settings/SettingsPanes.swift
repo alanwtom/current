@@ -340,12 +340,71 @@ struct BandwidthPane: View {
 
 struct NetworkPane: View {
     @EnvironmentObject private var settings: SettingsStore
+    @EnvironmentObject private var app: AppEnvironment
+    @ObservedObject var network: NetworkMonitor
 
     private static let encryptionOptions: [(value: EncryptionPolicy, title: String, detail: String)] =
         EncryptionPolicy.allCases.map { ($0, $0.title, $0.detail) }
 
+    /// "Any connection", "My VPN", then one row per interface that could
+    /// actually carry a transfer.
+    ///
+    /// Flat rather than a mode picker with a second list inside it: there are
+    /// rarely more than three or four of these, and one list you can walk with
+    /// the arrow keys beats two controls where the second appears conditionally.
+    private var bindingOptions: [(value: NetworkBinding, title: String, detail: String)] {
+        var options: [(value: NetworkBinding, title: String, detail: String)] = [
+            (
+                .anyInterface,
+                "Any connection",
+                "Whatever your Mac would normally use."
+            ),
+            (
+                .activeVPN,
+                "My VPN",
+                "Follows the tunnel, including after it reconnects under a different name."
+            ),
+        ]
+        for interface in network.selectableInterfaces where interface.kind != .tunnel {
+            options.append((
+                .named(interface.name),
+                interface.label,
+                interface.hasIPv6 ? "IPv4 and IPv6." : "IPv4 only."
+            ))
+        }
+        return options
+    }
+
     var body: some View {
         SettingsPane {
+            SettingsGroup(
+                title: "Connection",
+                footer: "Confining transfers stops Current using any other connection, and stops everything if the one you picked goes away. It is not a system-wide kill switch — it can't stop macOS routing around it, so a firewall-level block is still stronger."
+            ) {
+                RadioGroup(selection: $settings.networkBinding, options: bindingOptions)
+                    .padding(.vertical, Space.m)
+                Hairline()
+                BindingStatusRow(
+                    outcome: network.outcome,
+                    isConfirmed: network.isBindingConfirmed,
+                    listen: network.listen
+                )
+            }
+
+            if settings.networkBinding.isRestricted {
+                SettingsGroup(title: "Switched off while confined") {
+                    ForEach(Array(settings.bindingSideEffects.reasons.enumerated()), id: \.offset) { entry in
+                        if entry.offset > 0 { Hairline() }
+                        Text(entry.element)
+                            .typeStyle(Typo.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, Space.m)
+                    }
+                }
+            }
+
             SettingsGroup(
                 title: "Incoming connections",
                 footer: "Without a reachable port you can still download, but fewer peers can reach you and speeds suffer."
@@ -354,11 +413,21 @@ struct NetworkPane: View {
                     NumberField(value: $settings.listenPort, range: 1024...65535, grouped: false)
                 }
                 Hairline()
+                // Shown off and unusable while confined, because that is what
+                // it actually is. A switch reading "on" over a setting the app
+                // is overriding is the kind of dead control this pane exists to
+                // not have.
                 ToggleRow(
                     title: "Map the port automatically",
-                    detail: "Uses UPnP or NAT-PMP to ask your router to forward it.",
-                    isOn: $settings.isPortMappingEnabled
+                    detail: settings.bindingSideEffects.disablesPortMapping
+                        ? "Off while transfers are confined to one connection."
+                        : "Uses UPnP or NAT-PMP to ask your router to forward it.",
+                    isOn: overridden(
+                        $settings.isPortMappingEnabled,
+                        forcedOff: settings.bindingSideEffects.disablesPortMapping
+                    )
                 )
+                .disabled(settings.bindingSideEffects.disablesPortMapping)
             }
 
             SettingsGroup(title: "Finding peers") {
@@ -370,9 +439,15 @@ struct NetworkPane: View {
                 Hairline()
                 ToggleRow(
                     title: "Local peer discovery",
-                    detail: "Finds peers on your own network — fast, and uses no internet bandwidth.",
-                    isOn: $settings.isLocalDiscoveryEnabled
+                    detail: settings.bindingSideEffects.disablesLocalDiscovery
+                        ? "Off while transfers are confined to one connection."
+                        : "Finds peers on your own network — fast, and uses no internet bandwidth.",
+                    isOn: overridden(
+                        $settings.isLocalDiscoveryEnabled,
+                        forcedOff: settings.bindingSideEffects.disablesLocalDiscovery
+                    )
                 )
+                .disabled(settings.bindingSideEffects.disablesLocalDiscovery)
             }
 
             VStack(alignment: .leading, spacing: Space.m) {
@@ -382,6 +457,95 @@ struct NetworkPane: View {
                 RadioGroup(selection: $settings.encryption, options: Self.encryptionOptions)
             }
         }
+    }
+
+    /// Reads as off while something else is forcing it off, and refuses writes
+    /// so the stored preference survives — turn confinement back off and your
+    /// own choice is still there.
+    private func overridden(
+        _ binding: Binding<Bool>, forcedOff: Bool
+    ) -> Binding<Bool> {
+        Binding(
+            get: { forcedOff ? false : binding.wrappedValue },
+            set: { newValue in
+                guard !forcedOff else { return }
+                binding.wrappedValue = newValue
+            }
+        )
+    }
+}
+
+/// What the engine is really listening on, next to what was asked for.
+///
+/// Fixed height, and the reason matters: this is the only thing in the window
+/// that changes when the network does, and a row that grows by a line when a
+/// message appears would make the settings card re-measure itself. See the
+/// layout-churn notes in AGENTS.md.
+private struct BindingStatusRow: View {
+    let outcome: BindingOutcome
+    let isConfirmed: Bool?
+    let listen: ListenState
+
+    private static let height: CGFloat = 44
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Space.m) {
+            Circle()
+                .fill(tint)
+                .frame(width: 7, height: 7)
+                .frame(width: Size.iconColumn)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(headline)
+                    .typeStyle(Typo.label)
+                    .foregroundStyle(Theme.text)
+                Text(detail)
+                    .typeStyle(Typo.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: Self.height)
+    }
+
+    private var tint: Color {
+        switch outcome {
+        case .unrestricted: return Theme.progressIdle
+        case .unavailable: return Theme.failure
+        case .bound:
+            // "Can't tell yet" is amber, never green. Drawing an unconfirmed
+            // binding as confirmed is the exact failure this row exists to
+            // catch in other clients.
+            switch isConfirmed {
+            case .some(true): return Theme.complete
+            case .some(false): return Theme.failure
+            case .none: return Theme.warning
+            }
+        }
+    }
+
+    private var headline: String {
+        switch outcome {
+        case .unrestricted: return "Not confined"
+        case .unavailable: return "Stopped"
+        case .bound(let device, _):
+            switch isConfirmed {
+            case .some(true): return "Confined to \(device)"
+            case .some(false): return "Not using \(device)"
+            case .none: return "Waiting for \(device)"
+            }
+        }
+    }
+
+    /// Deliberately shows the addresses the engine reported rather than the
+    /// choice that was made. They are what a packet capture would show, so they
+    /// are the version of this that can be checked.
+    private var detail: String {
+        if case .unavailable(let reason) = outcome { return reason }
+        if let failure = listen.lastFailure, !listen.isListening { return failure }
+        guard listen.isListening else { return "No connection open yet." }
+        return "Listening on " + listen.addresses.sorted().joined(separator: ", ")
     }
 }
 

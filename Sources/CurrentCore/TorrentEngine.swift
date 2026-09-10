@@ -6,6 +6,13 @@ public enum EngineEvent: Sendable {
     case completed(TorrentID)
     case failed(TorrentID, EngineFailure)
     case removed(TorrentID)
+    /// The engine opened, or failed to open, one of its listen sockets.
+    ///
+    /// This is what makes the binding indicator worth believing. Without it the
+    /// app could only report the interface the user *picked*; every comparable
+    /// client has had bugs where that screen said one thing and the traffic did
+    /// another, and there is no way to tell the difference from the outside.
+    case listenChanged(ListenReport)
 
     public var torrentID: TorrentID? {
         switch self {
@@ -14,6 +21,7 @@ public enum EngineEvent: Sendable {
         case .completed(let id): return id
         case .failed(let id, _): return id
         case .removed(let id): return id
+        case .listenChanged: return nil
         }
     }
 }

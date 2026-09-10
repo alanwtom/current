@@ -264,7 +264,21 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
     settings_pack pack;
     pack.set_int(settings_pack::alert_mask,
                  alert_category::status | alert_category::error | alert_category::storage);
-    pack.set_str(settings_pack::listen_interfaces, "0.0.0.0:6881,[::]:6881");
+
+    // **No listen sockets until the app says so.**
+    //
+    // This used to open 0.0.0.0 and [::] here, which meant a session that
+    // listened on every interface for the moment between being created and the
+    // app's first `lt_apply_settings`. For most people that is harmless. For
+    // someone who has confined transfers to their VPN it is the one thing the
+    // setting exists to prevent: libtorrent opens a socket per interface and
+    // announces from each, so that window announced the real address too.
+    //
+    // Empty means networking off — no DHT, no tracker connections, nothing
+    // incoming — and the app opens exactly what was asked for a moment later.
+    // Same reasoning as the three switches below, and the gap is closed by
+    // `AppEnvironment` pushing its configuration during its own init.
+    pack.set_str(settings_pack::listen_interfaces, "");
 
     // The session starts with every outward-facing feature OFF, and the app
     // turns on whatever the user actually asked for in its first
@@ -353,6 +367,33 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                     std::string id = hex_id(removed->handle);
                     if (ctx->callback)
                         ctx->callback(ctx->user, LT_EVENT_REMOVED, id.c_str(), 1);
+                } else if (auto const* ok = alert_cast<listen_succeeded_alert>(a)) {
+                    // Proof that the binding took. The app shows what the
+                    // engine reports here rather than what the user picked,
+                    // because those two disagreeing is the entire failure mode
+                    // this feature has to be able to detect.
+                    std::string addr = ok->address.to_string();
+                    lt_listen_info info{};
+                    info.device = "";
+                    info.address = addr.c_str();
+                    info.port = ok->port;
+                    info.succeeded = 1;
+                    info.message = "";
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_LISTEN, &info, 1);
+                } else if (auto const* bad = alert_cast<listen_failed_alert>(a)) {
+                    // The normal way a dropped VPN announces itself: the device
+                    // is gone, so the bind fails. Unlike the success notice this
+                    // one does name the interface it was aiming at.
+                    std::string addr = bad->address.to_string();
+                    std::string detail = bad->message();
+                    char const* iface = bad->listen_interface();
+                    lt_listen_info info{};
+                    info.device = iface ? iface : "";
+                    info.address = addr.c_str();
+                    info.port = bad->port;
+                    info.succeeded = 0;
+                    info.message = detail.c_str();
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_LISTEN, &info, 1);
                 }
             }
 
@@ -592,10 +633,52 @@ int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
     pack.set_bool(settings_pack::enable_upnp, cfg->enable_port_mapping != 0);
     pack.set_bool(settings_pack::enable_natpmp, cfg->enable_port_mapping != 0);
 
-    char interfaces[64];
-    std::snprintf(interfaces, sizeof interfaces, "0.0.0.0:%d,[::]:%d",
-                  cfg->listen_port, cfg->listen_port);
-    pack.set_str(settings_pack::listen_interfaces, interfaces);
+    // Where the session is allowed to touch the network.
+    //
+    // Three states, and they are genuinely three: everything, one device, or
+    // nothing. The middle one is the VPN binding, and it takes *two* settings —
+    // `listen_interfaces` covers incoming connections, the DHT, UDP tracker
+    // announces and (in 2.x) HTTP tracker announces, while outgoing peer
+    // connections are bound separately by `outgoing_interfaces`. Setting only
+    // the first leaks: peers get reached over whatever route the kernel likes.
+    //
+    // Note what the unbound case does, because it is the bug this feature
+    // fixes: listening on 0.0.0.0 makes libtorrent open one listen socket per
+    // interface it finds and announce from each, so with a VPN up the tracker
+    // is told the tunnel address *and* the real one.
+    char interfaces[128];
+    bool const has_device = cfg->bind_device && cfg->bind_device[0] != '\0';
+
+    if (cfg->block_network) {
+        // No listen sockets at all. libtorrent documents this as disabling
+        // networking: no DHT, no tracker connections, nothing incoming.
+        pack.set_str(settings_pack::listen_interfaces, "");
+        // That still leaves outgoing TCP, which libtorrent will happily make
+        // over the default route. Aiming it at a device that cannot exist is
+        // what closes the last door — an interface name is capped at 15
+        // characters by the OS and cannot contain '-', so nothing real ever
+        // matches this, and the connection fails with "device not found".
+        pack.set_str(settings_pack::outgoing_interfaces, "current-no-net");
+    } else if (has_device) {
+        std::snprintf(interfaces, sizeof interfaces, "%s:%d",
+                      cfg->bind_device, cfg->listen_port);
+        pack.set_str(settings_pack::listen_interfaces, interfaces);
+        pack.set_str(settings_pack::outgoing_interfaces, cfg->bind_device);
+    } else {
+        std::snprintf(interfaces, sizeof interfaces, "0.0.0.0:%d,[::]:%d",
+                      cfg->listen_port, cfg->listen_port);
+        pack.set_str(settings_pack::listen_interfaces, interfaces);
+        pack.set_str(settings_pack::outgoing_interfaces, "");
+    }
+
+    // Fall back to an OS-assigned port only when nothing is being confined.
+    //
+    // The fallback is useful normally — the requested port is often already
+    // taken — but it is the wrong instinct while binding: a bind that fails
+    // must *fail*, visibly, rather than quietly succeeding somewhere the user
+    // didn't ask for and reporting itself as fine.
+    pack.set_bool(settings_pack::listen_system_port_fallback,
+                  !has_device && !cfg->block_network);
 
     // "Required" genuinely shrinks the reachable swarm, which is why it is a
     // deliberate choice rather than the default.
@@ -619,11 +702,13 @@ int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
 
     if (shim_logging()) {
         fprintf(stderr, "[shim] apply_settings dl=%d ul=%d conn=%d slots=%d "
-                        "active=%d/%d port=%d dht=%d lsd=%d pmp=%d enc=%d\n",
+                        "active=%d/%d port=%d dht=%d lsd=%d pmp=%d enc=%d "
+                        "bind=%s blocked=%d\n",
                 cfg->download_rate, cfg->upload_rate, cfg->max_connections,
                 cfg->max_upload_slots, cfg->active_downloads, cfg->active_seeds,
                 cfg->listen_port, cfg->enable_dht, cfg->enable_lsd,
-                cfg->enable_port_mapping, cfg->encryption_policy);
+                cfg->enable_port_mapping, cfg->encryption_policy,
+                has_device ? cfg->bind_device : "(any)", cfg->block_network);
         fflush(stderr);
     }
 

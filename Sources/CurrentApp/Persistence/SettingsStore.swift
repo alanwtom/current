@@ -48,6 +48,7 @@ final class SettingsStore: ObservableObject {
         static let lsdEnabled = "network.lsd"
         static let portMappingEnabled = "network.portMapping"
         static let encryption = "network.encryption"
+        static let binding = "network.binding"
     }
 
     private let database: AppDatabase
@@ -168,6 +169,23 @@ final class SettingsStore: ObservableObject {
     @Published var encryption: EncryptionPolicy {
         didSet { persist(encryption.rawValue, forKey: Keys.encryption) }
     }
+    /// Which connection every transfer is confined to.
+    ///
+    /// Stores the *intent*, not a device name — `.activeVPN` follows whatever
+    /// tunnel is up. macOS renumbers `utun` on every reconnect and leaves the
+    /// dead ones lying around, so a saved "utun4" is wrong the first time the
+    /// VPN drops and comes back. That is the long-standing complaint about
+    /// doing this on a Mac in other clients, and storing intent is the fix.
+    @Published var networkBinding: NetworkBinding {
+        didSet { persist(networkBinding.storedValue, forKey: Keys.binding) }
+    }
+
+    /// The exposures switched off because traffic is confined to one connection.
+    ///
+    /// Read by the Network pane so a switch it won't let you use can say why.
+    var bindingSideEffects: BindingSideEffects {
+        BindingSideEffects.forBinding(networkBinding)
+    }
 
     /// How the speed settings resolve, given the power source.
     var bandwidthPolicy: BandwidthPolicy {
@@ -180,9 +198,21 @@ final class SettingsStore: ObservableObject {
     }
 
     /// The single value handed to the engine. `onBattery` decides which set of
-    /// speed limits is in force.
-    func engineConfiguration(onBattery: Bool) -> EngineConfiguration {
-        EngineConfiguration(
+    /// speed limits is in force; `binding` is the confinement already resolved
+    /// against the interfaces that exist right now.
+    ///
+    /// Two switches are overridden here rather than in the engine, so that the
+    /// value handed over is the whole truth and nothing downstream has to know
+    /// about the interaction. Both defeat binding in ways you cannot see from
+    /// inside the app: port mapping reaches the router over the local network
+    /// rather than the tunnel, and local discovery multicasts what is being
+    /// downloaded from the real address whatever the tunnel is doing.
+    func engineConfiguration(
+        onBattery: Bool,
+        binding: BindingOutcome = .unrestricted
+    ) -> EngineConfiguration {
+        let effects = bindingSideEffects
+        return EngineConfiguration(
             rateLimits: bandwidthPolicy.effectiveLimits(onBattery: onBattery),
             maxConnections: maxConnections,
             maxUploadSlots: maxUploadSlots,
@@ -190,9 +220,10 @@ final class SettingsStore: ObservableObject {
             maxActiveSeeds: maxActiveSeeds,
             listenPort: listenPort,
             isDHTEnabled: isDHTEnabled,
-            isLocalDiscoveryEnabled: isLocalDiscoveryEnabled,
-            isPortMappingEnabled: isPortMappingEnabled,
-            encryption: encryption
+            isLocalDiscoveryEnabled: isLocalDiscoveryEnabled && !effects.disablesLocalDiscovery,
+            isPortMappingEnabled: isPortMappingEnabled && !effects.disablesPortMapping,
+            encryption: encryption,
+            binding: binding
         )
     }
 
@@ -257,6 +288,9 @@ final class SettingsStore: ObservableObject {
         self.isLocalDiscoveryEnabled = value(Keys.lsdEnabled).map({ $0 == "1" }) ?? true
         self.isPortMappingEnabled = value(Keys.portMappingEnabled).map({ $0 == "1" }) ?? true
         self.encryption = value(Keys.encryption).flatMap(EncryptionPolicy.init(rawValue:)) ?? .preferred
+        // Absent or unrecognised means "any connection", which is what the app
+        // did before this setting existed. Nobody gets confined by an upgrade.
+        self.networkBinding = NetworkBinding(storedValue: value(Keys.binding) ?? "")
     }
 
     var usedStorageBytes: Int64 = 0

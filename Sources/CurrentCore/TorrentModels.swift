@@ -51,6 +51,13 @@ public enum PauseOrigin: Equatable, Codable, Sendable {
     case seedGoalReached
     case battery
     case cleanup
+    /// Transfers are confined to one connection and that connection is gone.
+    ///
+    /// Separate from `.user` because the app did this, not you, and because a
+    /// torrent stopped this way must not read as "Paused" — that looks like a
+    /// button someone pressed, and the next thing anyone does with a paused
+    /// torrent is press play, which cannot work until the connection is back.
+    case connectionUnavailable
     case unknown
 }
 
@@ -275,5 +282,38 @@ public struct TorrentSnapshot: Identifiable, Equatable, Codable, Sendable {
 
     public var selectedBytes: Int64 {
         Int64(progress * Double(totalBytes))
+    }
+
+    /// How this torrent reads while the app is blocked from the network.
+    ///
+    /// Applied in one place, on the way from the engine to the screen, so every
+    /// surface follows without being taught about network bindings — the rows,
+    /// the inspector, the menu bar panel and the sidebar counts all switch on
+    /// `state` already.
+    ///
+    /// Two things it must do, and the second one is the reason it exists at
+    /// all: state stops claiming the torrent is working, and **every rate goes
+    /// to zero**. A blocked engine moves no bytes, so a rate on screen is
+    /// either a stale reading or a made-up one, and it is the single most
+    /// alarming thing the app could show — a number that says traffic is
+    /// leaving the machine over a connection you told it not to use.
+    ///
+    /// Finished and failed torrents are left exactly as they are. Neither is
+    /// waiting on the network, and rewriting them would lose a real outcome.
+    /// A torrent you paused yourself keeps saying so, for the same reason —
+    /// the connection is not why that one is stopped.
+    public func blockedByNetwork() -> TorrentSnapshot {
+        var copy = self
+        copy.downloadRate = 0
+        copy.uploadRate = 0
+
+        switch state {
+        case .completed, .failed, .paused:
+            return copy
+        case .resolving, .downloading, .seeding, .checking:
+            copy.state = .paused(.connectionUnavailable)
+            copy.etaSeconds = nil
+            return copy
+        }
     }
 }

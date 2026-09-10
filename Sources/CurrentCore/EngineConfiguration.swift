@@ -59,6 +59,15 @@ public struct EngineConfiguration: Equatable, Sendable {
     public var isLocalDiscoveryEnabled: Bool
     public var isPortMappingEnabled: Bool
     public var encryption: EncryptionPolicy
+    /// Which network device transfers are confined to, already resolved against
+    /// the interfaces present right now.
+    ///
+    /// The *resolved* outcome rather than the user's setting, because resolving
+    /// it needs to list the machine's interfaces and this struct crosses into a
+    /// pure module. The app resolves and hands the answer over; the engine only
+    /// has to apply it. `.unavailable` is a real instruction — bind to nothing —
+    /// and not the same as `.unrestricted`.
+    public var binding: BindingOutcome
 
     public init(
         rateLimits: RateLimits = .unlimited,
@@ -70,7 +79,8 @@ public struct EngineConfiguration: Equatable, Sendable {
         isDHTEnabled: Bool = true,
         isLocalDiscoveryEnabled: Bool = true,
         isPortMappingEnabled: Bool = true,
-        encryption: EncryptionPolicy = .preferred
+        encryption: EncryptionPolicy = .preferred,
+        binding: BindingOutcome = .unrestricted
     ) {
         self.rateLimits = rateLimits
         self.maxConnections = max(1, maxConnections)
@@ -82,6 +92,7 @@ public struct EngineConfiguration: Equatable, Sendable {
         self.isLocalDiscoveryEnabled = isLocalDiscoveryEnabled
         self.isPortMappingEnabled = isPortMappingEnabled
         self.encryption = encryption
+        self.binding = binding
     }
 }
 

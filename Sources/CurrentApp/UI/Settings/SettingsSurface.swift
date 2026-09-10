@@ -286,7 +286,10 @@ struct SettingsSurface: View {
         case .general: GeneralPane()
         case .appearance: AppearancePane()
         case .bandwidth: BandwidthPane()
-        case .network: NetworkPane()
+        // Handed the monitor as a value rather than reaching for it through the
+        // environment, so this pane observes network changes and nothing else
+        // in the card does.
+        case .network: NetworkPane(network: app.network)
         case .storage: StoragePane()
         case .seeding: SeedingPane()
         case .power: PowerPane()

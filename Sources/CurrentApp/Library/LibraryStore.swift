@@ -81,6 +81,25 @@ final class LibraryStore: ObservableObject {
     private(set) var metadataCache: [TorrentID: TorrentMetadata] = [:]
     private(set) var filePriorities: [TorrentID: [FilePriority]] = [:]
 
+    /// True while the engine is blocked from the network because a confined
+    /// connection is missing. Set by `AppEnvironment`, which owns the binding.
+    ///
+    /// Published, unlike the snapshots either side of it, because it changes
+    /// about as often as the user's VPN does and the whole window has to react
+    /// when it does. It is the one flag that rewrites what every row says.
+    @Published private(set) var transfersBlocked = false
+
+    /// Torrents stopped because the connection they were confined to went away.
+    ///
+    /// Tracked so that a torrent is told to stop once rather than on every
+    /// batch until the engine catches up — and so the number reported below is
+    /// how many were *newly* stopped, not how many are sitting there stopped.
+    private var stoppedByNetwork: Set<TorrentID> = []
+
+    /// Reports transfers the block has just stopped, so the app can write down
+    /// why. Never called with zero.
+    var onStoppedByNetwork: ((Int) -> Void)?
+
     let engine: any TorrentEngine
     private let database: AppDatabase
 
@@ -207,13 +226,81 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Event ingestion
 
+    /// Called by `AppEnvironment` when the confined connection is lost or comes
+    /// back. Rewrites what is already on screen rather than waiting for the
+    /// next engine batch, because the whole point is that the moment the VPN
+    /// drops the app stops claiming to be working.
+    ///
+    /// Nothing is rewritten on the way back. The engine's next batch is a
+    /// second away and carries the truth; inventing an active state here would
+    /// mean guessing which torrents libtorrent actually restarted.
+    func setTransfersBlocked(_ blocked: Bool) {
+        guard blocked != transfersBlocked else { return }
+        transfersBlocked = blocked
+        guard blocked else {
+            // The episode is over, so forget which torrents it stopped. None of
+            // them are resumed: one that stopped for this reason waits for you,
+            // the same way `pendingRemoval` never acts on its own.
+            stoppedByNetwork = []
+            return
+        }
+        var stopped = 0
+        for (id, snapshot) in snapshots {
+            if stopForNetwork(id, engineState: snapshot.state) { stopped += 1 }
+            snapshots[id] = snapshot.blockedByNetwork()
+        }
+        if stopped > 0 { onStoppedByNetwork?(stopped) }
+    }
+
+    /// Tells the engine to stop one torrent because the connection is gone, and
+    /// remembers that this is why. Returns true only the first time.
+    ///
+    /// **The engine's own state has to be passed in.** A blocked snapshot has
+    /// already been rewritten to read as stopped by the time it is stored, so
+    /// reading the state back out of `snapshots` would always find nothing to
+    /// do — the block would look applied and never have been.
+    ///
+    /// Only what the engine still considers live is stopped. A torrent you
+    /// paused yourself, one that finished, one that failed: all of them are
+    /// already stopped for a reason of their own, and overwriting that reason
+    /// would send you off to fix a VPN over a torrent you never started.
+    private func stopForNetwork(_ id: TorrentID, engineState: TorrentState) -> Bool {
+        guard engineState == .downloading || engineState == .seeding else { return false }
+        guard stoppedByNetwork.insert(id).inserted else { return false }
+        Task { [engine] in await engine.pause(id) }
+        return true
+    }
+
     func applySnapshots(_ batch: [TorrentSnapshot]) {
+        var stoppedNow = 0
         for var snapshot in batch {
             let existing = snapshots[snapshot.id]
             let record = records[snapshot.id]
 
             // Overlay app-owned truth onto engine truth.
             snapshot.pinned = record?.pinned ?? false
+
+            // **Torrents keep arriving after the connection has gone**, and
+            // this is where they are caught. Blocking used to be a single sweep
+            // at the moment the VPN dropped, over whatever was in the library
+            // right then — so anything that showed up later was never actually
+            // told to stop. At launch that was everything: restoring from disk
+            // happens well after the binding is resolved, so a Mac that started
+            // up with no VPN stopped nothing at all. Those torrents only *read*
+            // as stopped, and the moment the connection returned they carried
+            // on where they left off, which is the one thing this feature
+            // promises will never happen.
+            //
+            // Rewriting the snapshot comes second, and the order is the point:
+            // the engine's own state is what decides whether there is anything
+            // to stop, and the line below is what destroys it. Then nothing can
+            // read a rate off a torrent whose sockets are shut — a row claiming
+            // to be downloading over a connection the user forbade is the worst
+            // thing this app could show.
+            if transfersBlocked {
+                if stopForNetwork(snapshot.id, engineState: snapshot.state) { stoppedNow += 1 }
+                snapshot = snapshot.blockedByNetwork()
+            }
 
             if let existing {
                 snapshot.completedAt = existing.completedAt
@@ -250,6 +337,10 @@ final class LibraryStore: ObservableObject {
             }
         }
         objectWillChange.send()
+
+        // After the rows are settled, so the reason lands in the log against a
+        // library that already agrees with it.
+        if stoppedNow > 0 { onStoppedByNetwork?(stoppedNow) }
     }
 
     func applyMetadata(_ metadata: TorrentMetadata) {

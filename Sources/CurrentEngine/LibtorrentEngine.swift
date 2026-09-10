@@ -237,6 +237,17 @@ public actor LibtorrentEngine: TorrentEngine {
                 : nil
             Task { await self.resumeDataArrived(id, data) }
 
+        case LT_EVENT_LISTEN:
+            let info = payload.assumingMemoryBound(to: lt_listen_info.self).pointee
+            let report = ListenReport(
+                address: info.address.map(String.init(cString:)) ?? "",
+                port: Int(info.port),
+                device: info.device.map(String.init(cString:)) ?? "",
+                succeeded: info.succeeded != 0,
+                message: info.message.map(String.init(cString:)) ?? ""
+            )
+            Task { await self.listenChanged(report) }
+
         default:
             break
         }
@@ -311,6 +322,10 @@ public actor LibtorrentEngine: TorrentEngine {
         saveDirectories[id] = nil
         addedDates[id] = nil
         continuation.yield(.removed(id))
+    }
+
+    private func listenChanged(_ report: ListenReport) {
+        continuation.yield(.listenChanged(report))
     }
 
     // MARK: - TorrentEngine
@@ -485,9 +500,23 @@ public actor LibtorrentEngine: TorrentEngine {
         case .preferred: 1
         case .required: 2
         }
+        settings.block_network = configuration.binding.blocksTransfers ? 1 : 0
 
-        let result = withUnsafePointer(to: &settings) {
-            lt_apply_settings(session, $0)
+        // The device name is only valid inside `withCString`, so the whole
+        // apply happens in there rather than the pointer being stashed and used
+        // after the string has gone.
+        func applyWith(device devicePointer: UnsafePointer<CChar>?) -> Int32 {
+            settings.bind_device = devicePointer
+            return withUnsafePointer(to: &settings) {
+                lt_apply_settings(session, $0)
+            }
+        }
+
+        let result: Int32
+        if let device = configuration.binding.device {
+            result = device.withCString { applyWith(device: $0) }
+        } else {
+            result = applyWith(device: nil)
         }
         if result != 0 {
             NSLog("Current: engine rejected session settings")
