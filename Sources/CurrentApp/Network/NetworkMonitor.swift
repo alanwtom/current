@@ -29,32 +29,56 @@ final class NetworkMonitor: ObservableObject {
     /// — when a binding has been lost — transfers can be stopped.
     var onOutcomeChanged: ((BindingOutcome) -> Void)?
 
+    /// Where the interface list comes from.
+    ///
+    /// The app asks the real machine. A test hands over a scripted list, and
+    /// that is the only way to reach the case this whole design exists for —
+    /// a tunnel dying and coming back under a different name. You cannot ask
+    /// the OS to stage that, and every bug worth catching here lives in what
+    /// the app does across the transition rather than at either end of it.
+    typealias InterfaceSource = @MainActor () -> [NetworkInterface]
+
     private var binding: NetworkBinding = .anyInterface
-    private let pathMonitor = NWPathMonitor()
+    private let interfaceSource: InterfaceSource
+    private let pathMonitor: NWPathMonitor?
     private let queue = DispatchQueue(label: "com.current.network-monitor")
     private var primaryName: String?
 
-    init() {
-        pathMonitor.pathUpdateHandler = { path in
-            // Only the interface *name* crosses the queue boundary. `NWPath`
-            // and `NWInterface` are reference-backed and have no business being
-            // handed to the main actor.
-            //
-            // `availableInterfaces` is ordered by the system's own preference
-            // for the default route, so the first is the primary — and when a
-            // VPN takes over the default route, macOS makes the tunnel primary.
-            // That is the fact that makes "my VPN" mean something specific.
-            let primary = path.availableInterfaces.first?.name
-            Task { @MainActor [weak self] in
-                self?.primaryChanged(to: primary)
+    /// - Parameters:
+    ///   - interfaces: what the machine looks like. Defaults to asking the OS.
+    ///   - watchesSystemPath: whether to follow the system's own choice of
+    ///     primary interface. A test turns this off, because otherwise a VPN
+    ///     connecting on the machine running the tests would overwrite the
+    ///     scripted state part-way through and fail it for no reason.
+    init(
+        interfaces: @escaping InterfaceSource = NetworkMonitor.systemInterfaces,
+        watchesSystemPath: Bool = true
+    ) {
+        self.interfaceSource = interfaces
+        self.pathMonitor = watchesSystemPath ? NWPathMonitor() : nil
+
+        if let pathMonitor {
+            pathMonitor.pathUpdateHandler = { path in
+                // Only the interface *name* crosses the queue boundary. `NWPath`
+                // and `NWInterface` are reference-backed and have no business being
+                // handed to the main actor.
+                //
+                // `availableInterfaces` is ordered by the system's own preference
+                // for the default route, so the first is the primary — and when a
+                // VPN takes over the default route, macOS makes the tunnel primary.
+                // That is the fact that makes "my VPN" mean something specific.
+                let primary = path.availableInterfaces.first?.name
+                Task { @MainActor [weak self] in
+                    self?.primaryChanged(to: primary)
+                }
             }
+            pathMonitor.start(queue: queue)
         }
-        pathMonitor.start(queue: queue)
         refresh()
     }
 
     deinit {
-        pathMonitor.cancel()
+        pathMonitor?.cancel()
     }
 
     // MARK: - Inputs
@@ -78,14 +102,17 @@ final class NetworkMonitor: ObservableObject {
     /// Re-reads the interface list and re-resolves.
     func refresh() {
         let next = NetworkSnapshot(
-            interfaces: Self.enumerateInterfaces(),
+            interfaces: interfaceSource(),
             primaryName: primaryName
         )
         if next != snapshot { snapshot = next }
         recomputeOutcome()
     }
 
-    private func primaryChanged(to name: String?) {
+    /// Points the monitor at a different primary interface, the way the
+    /// system's path monitor does when a tunnel takes over the default route.
+    /// Not private so a test can stage that handover; the app never calls it.
+    func primaryChanged(to name: String?) {
         primaryName = name
         refresh()
     }
@@ -132,7 +159,11 @@ final class NetworkMonitor: ObservableObject {
     // MARK: - Enumeration
 
     /// Every interface the OS will admit to, with its addresses and flags.
-    private static func enumerateInterfaces() -> [NetworkInterface] {
+    ///
+    /// The default `InterfaceSource`, and the one layer of this file that no
+    /// test can stand in for: it is the translation from what the machine
+    /// really has to the value everything downstream reasons about.
+    static func systemInterfaces() -> [NetworkInterface] {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let first = head else { return [] }
         defer { freeifaddrs(head) }
