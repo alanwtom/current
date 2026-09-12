@@ -348,11 +348,43 @@ final class NetworkBindingTests: XCTestCase {
         XCTAssertNil(state.confirms(device: "utun6", addresses: []))
     }
 
-    func testNothingListeningIsNotConfirmation() {
-        XCTAssertEqual(
-            ListenState.unknown.confirms(device: "utun6", addresses: ["10.2.0.3"]),
-            false
+    /// Silence is not a leak. This used to answer `false`, which read on screen
+    /// as "your traffic is going somewhere else" during the ordinary gap
+    /// between choosing a connection and the engine opening a socket on it.
+    func testNothingReportedYetIsUnknownRatherThanALeak() {
+        XCTAssertNil(
+            ListenState.unknown.confirms(device: "utun6", addresses: ["10.2.0.3"])
         )
+    }
+
+    /// A reported failure *is* a real no, and has to stay distinguishable from
+    /// the silence above — otherwise the fix for one hides the other.
+    func testAFailureToListenIsNotConfirmation() {
+        var state = ListenState.unknown
+        state.apply(
+            ListenReport(
+                address: "10.2.0.3", port: 6881, device: "utun6",
+                succeeded: false, message: "Can't assign requested address"
+            )
+        )
+
+        XCTAssertEqual(state.confirms(device: "utun6", addresses: ["10.2.0.3"]), false)
+    }
+
+    /// A socket that goes away leaves the failure behind, so a dropped tunnel
+    /// stays a definite no rather than relaxing into "can't tell".
+    func testLosingTheOnlySocketIsNotConfirmation() {
+        var state = ListenState.unknown
+        state.apply(ListenReport(address: "10.2.0.3", port: 6881, succeeded: true))
+        XCTAssertEqual(state.confirms(device: "utun6", addresses: ["10.2.0.3"]), true)
+
+        state.apply(
+            ListenReport(
+                address: "10.2.0.3", port: 6881, device: "utun6",
+                succeeded: false, message: "Network is down"
+            )
+        )
+        XCTAssertEqual(state.confirms(device: "utun6", addresses: ["10.2.0.3"]), false)
     }
 
     // MARK: - Scoped addresses

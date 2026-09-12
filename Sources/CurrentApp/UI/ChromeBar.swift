@@ -44,11 +44,14 @@ struct ChromeBar: View {
             // narrow. They are a nicety; the add button is not, and at 500pt the
             // two together pushed it off the right edge entirely.
             // Ahead of the rates, and it survives the compact layout the rates
-            // don't. "Nothing is moving because the connection you asked for is
-            // gone" outranks "here is how fast nothing is moving", and this is
-            // the only place the window says it at all — the setting behind it
-            // is four clicks deep in a pane you last opened a month ago.
-            blockedMarker
+            // don't. "Which connection is carrying this" outranks "here is how
+            // fast it's going", and this is the only place the window says it at
+            // all — the setting behind it is four clicks deep in a pane you last
+            // opened a month ago.
+            BindingMarker(network: app.network) {
+                app.settingsTab = .network
+                app.isSettingsVisible = true
+            }
 
             if !isCompact {
                 ActivityReadout()
@@ -99,48 +102,6 @@ struct ChromeBar: View {
     }
 
     // MARK: - Pieces
-
-    /// Shown only while the engine is blocked from the network, and it is a
-    /// button: the answer is in the Network pane, so the thing that tells you
-    /// takes you there.
-    ///
-    /// Amber rather than red — nothing is broken and nothing was lost. The
-    /// connection you insisted on isn't there, which is a thing you can go and
-    /// fix. It carries a word as well as a glyph, because an unlabelled amber
-    /// dot in a title bar is a puzzle, and this appears at the exact moment
-    /// somebody is already confused about why their downloads stopped.
-    @ViewBuilder
-    private var blockedMarker: some View {
-        if store.transfersBlocked {
-            Button {
-                app.settingsTab = .network
-                app.isSettingsVisible = true
-            } label: {
-                HStack(spacing: Space.xs) {
-                    Image(systemName: "network.slash")
-                        .font(.system(size: 10, weight: .semibold))
-                    if !isCompact {
-                        Text("Transfers stopped")
-                            .typeStyle(Typo.caption)
-                    }
-                }
-                .foregroundStyle(Theme.warning)
-                .padding(.horizontal, Space.m)
-                .frame(height: Size.controlS)
-                .background(
-                    Capsule(style: .continuous).fill(Theme.warning.opacity(0.13))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Theme.warning.opacity(0.22), lineWidth: Size.hairline)
-                )
-            }
-            .buttonStyle(.plain)
-            .pressable()
-            .help("Transfers are confined to a connection that isn't available. Open Network settings.")
-            .transition(.opacity)
-        }
-    }
 
     private var sidebarToggle: some View {
         Button {
@@ -221,5 +182,102 @@ struct ChromeBar: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Add torrent ⌘N")
+    }
+}
+
+/// The state of the connection every transfer is confined to, in the title bar.
+///
+/// Shown whenever a binding is set, not only when it has failed. This used to
+/// be a "Transfers stopped" chip that appeared on the one bad outcome, so the
+/// *good* outcome — the VPN carrying everything, which is the whole point of
+/// turning this on — was invisible, and the only way to check it was to open
+/// the pane. A status light says both, and a light you see every day is one you
+/// can read at a glance on the day it changes colour.
+///
+/// **It reads the engine, not the setting.** `isBindingConfirmed` is nil until
+/// the engine reports the sockets it really opened, and that state is amber,
+/// never green. Drawing a chosen binding as a working one is the exact failure
+/// this feature exists to make visible.
+///
+/// **Its size never changes**, which is why the word is gone. A title-bar item
+/// that grows with its text re-measures the window, and this one changes state
+/// while somebody is looking at it — see the layout-churn rules in AGENTS.md.
+/// The glyph differs per state as well as the tint, so it doesn't rest on
+/// colour alone, and the sentence moves to the tooltip.
+private struct BindingMarker: View {
+
+    @ObservedObject var network: NetworkMonitor
+    let openSettings: () -> Void
+
+    var body: some View {
+        if let state {
+            Button(action: openSettings) {
+                Image(systemName: state.symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(state.tint)
+                    .frame(width: Size.controlS, height: Size.controlS)
+                    .background(
+                        Capsule(style: .continuous).fill(state.tint.opacity(0.13))
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(state.tint.opacity(0.22), lineWidth: Size.hairline)
+                    )
+            }
+            .buttonStyle(.plain)
+            .pressable()
+            .help(state.explanation)
+            .accessibilityLabel(state.explanation)
+            .transition(.opacity)
+        }
+    }
+
+    /// Nil when nothing is confined: there is no status to report, so the title
+    /// bar says nothing rather than carrying a permanent "off" light.
+    private var state: State? {
+        switch network.outcome {
+        case .unrestricted:
+            return nil
+        case .unavailable(let reason):
+            // Amber rather than red — nothing broke and nothing was lost. The
+            // connection you insisted on isn't there, which is something you
+            // can go and fix.
+            return State(
+                symbol: "network.slash",
+                tint: Theme.warning,
+                explanation: "Transfers are stopped. \(reason) Open Network settings."
+            )
+        case .bound(let device, _):
+            switch network.isBindingConfirmed {
+            case .some(true):
+                return State(
+                    symbol: "checkmark.shield.fill",
+                    tint: Theme.complete,
+                    explanation: "Transfers are confined to \(device). Open Network settings."
+                )
+            case .some(false):
+                // A broken shield, not a warning badge. The exclamation mark
+                // read as "your VPN is faulty", which is a claim about the
+                // tunnel this app is in no position to make. What it actually
+                // knows is narrower: the protection isn't in place.
+                return State(
+                    symbol: "shield.slash.fill",
+                    tint: Theme.failure,
+                    explanation: "Transfers are not going over \(device). Open Network settings."
+                )
+            case .none:
+                return State(
+                    symbol: "shield.lefthalf.filled",
+                    tint: Theme.warning,
+                    explanation: "Waiting for \(device) to confirm. Open Network settings."
+                )
+            }
+        }
+    }
+
+    private struct State {
+        let symbol: String
+        let tint: Color
+        let explanation: String
     }
 }

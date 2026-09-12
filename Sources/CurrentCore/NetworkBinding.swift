@@ -347,7 +347,14 @@ public struct ListenState: Equatable, Sendable {
     /// the whole point of this check is catching the case where a client claims
     /// to be bound while traffic goes elsewhere.
     public func confirms(device: String, addresses deviceAddresses: Set<String>) -> Bool? {
-        guard isListening else { return false }
+        // No sockets is two different answers, and collapsing them to `false`
+        // made the app cry leak on every binding that was merely still being
+        // set up. "Nothing has reported yet" is nil; only a reported failure is
+        // a real no. This matters more than it looks, because libtorrent posts
+        // listen alerts *only when the setting actually changes* — so a state
+        // that starts out wrongly false can stay wrongly false indefinitely,
+        // with no second alert coming to correct it.
+        guard isListening else { return lastFailure == nil ? nil : false }
 
         var unscoped: Set<String> = []
         for address in addresses {

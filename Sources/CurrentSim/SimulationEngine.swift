@@ -219,6 +219,36 @@ public actor SimulationEngine: TorrentEngine {
 
     public func apply(_ configuration: EngineConfiguration) {
         lastConfiguration = configuration
+        reportListening(for: configuration.binding)
+    }
+
+    /// Answers a binding the way a real session would, so the confirmed state
+    /// is reachable under `-simulate`.
+    ///
+    /// Without this the simulator never reports a socket, the app can only ever
+    /// say "waiting for the engine", and the one state worth looking at — the
+    /// tunnel actually carrying everything — cannot be seen without a real VPN.
+    /// The address is scoped (`fe80::…%utun4`), because that suffix is what a
+    /// real bind reports and what the app matches on; inventing a plain address
+    /// would confirm nothing and quietly test the wrong path.
+    private func reportListening(for binding: BindingOutcome) {
+        switch binding {
+        case .unrestricted:
+            continuation.yield(.listenChanged(
+                ListenReport(address: "0.0.0.0", port: 6881, succeeded: true)
+            ))
+        case .bound(let device, _):
+            continuation.yield(.listenChanged(
+                ListenReport(address: "fe80::1%\(device)", port: 6881, succeeded: true)
+            ))
+        case .unavailable(let reason):
+            continuation.yield(.listenChanged(
+                ListenReport(
+                    address: "", port: 0,
+                    succeeded: false, message: reason
+                )
+            ))
+        }
     }
 
     public func resumeData(for id: TorrentID) async -> Data? {
