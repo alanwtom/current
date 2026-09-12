@@ -1,5 +1,6 @@
 import XCTest
 import CurrentCore
+import CurrentSim
 @testable import CurrentApp
 
 /// A scripted machine, standing in for the real one.
@@ -226,10 +227,33 @@ final class NetworkMonitorTests: XCTestCase {
         monitor.updateBinding(.activeVPN)
         monitor.primaryChanged(to: "utun4")
 
-        XCTAssertEqual(monitor.isBindingConfirmed, false, "nothing reported yet")
+        XCTAssertNil(monitor.isBindingConfirmed, "nothing reported yet")
 
         monitor.apply(ListenReport(address: "10.2.0.3", port: 6881, succeeded: true))
         XCTAssertEqual(monitor.isBindingConfirmed, true)
+    }
+
+    /// The bug this distinction exists for. Connecting a VPN moves the outcome
+    /// to `.bound`, which clears the last engine report — and if that empty
+    /// state answers "leak", the app says so about a tunnel that is working,
+    /// and keeps saying it: libtorrent only posts a listen alert when the
+    /// setting *changes*, so no second alert arrives to correct it.
+    func testAFreshlyConnectedTunnelIsNotReportedAsALeak() {
+        let machine = ScriptedMachine()
+        machine.interfaces = [wifi()]
+
+        let monitor = machine.monitor()
+        monitor.updateBinding(.activeVPN)
+        monitor.primaryChanged(to: "en0")
+        guard case .unavailable = monitor.outcome else {
+            return XCTFail("no tunnel yet, so nothing to bind to")
+        }
+
+        // The tunnel comes up and takes over the default route.
+        machine.interfaces = [wifi(), tunnel("utun4")]
+        monitor.primaryChanged(to: "utun4")
+
+        XCTAssertNil(monitor.isBindingConfirmed, "waiting, not leaking")
     }
 
     /// The whole point of reading the engine rather than the setting: a socket
@@ -282,5 +306,33 @@ final class NetworkMonitorTests: XCTestCase {
         monitor.refresh()
 
         XCTAssertEqual(monitor.selectableInterfaces.map(\.name), ["en0", "utun7"])
+    }
+
+    // MARK: - The simulator answers like a session
+
+    /// `-simulate` is where every UI change gets checked, so the confirmed
+    /// state has to be reachable there. The simulator used to report no sockets
+    /// at all, which left the one state worth looking at — the tunnel really
+    /// carrying everything — impossible to see without connecting a real VPN.
+    func testASimulatedBindConfirmsInTheMonitor() async {
+        let engine = SimulationEngine()
+        let machine = ScriptedMachine()
+        machine.interfaces = [wifi(), tunnel("utun4")]
+
+        let monitor = machine.monitor()
+        monitor.updateBinding(.activeVPN)
+        monitor.primaryChanged(to: "utun4")
+        XCTAssertNil(monitor.isBindingConfirmed, "nothing reported yet")
+
+        let events = await engine.events
+        await engine.apply(EngineConfiguration(binding: monitor.outcome))
+
+        for await event in events {
+            guard case .listenChanged(let report) = event else { continue }
+            monitor.apply(report)
+            break
+        }
+
+        XCTAssertEqual(monitor.isBindingConfirmed, true)
     }
 }
