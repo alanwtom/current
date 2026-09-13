@@ -205,16 +205,16 @@
 
   /* ---- the pointer ------------------------------------------------------
      The waves lean toward the cursor: within about a fifth of the width, each
-     line is pulled roughly 40% of the way to wherever you are, so the ribbon
-     bulges under the pointer and the crossings move. Smoothed at 7% a frame,
-     which is slow enough that a flick of the mouse arrives as a swell rather
-     than a jump.
+     line is pulled roughly 30% of the way to wherever you are, so the ribbon
+     bulges under the pointer and the crossings move. Smoothed at 0.5% a frame,
+     which is slow enough that the ribbon drifts after the mouse like it is
+     heavy — a flick arrives many seconds later as a lazy swell, not a jump.
 
      It starts at the middle of the hero and near the first ribbon's own height,
      so at rest — and on a touchscreen, where this never gets a value at all —
      the bend it contributes is almost nothing.
      -------------------------------------------------------------------- */
-  var PULL = 0.42, REACH = 0.045, SMOOTH = 0.07;
+  var PULL = 0.30, REACH = 0.045, SMOOTH = 0.005;
   var pu = 0.5, pv = 0.42, tu = 0.5, tv = 0.42;
 
   function draw(t) {
