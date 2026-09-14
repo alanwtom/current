@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
+<!-- Same job as on the front page, and a file for the same reason: the site's
+     CSP is `script-src 'self'`, so an inline block is refused in production. -->
+<script src="./boot.js"></script>
 <title>Uninstalling Current</title>
 <meta name="description" content="How to remove Current from your Mac, and what it leaves behind.">
 <!-- Deliberately unlisted: nothing on the site links here, and search engines
@@ -28,6 +31,7 @@
     --s1:4px; --s3:8px; --s4:12px; --s5:16px; --s6:20px; --s7:28px;
     --sans:'DM Sans',-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --te-blur:12px; --grp-blur:4px; --te-step:55ms;
   }
 
   *,*::before,*::after{box-sizing:border-box}
@@ -59,6 +63,44 @@
             color:var(--secondary); word-break:break-all}
   footer{padding:44px 0 64px; font-size:13px; color:var(--quaternary)}
   footer a{color:var(--secondary)}
+
+  /* The same entrance as the front page, driven by the same reveal.js. This is
+     the page you land on once you have decided to leave, which is the last
+     place that should feel like a different, shabbier website — so the heading
+     resolves a word at a time and the paragraphs follow it down.
+
+     Nothing here scrolls into view: the page is one screen, so reveal.js puts
+     the whole thing in its load cascade and never builds an observer for it. */
+  .te-seg{display:inline-block; white-space:pre}
+  .js .te{opacity:0}
+  .js .te.te-ready{opacity:1}
+  .js .te.te-ready .te-seg{
+    opacity:0; transform:translateY(18px); filter:blur(var(--te-blur));
+    transition:opacity .9s ease, transform .9s ease, filter .9s ease;
+    transition-delay:calc(var(--te-base-ms,0ms) + var(--te-i,0) * var(--te-step));
+  }
+  .js .fade.in > .te.te-ready .te-seg{opacity:1; transform:none; filter:blur(0)}
+
+  .js .fade > :not(.te):not(.fade){opacity:0; transform:translateY(8px); filter:blur(var(--grp-blur));
+            transition:opacity .9s ease, transform .9s ease, filter .9s ease}
+  .js .fade.in > :not(.te):not(.fade){opacity:1; transform:none; filter:blur(0)}
+
+  .motion-off .te{opacity:1 !important}
+  .motion-off .te-seg,
+  .motion-off .fade > *{
+    opacity:1 !important; transform:none !important; filter:none !important;
+    transition:none !important; transition-delay:0s !important;
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .fade > *,.te,.te-seg{
+      opacity:1 !important; transform:none !important; filter:none !important;
+    }
+    *,*::before,*::after{
+      transition-duration:1ms !important; animation-duration:1ms !important;
+      transition-delay:0s !important;    animation-delay:0s !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -70,8 +112,8 @@
 </header>
 
 <main>
-  <div class="wrap">
-    <h1>Uninstalling.</h1>
+  <div class="wrap fade">
+    <h1 class="te">Uninstalling.</h1>
     <p class="body">Quit Current and drag it to the Trash. Your downloaded files are wherever you saved them and are not touched &mdash; deleting the app never deletes what it downloaded.</p>
     <p class="body">Three things stay behind, holding your library, your settings and the list of peers Current has learned. Delete them and Current starts over as if newly installed:</p>
     <ul class="paths">
@@ -89,5 +131,6 @@
   </div>
 </footer>
 
+<script src="./reveal.js" defer></script>
 </body>
 </html>

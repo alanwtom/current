@@ -81,7 +81,8 @@ Two things it must keep doing:
 `reveal.js` is separate from `demo.js` on purpose. They were briefly one file,
 and a runtime fault in the demo stopped the reveal observer running, which left
 every section below the hero at `opacity: 0` — a blank page. Separate files, and
-a three-second failsafe in `reveal.js`, mean the text shows whatever happens.
+the failsafes described under **Motion** below, mean the text shows whatever
+happens.
 
 ## The hero's background
 
@@ -121,12 +122,99 @@ Four things it has to keep doing, each of which was a bug first:
 Reduce Motion draws one frame and stops: no timer, and no pointer listener, so
 there is nothing left that could move.
 
-## Type and motion
+## Every script here is a file, and that is not a preference
+
+`vercel.json` sends `script-src 'self'` with no `'unsafe-inline'` and no nonce.
+**An inline `<script>` is refused outright in production and works perfectly
+against a local server** — the worst shape a bug can have, because every test
+you run before deploying passes.
+
+There were two, briefly: the checksum's copy handler and the two lines that set
+the `js` class. They are `copy.js` and `boot.js` now. If you add a third,
+it goes in a file too, or it goes in the CSP — and widening the CSP for a
+convenience is a bad trade on a page whose argument is that it sends nothing
+anywhere.
+
+## Type
 
 Montserrat 500 with about -0.02em tracking for display, DM Sans for body, on a
 near-black `#0a0a0a` ground — the app's own chrome colour is kept for the
 window and the cards so they sit *on* the page rather than dissolve into it.
-The entrance is a staggered rise-fade-unblur; sections repeat it on scroll.
+
+## Motion
+
+The page arrives top to bottom: blocks in the first viewport assemble as one
+continuous cascade on load, 130ms apart; blocks below the fold wait and stagger
+their own items in as they scroll up. That timing is deliberately unhurried and
+lives in `reveal.js`.
+
+Two things sit inside it, both taken from
+[motion-primitives.com](https://motion-primitives.com) and rebuilt without its
+40 KB of React:
+
+1. **Nothing fades without also coming into focus.** Every entrance pairs
+   opacity with a blur that resolves to zero — 4px for a block, 12px for a
+   word. Fading something in says it appeared; unblurring it says it came into
+   focus, and the second reads as considered in a way the first does not,
+   however long you spend on the curve. A word gets three times a block's blur
+   because a word is small: 4px across a card is a haze, 4px across "once" is
+   nothing at all.
+2. **Headlines arrive a word at a time** (`.te`, 55ms apart). A headline that
+   fades in as a block *is* a block and you can see that it is — the rectangle
+   is the thing moving. Split into words it stops being a shape and starts
+   being a sentence arriving.
+
+And one interaction: **a highlight travels rather than switching.** The nav's
+pill slides between links and resizes to fit each one; the Smart Seed switcher
+does the same. A highlight that moves is a highlight that was never two
+highlights.
+
+### Things that are the way they are for a reason
+
+- **The word split lives in `reveal.js`, not in a file of its own.** A word's
+  delay is the delay that file would have given the whole heading, plus its own
+  place in the line — two files that must agree about ordering are one file
+  with a race in it.
+- **Two exclusions stop anything animating twice.** A `.te` heading moves its
+  own words and must not also be moved as a block; a nested `.fade` moves its
+  own children and must not either. Doubled up, either is two overlapping rises
+  at different speeds over the same pixels, and it reads as mush.
+- **The segmented control needs no JavaScript.** Four radio buttons already
+  hold the state, so its sliding highlight is one custom property and one
+  transform. Below 560px it becomes two rows and the slide is turned off — one
+  highlight would have to jump a line, which is the thing sliding exists to
+  avoid.
+- **Hiding text is only safe if something is certain to put it back.** Every
+  rule that hides anything is written under `.js`, set by `boot.js` from the
+  head with no `defer` — scripting off hides nothing, and setting it before the
+  first paint means nothing flashes on and then vanishes. `boot.js` also arms a
+  2.5s timer that watches for `window.__revealOK`, which is the only way to
+  catch `reveal.js` never arriving: scripting is on in that case, so the
+  `<noscript>` block never applies, and without the timer the page would sit
+  blank with its own failsafe stranded inside the file that failed to load.
+- **`.te-ready` is added only once a split has actually worked**, so a heading
+  is never hidden by a failure, only by an entrance.
+- **Reduce Motion is handled twice.** The highlight is never built and the
+  cascade never runs; the CSS is the belt, for someone who changes the setting
+  without reloading. Zeroing the *delays* is the half that is easy to miss —
+  durations alone leave a cascade still arriving in sequence, instantly, one
+  block every 130ms, which is still the page revealing itself piece by piece.
+- **The words are still split under Reduce Motion.** They have to be: the class
+  that says the split worked is also the class that makes a heading visible.
+
+### What was deliberately left out
+
+motion-primitives ships a `BorderTrail` — a light that runs around a border
+forever. It is the best-looking thing on that site and it does not go here.
+This page argues that software should be quiet, and it already removed one hero
+background for being the loudest thing on it; a perpetual animation on the
+download button loses the same argument. Its custom cursor is out for the same
+reason.
+
+The demo window does not get any of this either, and that one is a rule rather
+than a taste: it is a replica of the app, so a flourish the app does not have
+would make it a replica of something that doesn't exist. Motion inside
+`.cd-demo` answers to `AGENTS.md`, not to this file.
 
 ## Assets
 
@@ -146,8 +234,35 @@ cwebp -lossless -z 9 library.png -o library.webp
 sips -Z 180 icon.png --out icon.png
 ```
 
+## The checksum
+
+Shown as eight characters, copied as all sixty-four. Nobody reads a SHA-256 by
+eye and nobody compares one that way either — its only real use is being pasted
+next to the output of `shasum`.
+
+**The value is written into the markup once, in full, and `copy.js` shortens
+what is displayed.** The obvious build is a short string in the text and the
+long one on the button, and that is two copies of a value that changes with
+every release, with nothing to notice when they stop agreeing — the page would
+quietly offer a checksum for a build nobody has.
+
+The button starts `hidden` and the script unhides it, so a page where `copy.js`
+never arrives shows the whole checksum and no button that does nothing.
+
+Two smaller things, both of which were wrong first:
+
+- **Catching the clipboard's rejection matters as much as checking it exists.**
+  `navigator.clipboard.writeText` refuses on a document that doesn't have focus
+  — any window the user has clicked away from — and the older `execCommand`
+  path has no such rule.
+- **If both routes refuse, the value is written out in full and selected.** The
+  first version called its done-handler on rejection as well as success, so the
+  button ticked whether or not anything had been copied, and a control that
+  reports success it did not have is worse than one that visibly fails.
+
 ## If the app changes
 
 The screenshots are `docs/images/*.png`, taken against `-simulate` so they are
 reproducible. Recapture them there, copy them here, and update the SHA-256 on
-the page — it is printed by `Scripts/release.sh` and the page states it as fact.
+the page — it is printed by `Scripts/release.sh` and the page states it as
+fact. There is exactly one place to change it: the `<code id="sha-value">`.

@@ -4,11 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
+<!-- First, and not deferred: it sets the class every hiding rule is written
+     under, and that has to be true before the first paint or the headlines
+     show and then vanish. It also arms the failsafe that catches reveal.js
+     never arriving. 300 bytes, same origin — see boot.js for why it is a file
+     and not an inline block. -->
+<script src="./boot.js"></script>
 <title>Current — a quiet BitTorrent client for macOS</title>
 <meta name="description" content="Current is a native macOS BitTorrent client built on the idea that torrenting is a background activity. Free, MIT-licensed, 10 MB, Apple Silicon, macOS 26+.">
 <link rel="canonical" href="https://current.alantom.dev/">
+<!-- The entrance no longer needs undoing here: every rule that hides something
+     is written under `.js`, and that class only exists if boot.js ran. What is
+     left is the demo, which is not a style but a working replica of the app
+     and has to be swapped for the screenshot it is a live version of. -->
 <noscript><style>
-  .fade > *{opacity:1 !important; transform:none !important}
   .cd-hint{display:none !important}
   .cd-demo{display:none !important}
   .demo-fallback{display:block !important}
@@ -64,6 +73,24 @@
     --ground:#0a0a0a;
     --expo:cubic-bezier(.16,1,.3,1);
     --mono:ui-monospace,"SF Mono",Menlo,monospace;
+
+    /* ---- the entrance -----------------------------------------------------
+       The page's own cascade — 130ms between blocks, .9s each — lives in
+       reveal.js and is deliberately unhurried. These three sit inside that
+       timing rather than arguing with it.
+
+       A word's step is short on purpose. A stagger is a texture, not a queue:
+       at 55ms the last word of a headline is still landing while you are
+       reading the first, and at twice that it is a list being read out to you.
+
+       The travelling highlight gets a little overshoot because it is the only
+       thing on the page that moves *between* two places, and something that
+       travels and then stops dead reads as a teleport with extra steps. */
+    --te-blur:12px;       /* a word, out of focus */
+    --grp-blur:4px;       /* a block, out of focus */
+    --te-step:55ms;       /* between one word and the next */
+    --travel:.42s;
+    --ease-travel:cubic-bezier(.34,1.12,.64,1);
   }
 
   *,*::before,*::after{box-sizing:border-box}
@@ -133,13 +160,35 @@
   .mark{display:flex; align-items:center; gap:var(--s3); font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
   .mark:hover{text-decoration:none}
   .mark img{width:22px; height:22px; border-radius:var(--r-6)}
-  .bar nav{margin-left:auto; display:flex; align-items:center; gap:var(--s1)}
+  .bar nav{position:relative; margin-left:auto; display:flex; align-items:center; gap:var(--s1)}
   .bar nav a{
+    position:relative; z-index:1;
     font-size:13px; color:var(--secondary); padding:5px 10px; border-radius:var(--r-6);
     transition:background var(--quick) var(--ease), color var(--quick) var(--ease);
   }
   .bar nav a:hover{background:var(--fill-subtle); color:var(--text); text-decoration:none}
   .bar nav a.on{background:var(--fill-muted); color:var(--text)}
+
+  /* ---- the highlight that travels ----------------------------------------
+     Four links, one highlight. It rests on Download and follows the pointer,
+     and the whole point is that it stays the *same* highlight: it slides from
+     where it was to where you are, instead of switching off behind one link
+     and on behind another. Its width and height come from whatever link it is
+     sitting on, so four labels of four different lengths need no numbers here.
+
+     The two flat backgrounds above are only turned off once it exists. No
+     script, Reduce Motion, or fewer than two links, and there is no highlight
+     and no `ab-on` — so the ordinary hover state is still there and the nav
+     still says what it is doing. */
+  .ab-thumb{
+    position:absolute; left:0; top:0; z-index:0; pointer-events:none;
+    border-radius:var(--r-6); background:var(--fill-muted);
+    transition:transform var(--travel) var(--ease-travel),
+               width    var(--travel) var(--ease-travel),
+               height   var(--travel) var(--ease-travel);
+  }
+  [data-ab].ab-on a:hover,
+  [data-ab].ab-on a.on{background:transparent}
   @media (max-width:520px){ .bar nav a.quiet{display:none} }
 
   /* ---- sections ---- */
@@ -326,14 +375,50 @@
   .seed fieldset{border:0; margin:0; padding:0}
   .seed legend{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%)}
   .seed input{position:absolute; opacity:0; width:1px; height:1px; margin:0; pointer-events:none}
-  .seg{display:grid; grid-template-columns:repeat(4,1fr); gap:2px; padding:3px; background:var(--fill-subtle); border-radius:10px; max-width:460px}
+  .seg{position:relative; display:grid; grid-template-columns:repeat(4,1fr); gap:2px; padding:3px; background:var(--fill-subtle); border-radius:10px; max-width:460px}
   .seg label{
+    position:relative; z-index:1;
     text-align:center; padding:7px 4px; border-radius:var(--r-8); cursor:pointer;
     font-size:13px; font-weight:600; letter-spacing:-.01em; color:var(--secondary);
-    transition:background var(--quick) var(--ease), color var(--quick) var(--ease);
+    transition:color var(--quick) var(--ease);
   }
   .seg label:hover{color:var(--text)}
-  @media (max-width:560px){ .seg{grid-template-columns:repeat(2,1fr)} }
+
+  /* The same travelling highlight as the nav's, and this one needs no script
+     at all — four radio buttons already hold the state, so the slide is one
+     custom property and one transform.
+
+     The width is the track: the control less its own 3px of padding either
+     side and the three 2px gaps between four labels. A percentage inside
+     `translateX` is a percentage of the thing being moved, so one step across
+     is its own width plus one gap. */
+  .seg::before{
+    content:""; position:absolute; z-index:0; top:3px; bottom:3px; left:3px;
+    width:calc((100% - 12px) / 4);
+    border-radius:var(--r-8);
+    background:var(--fill-strong);
+    box-shadow:inset 0 -2px 0 0 var(--accent);
+    transform:translateX(calc(var(--seg-i,0) * (100% + 2px)));
+    transition:transform var(--travel) var(--ease-travel);
+  }
+  #s1:checked ~ .seg{--seg-i:0}
+  #s2:checked ~ .seg{--seg-i:1}
+  #s3:checked ~ .seg{--seg-i:2}
+  #s4:checked ~ .seg{--seg-i:3}
+
+  /* Two rows, so there is nothing for one highlight to slide along — it would
+     have to jump a line, which is the thing sliding exists to avoid. Below
+     560px it goes back to lighting up the label you picked. */
+  @media (max-width:560px){
+    .seg{grid-template-columns:repeat(2,1fr)}
+    .seg::before{display:none}
+    #s1:checked ~ .seg label[for=s1],
+    #s2:checked ~ .seg label[for=s2],
+    #s3:checked ~ .seg label[for=s3],
+    #s4:checked ~ .seg label[for=s4]{
+      background:var(--fill-strong); box-shadow:inset 0 -2px 0 0 var(--accent);
+    }
+  }
 
   .panels{display:grid; margin-top:var(--s6)}
   .dp{grid-area:1/1; opacity:0; visibility:hidden; transition:opacity var(--quick) var(--ease)}
@@ -343,13 +428,12 @@
   .dp .head{display:flex; align-items:center; gap:var(--s4); flex-wrap:wrap; margin-bottom:var(--s6)}
   .dp .head .goal{font-size:13px; color:var(--secondary); font-variant-numeric:tabular-nums}
 
+  /* The picked label only states the colour now. Its background is the
+     travelling highlight sitting behind it, which is a different element. */
   #s1:checked ~ .seg label[for=s1],
   #s2:checked ~ .seg label[for=s2],
   #s3:checked ~ .seg label[for=s3],
-  #s4:checked ~ .seg label[for=s4]{
-    background:var(--fill-strong); color:var(--text);
-    box-shadow:inset 0 -2px 0 0 var(--accent);
-  }
+  #s4:checked ~ .seg label[for=s4]{color:var(--text)}
   #s1:focus-visible ~ .seg label[for=s1],
   #s2:focus-visible ~ .seg label[for=s2],
   #s3:focus-visible ~ .seg label[for=s3],
@@ -413,9 +497,58 @@
      first viewport start on load (reveal.js assigns delays in document order,
      so the visible page assembles as one sequence); blocks below the fold
      start when they scroll into view, staggering through their own items. */
-  .fade > *{opacity:0; transform:translateY(8px);
-            transition:opacity .9s ease, transform .9s ease}
-  .fade.in > *{opacity:1; transform:none}
+  /* Two exclusions, and both stop something being animated twice. A `.te`
+     heading moves its own words and must not also be moved as a block; a
+     nested `.fade` moves its own children and must not either. Doubled up,
+     either one is two overlapping rises at different speeds over the same
+     pixels, and it reads as mush rather than as motion. */
+  .js .fade > :not(.te):not(.fade){opacity:0; transform:translateY(8px); filter:blur(var(--grp-blur));
+            transition:opacity .9s ease, transform .9s ease, filter .9s ease}
+  .js .fade.in > :not(.te):not(.fade){opacity:1; transform:none; filter:blur(0)}
+
+  /* ---- text arrives a word at a time -------------------------------------
+     The one idea worth taking from motion-primitives.com, and the reason the
+     rest of this section exists. A headline that fades in as a block is a
+     block, and you can see that it is — the rectangle is the thing that moves.
+     Split into words it stops being a shape and starts being a sentence
+     arriving.
+
+     Blur is what makes it read as considered rather than as a slide. Fading
+     something in says it appeared; unblurring it says it came into focus, and
+     no amount of time spent on the curve gets the first one to the second.
+     Words get three times a block's blur because a word is small — 4px across
+     a card is a haze, 4px across "once" is nothing at all.
+
+     `.te-ready` is added by the script only once a split has actually worked,
+     so it is the difference between "these words are about to arrive" and
+     "this heading is hidden because something threw". No split, no class, no
+     hidden text.
+
+     inline-block because `transform` does nothing to an inline box, and the
+     spaces stay as real text nodes between the spans so a line still wraps
+     where it always did. */
+  .te-seg{display:inline-block; white-space:pre}
+  .js .te{opacity:0}
+  .js .te.te-ready{opacity:1}
+  .js .te.te-ready .te-seg{
+    opacity:0; transform:translateY(18px); filter:blur(var(--te-blur));
+    transition:opacity .9s ease, transform .9s ease, filter .9s ease;
+    /* When this heading's slot came up in the page's cascade, plus where the
+       word sits in the heading. reveal.js writes the first half; it is the
+       same delay it would have given the block. */
+    transition-delay:calc(var(--te-base-ms,0ms) + var(--te-i,0) * var(--te-step));
+  }
+  .js .fade.in > .te.te-ready .te-seg,
+  .js .te.te-ready.in .te-seg{opacity:1; transform:none; filter:blur(0)}
+
+  /* The last resort, set by the head's timer when reveal.js never arrives. It
+     pins rather than unwinds: whatever state anything was left in, this wins. */
+  .motion-off .te{opacity:1 !important}
+  .motion-off .te-seg,
+  .motion-off .fade > *{
+    opacity:1 !important; transform:none !important; filter:none !important;
+    transition:none !important; transition-delay:0s !important;
+  }
   .demo-fallback{display:none; width:100%; height:auto; border-radius:14px;
     box-shadow:0 0 0 1px rgba(255,255,255,.07), 0 32px 80px -24px rgba(0,0,0,.9)}
 
@@ -962,6 +1095,9 @@
   .sha-copy{display:inline-flex; align-items:center; justify-content:center;
             width:22px; height:22px; padding:0; border:0; border-radius:5px; cursor:pointer;
             background:transparent; color:var(--secondary); opacity:.7; transition:opacity .15s}
+  /* `hidden` is a display:none the rule above would otherwise beat. The button
+     carries it until the script has read the value it copies. */
+  .sha-copy[hidden]{display:none}
   .sha-copy:hover{opacity:1}
   .sha-copy.copied{color:var(--accent); opacity:1}
 
@@ -987,12 +1123,25 @@
     filter:blur(48px);
   }
 
-  @media (prefers-reduced-motion:reduce){
-    .fade > *{opacity:1; transform:none; transition:none}
-  }
+  /* Reduce Motion, in one place.
+     Zeroing the *delays* is the half that is easy to miss. Durations alone
+     leave a cascade still arriving in sequence, instantly, one block every
+     130ms — which is still the page revealing itself to you piece by piece,
+     and is exactly what the setting is asking it not to do.
 
+     The words are still split when this is on; they have to be, because the
+     class that says the split worked is also the class that makes a heading
+     visible. They simply all arrive at once. */
   @media (prefers-reduced-motion:reduce){
-    *,*::before,*::after{transition-duration:1ms !important; animation-duration:1ms !important}
+    html{scroll-behavior:auto}
+    .fade > *,.te,.te-seg{
+      opacity:1 !important; transform:none !important; filter:none !important;
+    }
+    .ab-thumb,.seg::before{transition:none !important}
+    *,*::before,*::after{
+      transition-duration:1ms !important; animation-duration:1ms !important;
+      transition-delay:0s !important;    animation-delay:0s !important;
+    }
   }
 </style>
 </head>
@@ -1003,11 +1152,11 @@
   <div class="wrap">
     <div class="bar-pill">
       <a class="mark" href="#top"><img src="./icon.png" alt="" width="22" height="22"><span>Current</span></a>
-      <nav>
-        <a class="quiet" href="#magnet">Magnet</a>
-        <a class="quiet" href="#seed">Smart Seed</a>
-        <a class="quiet" href="https://github.com/alanwtom/current">Source</a>
-        <a class="on" href="#download">Download</a>
+      <nav data-ab>
+        <a class="quiet" data-ab-item href="#magnet">Magnet</a>
+        <a class="quiet" data-ab-item href="#seed">Smart Seed</a>
+        <a class="quiet" data-ab-item href="https://github.com/alanwtom/current">Source</a>
+        <a class="on" data-ab-item href="#download">Download</a>
       </nav>
     </div>
   </div>
@@ -1018,7 +1167,7 @@
   <div class="hero" id="top">
     <canvas class="ribbon" id="ribbon" aria-hidden="true"></canvas>
     <div class="wrap fade">
-      <h1>Torrenting is a background activity.</h1>
+      <h1 class="te">Torrenting is a background activity.</h1>
       <p class="lede">A native Mac torrent client that stays out of the way. Free and open source.</p>
       <div class="get">
         <a class="btn" href="./Current.dmg" download>
@@ -1133,8 +1282,8 @@
           <img src="./magnet-flow.webp" width="1760" height="924" loading="lazy" decoding="async"
                alt="A card over the library reading Cosmos Laundromat (2015) 4K, 1 files, 2.4 GB, with a save location of ~/Downloads/Current, a Change button, a Remember this location checkbox, and a blue Download 2.4 GB button.">
         </div>
-        <div class="txt">
-          <h2>A magnet asks once.</h2>
+        <div class="txt fade">
+          <h2 class="te">A magnet asks once.</h2>
           <p class="body">Click a magnet link and one card asks what it is, how big, which files, and where it goes.</p>
           <p class="body">Tick <em>Remember this location</em> and it stops asking.</p>
           
@@ -1146,8 +1295,8 @@
   <section id="seed" class="tight">
     <div class="wrap">
       <div class="grid fade">
-        <div class="txt">
-          <h2>Every automatic decision explains itself.</h2>
+        <div class="txt fade">
+          <h2 class="te">Every automatic decision explains itself.</h2>
           <p class="body">Four policies. Pick one and the app tells you, in words, what it did and why.</p>
         </div>
         <div>
@@ -1287,8 +1436,8 @@
             
           </div>
         </div>
-        <div class="txt">
-          <h2>Cleanup only ever moves files to the Trash.</h2>
+        <div class="txt fade">
+          <h2 class="te">Cleanup only ever moves files to the Trash.</h2>
         </div>
       </div>
     </div>
@@ -1297,7 +1446,7 @@
   <section class="tight">
     <div class="wrap">
       <div class="col-wide fade">
-        <h2>Private by default.</h2>
+        <h2 class="te">Private by default.</h2>
         <p class="body">No accounts, no analytics, no telemetry. Nothing about you or your library is ever sent anywhere.</p>
         <p class="body">Current asks once, on first launch, whether it may check for updates. That check asks this site whether a newer version exists and sends nothing else.</p>
       </div>
@@ -1316,10 +1465,19 @@
         <span class="dot" aria-hidden="true">&middot;</span>
         <a href="https://github.com/alanwtom/current/blob/main/LICENSE">MIT&#8209;licensed</a>
       </p>
+      <!-- The checksum is written out once, in full, and shortened by the
+           script below. The obvious build is a short string in the text and
+           the long one on the button — two copies of a value that changes with
+           every release, and nothing to notice when they stop agreeing. The
+           page would quietly offer a checksum for a build nobody has.
+
+           The button starts `hidden` and the script unhides it, so if that
+           script never runs the page shows the whole checksum and no button
+           that does nothing. -->
       <p class="sha">
         <span>SHA&#8209;256</span>
-        <code>ae731ffb&hellip;</code>
-        <button class="sha-copy" type="button" data-sha="ae731ffb6b1e744df48f4f910decc876df3e0ff72c91f80ae8dd321e6f83556a" aria-label="Copy full SHA-256 checksum">
+        <code id="sha-value">ae731ffb6b1e744df48f4f910decc876df3e0ff72c91f80ae8dd321e6f83556a</code>
+        <button class="sha-copy" type="button" hidden data-copy-from="sha-value" data-clip="8" aria-label="Copy full SHA-256 checksum">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
             <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -1348,30 +1506,10 @@
 
 
 
-<script>
-  document.querySelectorAll('.sha-copy').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var done = function(){
-        btn.classList.add('copied');
-        setTimeout(function(){ btn.classList.remove('copied'); }, 1500);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(btn.dataset.sha).then(done, done);
-      } else {
-        var ta = document.createElement('textarea');
-        ta.value = btn.dataset.sha;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        done();
-      }
-    });
-  });
-</script>
 <script src="./ribbon.js" defer></script>
 <script src="./nav.js" defer></script>
 <script src="./reveal.js" defer></script>
+<script src="./copy.js" defer></script>
 <script src="./demo.js" defer></script>
 </body>
 </html>
