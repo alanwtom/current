@@ -9,6 +9,18 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+### Added
+
+- Settings → Network can keep every transfer on your VPN, or on one connection you name
+- If that connection drops, transfers stop and stay stopped until you start them again
+- A light in the title bar shows it at a glance: green confined, amber waiting, red not protected
+- "My VPN" keeps working when the tunnel reconnects, even though macOS renames it each time
+
+### Changed
+
+- Port mapping and local network discovery switch off while confined, since both go around a VPN
+- Most settings are now just a label and a switch, so the few real warnings stand out
+
 ## [1.2.0] — 2026-09-07
 
 ### Added
