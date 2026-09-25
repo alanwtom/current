@@ -65,8 +65,14 @@ public enum CleanupPlanner {
         policies: [TorrentID: SeedPolicy],
         now: Date = Date()
     ) -> CleanupPlan {
-        let directoriesInUse = Dictionary(grouping: snapshots, by: { $0.saveDirectory })
-            .compactMapValues { group -> Bool in group.count > 1 }
+        // Two torrents share files when they unpack into the same place, not
+        // when they merely live in the same folder. Keyed on the folder alone,
+        // this excluded every torrent in the default download folder — which
+        // is all of them — so automatic cleanup could never remove anything
+        // and a storage budget freed nothing.
+        let sharedContent = Dictionary(grouping: snapshots) {
+            ContentLocation.contentKey(saveDirectory: $0.saveDirectory, files: [], name: $0.name)
+        }.compactMapValues { group -> Bool in group.count > 1 }
 
         var candidates: [CleanupCandidate] = []
         var kept: [KeptTorrent] = []
@@ -99,7 +105,9 @@ public enum CleanupPlanner {
                 exclusions.append(.stillTransferring)
             }
 
-            if directoriesInUse[snapshot.saveDirectory] == true {
+            if sharedContent[ContentLocation.contentKey(
+                saveDirectory: snapshot.saveDirectory, files: [], name: snapshot.name
+            )] == true {
                 exclusions.append(.sharedWithOther)
             }
 

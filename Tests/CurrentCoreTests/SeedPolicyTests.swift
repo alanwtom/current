@@ -63,13 +63,6 @@ final class SeedPolicyTests: XCTestCase {
         XCTAssertFalse(decision.shouldStop)
     }
 
-    func testTemporaryFlagsEligibilityForCleanup() {
-        let snap = snapshot(uploaded: 1_200, downloaded: 1_000, seedSeconds: 0, seeds: 15)
-        let decision = SeedEvaluator.evaluate(snapshot: snap, policy: .temporary)
-        XCTAssertTrue(decision.shouldStop)
-        XCTAssertTrue(decision.reasons.contains { $0.contains("Ready for cleanup") })
-    }
-
     /// The ratio-only branch of the evaluator, which Temporary is now the
     /// only policy to exercise — this used to be written against `custom`,
     /// a policy nothing could select.
@@ -78,7 +71,11 @@ final class SeedPolicyTests: XCTestCase {
         XCTAssertFalse(SeedEvaluator.evaluate(snapshot: low, policy: .temporary).shouldStop)
 
         let high = snapshot(uploaded: 1_100, downloaded: 1_000, seedSeconds: 0, seeds: 50)
-        XCTAssertTrue(SeedEvaluator.evaluate(snapshot: high, policy: .temporary).shouldStop)
+        let decision = SeedEvaluator.evaluate(snapshot: high, policy: .temporary)
+        XCTAssertTrue(decision.shouldStop)
+        // The reason is what the Rules tab shows — automation that stops
+        // something has to say why, and Temporary's why is cleanup.
+        XCTAssertTrue(decision.reasons.contains { $0.contains("Ready for cleanup") })
     }
 
     func testIncompleteTorrentsAreNeverStopped() {

@@ -2,39 +2,6 @@ import XCTest
 import CurrentCore
 @testable import CurrentApp
 
-/// An engine that records what it was told to do, and does nothing else.
-///
-/// The simulator won't answer the question these tests ask. It models a
-/// *working* network, so a paused torrent there simply stops making up
-/// progress — which looks identical to a torrent the app never stopped at all.
-/// What has to be pinned down is narrower and not visible in any snapshot: that
-/// the engine was told.
-private actor RecordingEngine: TorrentEngine {
-    let events: AsyncStream<EngineEvent>
-    private let continuation: AsyncStream<EngineEvent>.Continuation
-
-    private(set) var paused: [TorrentID] = []
-    private(set) var resumed: [TorrentID] = []
-
-    init() {
-        var escaped: AsyncStream<EngineEvent>.Continuation!
-        events = AsyncStream { escaped = $0 }
-        continuation = escaped
-    }
-
-    func add(_ source: AddSource, saveDirectory: URL) async throws -> TorrentID {
-        TorrentID("added")
-    }
-    func pause(_ id: TorrentID) { paused.append(id) }
-    func resume(_ id: TorrentID) { resumed.append(id) }
-    func remove(_ id: TorrentID, deleteFiles: Bool) {}
-    func setFilePriorities(_ id: TorrentID, _ priorities: [FilePriority]) {}
-    func setSaveDirectory(_ id: TorrentID, _ directory: URL) {}
-    func forceRecheck(_ id: TorrentID) async {}
-    func resumeData(for id: TorrentID) async -> Data? { nil }
-    func apply(_ configuration: EngineConfiguration) {}
-}
-
 /// Whether a torrent confined to a connection that has gone is *actually*
 /// stopped, as opposed to merely drawn that way.
 ///

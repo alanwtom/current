@@ -27,6 +27,14 @@ struct LibraryRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCompactLayout) private var isCompact
     @State private var isHovering = false
+    /// The phase this row last settled in, to tell a download *finishing* from
+    /// a torrent that was simply restored complete. Nil until the row appears.
+    @State private var lastPhase: Phase?
+    /// Fire the finish (ripple, tick, light pass) and the failure shake. Only
+    /// ever bumped by a transition seen while the row was on screen, so a row
+    /// scrolled back into view never replays either.
+    @State private var finishes = 0
+    @State private var failures = 0
 
     var body: some View {
         HStack(spacing: Space.l) {
@@ -61,7 +69,9 @@ struct LibraryRow: View {
                     fraction: snapshot.progress,
                     tint: barTint,
                     reduceMotion: reduceMotion,
-                    indeterminate: isResolving
+                    indeterminate: isResolving,
+                    flow: barFlow,
+                    passTrigger: finishes
                 )
                 .frame(height: Size.track)
 
@@ -99,6 +109,14 @@ struct LibraryRow: View {
         .animation(Motion.adaptive(Motion.instant, reduceMotion: reduceMotion), value: isHovering)
         .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: isSelected)
         .onHover { isHovering = $0 }
+        .onAppear { lastPhase = phase }
+        // Keyed on the coarse phase, which changes a handful of times in a
+        // torrent's life — never on the per-tick snapshot.
+        .onChange(of: phase) { _, next in
+            if lastPhase == .transferring, next == .done { finishes += 1 }
+            if next == .failed, lastPhase != .failed { failures += 1 }
+            lastPhase = next
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -112,8 +130,21 @@ struct LibraryRow: View {
     /// column of filled coloured dots. Colouring only the glyph keeps the state
     /// readable at a glance while leaving the row calm. It stays the same size
     /// in every state so the names below stay aligned.
+    ///
+    /// **Finishing is the one moment a transfer gets.** When a download
+    /// becomes a seed or completes, the arrow drops out of the well, the new
+    /// glyph draws itself in, one ripple spreads from the well and one pass of
+    /// light crosses the bar. Every other change is the ordinary symbol
+    /// replace. The glyph gets a new identity only for a finish — so only a
+    /// finish transitions instead of morphing — and whether this change is one
+    /// is read from `lastPhase`, which still holds the old phase in the very
+    /// update that changes the glyph.
+    ///
+    /// A failure shakes the well once instead. See the vocabulary in `Motion`.
     private var stateGlyph: some View {
-        ZStack {
+        let size: CGFloat = isCompact ? 20 : 26
+        let finishing = lastPhase == .transferring && phase == .done
+        return ZStack {
             Circle()
                 .fill(Theme.fillSubtle)
             Circle()
@@ -122,9 +153,43 @@ struct LibraryRow: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(glyphTint)
                 .contentTransition(.symbolEffect(.replace.offUp))
+                .id(finishing ? finishes + 1 : finishes)
+                .transition(finishTransition)
         }
-        .frame(width: isCompact ? 20 : 26, height: isCompact ? 20 : 26)
+        .frame(width: size, height: size)
         .animation(Motion.adaptive(Motion.quick, reduceMotion: reduceMotion), value: glyphSymbol)
+        .shake(trigger: failures, reduceMotion: reduceMotion)
+        .overlay {
+            Ripple(trigger: finishes, tint: glyphTint, from: size, to: size * 2.7)
+        }
+    }
+
+    /// The arrow falls out of the bottom of the well; the finished glyph
+    /// draws on. Reduce Motion keeps a crossfade.
+    private var finishTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: AnyTransition(.symbolEffect(.drawOn)),
+            removal: .opacity.combined(with: .offset(y: 7))
+        )
+    }
+
+    /// The row's state at the grain the finish and the shake care about.
+    private enum Phase: Equatable {
+        case transferring, done, failed, other
+    }
+
+    private var phase: Phase {
+        switch effectiveState {
+        case .downloading: return .transferring
+        case .seeding, .completed: return .done
+        case .failed: return .failed
+        case .resolving, .paused, .checking: return .other
+        }
+    }
+
+    private var barFlow: ProgressTrack.Flow? {
+        ProgressTrack.Flow.of(effectiveState, snapshot: snapshot)
     }
 
     private var displayName: String {
@@ -188,7 +253,7 @@ struct LibraryRow: View {
             // moves up here. Otherwise a finished torrent would show nothing at
             // all in a narrow window.
             if isCompact {
-                StatePill(state: effectiveState, glyphOnly: true)
+                StatePill(state: effectiveState, glyphOnly: true, quiet: StatePill.quietInRow(effectiveState))
             }
         }
     }
@@ -249,7 +314,7 @@ struct LibraryRow: View {
             .foregroundStyle(Theme.complete)
 
         default:
-            StatePill(state: effectiveState)
+            StatePill(state: effectiveState, quiet: StatePill.quietInRow(effectiveState))
         }
     }
 

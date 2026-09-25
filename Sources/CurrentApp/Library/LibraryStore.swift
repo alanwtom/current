@@ -81,6 +81,15 @@ final class LibraryStore: ObservableObject {
     private(set) var metadataCache: [TorrentID: TorrentMetadata] = [:]
     private(set) var filePriorities: [TorrentID: [FilePriority]] = [:]
 
+    /// The last minute and a half of throughput per torrent, for the
+    /// inspector's graph. Unpublished for the same reason the snapshots are:
+    /// one torrent's curve changing is no reason to invalidate the library.
+    ///
+    /// Deliberately not persisted. It describes the last ninety seconds, and
+    /// ninety seconds that ended before the app was quit is not a thing anyone
+    /// wants to be shown on launch.
+    private(set) var rateHistory: [TorrentID: RateHistory] = [:]
+
     /// True while the engine is blocked from the network because a confined
     /// connection is missing. Set by `AppEnvironment`, which owns the binding.
     ///
@@ -137,6 +146,7 @@ final class LibraryStore: ObservableObject {
 
     func snapshot(for id: TorrentID) -> TorrentSnapshot? { snapshots[id] }
     func record(for id: TorrentID) -> TorrentRecord? { records[id] }
+    func rates(for id: TorrentID) -> RateHistory { rateHistory[id] ?? RateHistory() }
 
     var visibleTorrents: [TorrentSnapshot] {
         orderedIDs.compactMap { id -> TorrentSnapshot? in
@@ -273,6 +283,10 @@ final class LibraryStore: ObservableObject {
 
     func applySnapshots(_ batch: [TorrentSnapshot]) {
         var stoppedNow = 0
+        // Looked up in a set, not by scanning the list: this runs for every
+        // torrent every second, and `orderedIDs.contains` made the whole tick
+        // grow with the square of the library.
+        var listed = Set(orderedIDs)
         for var snapshot in batch {
             let existing = snapshots[snapshot.id]
             let record = records[snapshot.id]
@@ -322,13 +336,22 @@ final class LibraryStore: ObservableObject {
             let previousState = existing?.state
             snapshots[snapshot.id] = snapshot
 
+            // **After the blocked rewrite above, not before.** When the
+            // connection a torrent is confined to goes away, its rates are
+            // zeroed on the way in — and the graph has to flatline with them.
+            // Recording the engine's figures instead would draw a curve of
+            // traffic over sockets the app had just shut, which is the one
+            // thing the confinement feature promises can't be shown.
+            rateHistory[snapshot.id, default: RateHistory()]
+                .record(down: snapshot.downloadRate, up: snapshot.uploadRate)
+
             // Guard on the list, not on whether a snapshot existed. `existing`
             // is nil for a torrent that was just added by hand — `registerAdded`
             // puts the id in the list but cannot produce a snapshot, that comes
             // from the engine a moment later. Checking `existing` therefore
             // inserted the id a second time on the first stats batch after
             // every add, which duplicated the row and broke ForEach identity.
-            if !orderedIDs.contains(snapshot.id) {
+            if listed.insert(snapshot.id).inserted {
                 orderedIDs.insert(snapshot.id, at: 0)
             }
 
@@ -372,15 +395,21 @@ final class LibraryStore: ObservableObject {
         for id in ids {
             await engine.remove(id, deleteFiles: false)
             if deleteFiles {
-                deleteContentIfPossible(id)
+                trashContent(id)
             }
             snapshots[id] = nil
             records[id] = nil
             metadataCache[id] = nil
             filePriorities[id] = nil
+            rateHistory[id] = nil
+            // Added again later, it's a fresh torrent and gets the timeout.
+            restoredIDs.remove(id)
             selection.remove(id)
             orderedIDs.removeAll { $0 == id }
-            try? database.deleteTorrent(id: id)
+            // Through the same queue as the record writes, so an update still
+            // waiting in it can't land after this and bring the row back.
+            let database = self.database
+            writes.async { try? database.deleteTorrent(id: id) }
         }
         objectWillChange.send()
     }
@@ -536,11 +565,21 @@ final class LibraryStore: ObservableObject {
               let record = records[id],
               let snapshot = snapshots[id] ?? placeholderSnapshot(record: record, id: id)
         else { return }
-        Task.detached(priority: .utility) { [database] in
-            try? await MainActor.run {
-                try database.upsertTorrent(snapshot, policy: record.policy, pinned: record.pinned)
-            }
+        // In order, off the main thread. This was a detached task per write
+        // that then hopped straight back onto the main actor — so it ran on
+        // the main thread anyway, and in no particular order: pin and unpin in
+        // quick succession and the database could keep the pin.
+        let database = self.database
+        writes.async {
+            try? database.upsertTorrent(snapshot, policy: record.policy, pinned: record.pinned)
         }
+    }
+
+    private let writes = DispatchQueue(label: "dev.alantom.current.records", qos: .utility)
+
+    /// Waits for every record write made so far. At quit, and in tests.
+    func flushPendingWrites() {
+        writes.sync {}
     }
 
     private func placeholderSnapshot(record: TorrentRecord, id: TorrentID) -> TorrentSnapshot? {
@@ -556,17 +595,17 @@ final class LibraryStore: ObservableObject {
         )
     }
 
-    private func deleteContentIfPossible(_ id: TorrentID) {
-        guard let snapshot = snapshots[id] else { return }
-        let folder = snapshot.saveDirectory.appendingPathComponent(snapshot.name)
-        let candidates = [
-            folder,
-            snapshot.saveDirectory.appendingPathExtension(snapshot.name),
-        ]
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
-            try? FileManager.default.trashItem(at: candidate, resultingItemURL: nil)
-            return
-        }
+    /// Moves a torrent's own files to the Trash. See `ContentTrash`.
+    var contentTrash = ContentTrash()
+
+    @discardableResult
+    func trashContent(_ id: TorrentID) -> Int {
+        guard let snapshot = snapshots[id] else { return 0 }
+        return contentTrash.trashContent(
+            id: id,
+            saveDirectory: snapshot.saveDirectory,
+            files: metadataCache[id]?.files ?? []
+        )
     }
 
     /// Drops selected ids that no longer exist.
@@ -659,29 +698,99 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Resume restoration
 
-    func restoreResumeData() async {
+    /// Re-adds every saved torrent. Returns how many couldn't be restored.
+    ///
+    /// The count is the point. Every restore used to fail — resume data was
+    /// fed to the .torrent parser — and `try?` threw each failure away, so the
+    /// app came back after every relaunch without the torrents it had been
+    /// running and never said a word.
+    @discardableResult
+    /// Brings back every saved torrent. Returns how many couldn't be read, and
+    /// how many came back paused because this is the first launch whose
+    /// restore works.
+    ///
+    /// 1.2 and earlier saved every torrent's state and never managed to
+    /// restore one — each relaunch dropped the lot. So the first launch that
+    /// *can* restore brings back everything ever added and not removed: much
+    /// of it long gone as far as the user knew, some with its files since
+    /// deleted. Those come back paused, once, so nothing starts downloading
+    /// that nobody asked for today. Every launch after that restores each
+    /// torrent exactly as it was saved.
+    func restoreResumeData() async -> (failed: Int, pausedForUpgrade: Int) {
+        let firstWorkingRestore = database.allSettings()[Self.restoreWorksKey] == nil
+        var failed = 0
+        var paused = 0
         for (id, data) in database.allResumeData() {
             // Re-add where the torrent lived before, not wherever the default
             // downloads folder points today.
             let directory = records[id]?.saveDirectory ?? downloadsDirectory
-            _ = try? await engine.add(
-                .resumeData(data),
-                saveDirectory: directory
-            )
+            do {
+                let restored = try await engine.add(
+                    .resumeData(data), saveDirectory: directory, held: firstWorkingRestore
+                )
+                restoredIDs.insert(restored)
+                if firstWorkingRestore { paused += 1 }
+            } catch let failure as EngineFailure where failure.kind == .duplicateTorrent {
+                // Already there — nothing lost.
+            } catch {
+                failed += 1
+                NSLog("Current: couldn't restore torrent \(id.raw.prefix(12))…: \(error)")
+            }
         }
+        try? database.set("1", forKey: Self.restoreWorksKey)
+        return (failed, paused)
     }
+
+    /// Set once a version whose restore works has launched. Kept in the
+    /// library database beside the saved states it describes, so it travels
+    /// with them.
+    static let restoreWorksKey = "restoreWorks"
+
+    /// Torrents brought back from saved state at this launch. The magnet
+    /// timeout leaves these alone: it counts from when a torrent arrived, and
+    /// a restored torrent "arrived" at launch however old it really is — so a
+    /// restored torrent still looking for its file details was deleted from
+    /// the library two minutes after every launch.
+    private(set) var restoredIDs: Set<TorrentID> = []
 
     /// Saves resume data for every torrent. Budgeted in wall-clock time so a
     /// wedged engine can never stall app termination; each individual fetch
     /// still runs to completion once started.
-    func saveAllResumeData(budget: Duration = .seconds(3)) async {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: budget)
-        for id in orderedIDs {
-            guard clock.now < deadline else { break }
-            if let data = await engine.resumeData(for: id) {
-                try? database.storeResumeData(data, for: id)
+    /// Saves resume data for every torrent, all requested at once.
+    ///
+    /// Requested one after another this was a round trip per torrent under a
+    /// three-second budget, so a large library was cut off part-way through
+    /// at every quit. Asked for together, the whole library costs about one
+    /// round trip, and each request still gives up on its own after three
+    /// seconds, so a wedged engine can't stall quitting.
+    func saveAllResumeData() async {
+        let engine = self.engine
+        let saved = await withTaskGroup(of: (TorrentID, Data?).self) { group in
+            for id in orderedIDs {
+                group.addTask { (id, await engine.resumeData(for: id)) }
             }
+            var results: [(TorrentID, Data)] = []
+            for await (id, data) in group {
+                if let data { results.append((id, data)) }
+            }
+            return results
         }
+        for (id, data) in saved where isInLibrary(id) {
+            try? database.storeResumeData(data, for: id)
+        }
+    }
+
+    /// Checked after every await before saving resume data: a torrent removed
+    /// while its data was being fetched must not be written back, or the next
+    /// launch restores the thing the user just deleted.
+    private func isInLibrary(_ id: TorrentID) -> Bool {
+        records[id] != nil || snapshots[id] != nil
+    }
+
+    /// Saves one torrent now — used when it's added, so a crash before the
+    /// next periodic save doesn't lose it.
+    func saveResumeData(for id: TorrentID) async {
+        guard let data = await engine.resumeData(for: id), isInLibrary(id) else { return }
+        try? database.storeResumeData(data, for: id)
     }
 }

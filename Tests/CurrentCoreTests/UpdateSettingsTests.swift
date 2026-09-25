@@ -9,6 +9,7 @@ final class UpdateSettingsTests: XCTestCase {
     private func freshStore() throws -> SettingsStore {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("current-updates-\(UUID().uuidString).sqlite")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return SettingsStore(database: AppDatabase(url: url))
     }
 
@@ -21,24 +22,23 @@ final class UpdateSettingsTests: XCTestCase {
         XCTAssertFalse(settings.checksForUpdatesAutomatically, "a fresh install must not check")
     }
 
-    /// Declining has to be remembered as a decision, not left looking like a
-    /// fresh install — otherwise the card comes back every launch.
-    func testDecliningIsRememberedAsAnAnswer() throws {
-        let settings = try freshStore()
-        settings.checksForUpdatesAutomatically = false
-        settings.hasAnsweredUpdateQuestion = true
+    /// Both answers have to survive a relaunch, and declining has to be
+    /// remembered as an answer — otherwise the card comes back every launch.
+    func testTheAnswerSurvivesARelaunch() throws {
+        for accepts in [false, true] {
+            let url = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("current-updates-\(UUID().uuidString).sqlite")
+            addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+            let database = AppDatabase(url: url)
 
-        XCTAssertTrue(settings.hasAnsweredUpdateQuestion)
-        XCTAssertFalse(settings.checksForUpdatesAutomatically)
-    }
+            let first = SettingsStore(database: database)
+            first.checksForUpdatesAutomatically = accepts
+            first.hasAnsweredUpdateQuestion = true
+            first.flushPendingWrites()
 
-    /// Accepting persists too, so the answer survives a relaunch.
-    func testAcceptingPersists() throws {
-        let settings = try freshStore()
-        settings.checksForUpdatesAutomatically = true
-        settings.hasAnsweredUpdateQuestion = true
-
-        XCTAssertTrue(settings.checksForUpdatesAutomatically)
-        XCTAssertTrue(settings.hasAnsweredUpdateQuestion)
+            let relaunched = SettingsStore(database: AppDatabase(url: url))
+            XCTAssertTrue(relaunched.hasAnsweredUpdateQuestion)
+            XCTAssertEqual(relaunched.checksForUpdatesAutomatically, accepts)
+        }
     }
 }

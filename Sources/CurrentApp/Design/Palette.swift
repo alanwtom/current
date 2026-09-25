@@ -167,11 +167,19 @@ enum Theme {
     // whole job is showing you state at a glance shouldn't need to be read.
     // This is the middle: coloured where it identifies something, grey
     // everywhere else.
+    //
+    // 3. **Ink or surface, never both.** A colour goes in the glyph *or* in
+    //    the fill behind it. A green tick on grey is fine, white on solid red
+    //    is fine; a green tick on a pale green wash is not. That last shape was
+    //    everywhere — state pills, callouts, the VPN shield, a selected radio
+    //    row, the drop target — and a tint of a colour behind the same colour
+    //    reads as a smudge rather than a state. There is no `tint.opacity(…)`
+    //    background anywhere in the app now; don't add one back.
 
     static let accent = dynamic(light: rgb(20, 122, 232), dark: rgb(63, 169, 255))
-    /// A tinted wash for accent-flavoured backgrounds — drop targets, a
-    /// selected option.
-    static let accentSoft = dynamic(light: rgba(20, 122, 232, 0.10), dark: rgba(63, 169, 255, 0.14))
+    // There is no accent *wash*. There was — `accentSoft`, behind drop
+    // targets and selected options — and every use of it put accent ink on an
+    // accent tint. See rule 3 above.
     /// The focus ring.
     static let accentRing = dynamic(light: rgba(20, 122, 232, 0.35), dark: rgba(63, 169, 255, 0.40))
     /// On top of an accent fill.
@@ -186,6 +194,25 @@ enum Theme {
     static let complete = dynamic(light: rgb(22, 163, 74), dark: rgb(74, 222, 128))
     static let warning = dynamic(light: rgb(180, 111, 8), dark: rgb(251, 191, 36))
     static let failure = dynamic(light: rgb(206, 43, 43), dark: rgb(248, 113, 113))
+
+    /// Solid red for a destructive button under the cursor, with white on top.
+    ///
+    /// Not `failure`. That red is tuned to be *read* as text on a dark
+    /// surface, which makes it far too light to carry white text: white on
+    /// dark-mode `failure` is about 2.8:1. This is the deeper red the fill
+    /// needs, and it only ever appears as a surface, never as ink.
+    static let destructive = dynamic(light: rgb(206, 43, 43), dark: rgb(220, 38, 38))
+    static let destructivePressed = dynamic(light: rgb(174, 34, 34), dark: rgb(185, 28, 28))
+
+    /// The light that runs along a progress bar while data is moving (see
+    /// `ProgressTrack`). White over the bar's own colour — a lighter version of
+    /// the same hue, never a second hue.
+    static let flowLight = dynamic(light: rgba(255, 255, 255, 0.55), dark: rgba(255, 255, 255, 0.42))
+
+    /// The same light passing over a *neutral* surface — the VPN shield's pill
+    /// when protection is confirmed. Stronger in light mode, where white on a
+    /// pale grey pill has almost nothing to show against.
+    static let glint = dynamic(light: rgba(255, 255, 255, 0.95), dark: rgba(255, 255, 255, 0.28))
 
     /// Paused, queued, resolving — a bar that is present but not doing
     /// anything. Grey rather than a fifth hue: "stopped" is the absence of a

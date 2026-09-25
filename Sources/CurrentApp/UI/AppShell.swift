@@ -518,6 +518,9 @@ struct AddMagnetSheet: View {
     let close: () -> Void
     @State private var text = ""
     @State private var validationError: String?
+    /// Bumped on each refused Add, to shake the field.
+    @State private var rejections = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xl) {
@@ -538,6 +541,17 @@ struct AddMagnetSheet: View {
                 autofocus: true,
                 onSubmit: add
             )
+            // A refused link turns the field's edge red and shakes it once —
+            // "that didn't work", aimed at the thing that didn't. The edge is
+            // drawn over the field's own hairline, so nothing is re-measured.
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
+                    .strokeBorder(Theme.failure, lineWidth: Size.hairline)
+                    .opacity(validationError == nil ? 0 : 1)
+            )
+            .shake(trigger: rejections, reduceMotion: reduceMotion)
+            // Editing is answering the complaint, so the complaint goes.
+            .onChange(of: text) { _, _ in validationError = nil }
 
             if let validationError {
                 Callout(symbol: "exclamationmark.circle.fill", tint: Theme.failure) {
@@ -585,6 +599,7 @@ struct AddMagnetSheet: View {
             close()
         } else {
             validationError = "That doesn't look like a magnet link."
+            rejections += 1
         }
     }
 }

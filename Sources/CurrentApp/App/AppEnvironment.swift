@@ -59,6 +59,9 @@ final class AppEnvironment: ObservableObject {
     @Published var isIntroPlaying = true
 
     private var eventTask: Task<Void, Never>?
+    private var resumeSaveTask: Task<Void, Never>?
+    /// Added this session and not yet saved with its metadata.
+    private var unsavedAdds: Set<TorrentID> = []
     private var configCancellables = Set<AnyCancellable>()
     private var appliedConfiguration: EngineConfiguration?
 
@@ -144,6 +147,17 @@ final class AppEnvironment: ObservableObject {
         self.network = NetworkMonitor()
         self.magnetFlow = MagnetFlowCenter()
         self.toasts = ToastCenter()
+        if database.recoveredFromUnreadableFile {
+            // Said out loud because the defaults it fell back to include the
+            // network binding, and "any connection" is the opposite of what
+            // someone who confined their transfers wants.
+            toasts.show(
+                .warning,
+                title: "Settings were reset",
+                message: "The library file couldn't be read. Check Network settings.",
+                coalesceKey: "database.recovered"
+            )
+        }
 
         // No updater in the simulator. It is used for screenshots and UI work,
         // and an update toast appearing over a demo would be both wrong and
@@ -163,16 +177,19 @@ final class AppEnvironment: ObservableObject {
         // clicking a link, a row vanishing without a word is the app looking
         // broken; this is the same rule the rest of the automation follows —
         // if it acts on its own, it explains itself.
-        automation.onMagnetTimedOut = { [weak self] name in
+        automation.onMagnetTimedOut = { [weak self] id, name in
             guard let self else { return }
 
-            // Take the flow down with it. The coordinator removes the torrent,
-            // but nothing told the flow — so the card sat there saying
-            // "Resolving magnet…" indefinitely, about a torrent that no longer
-            // existed, and the only way out was quitting the app.
-            if case .resolving = self.magnetFlow.stage {
-                self.magnetFlow.resolveFailed(message: name)
-            }
+            // Take the flow down with it — but only if the card is about *this*
+            // torrent. The coordinator removes the torrent, and nothing used to
+            // tell the flow, so the card sat there saying "Resolving magnet…"
+            // about a torrent that no longer existed. The first fix closed the
+            // card whenever it was resolving anything, which was fine while a
+            // second magnet just downloaded regardless. Now a second magnet
+            // waits, held, for its turn — so a dead one timing out closed the
+            // card for the one you'd just clicked, and that one then sat
+            // paused with nothing ever asking about it.
+            self.magnetFlow.torrentRemoved(id)
 
             // Deliberately short. A toast truncates, and a warning that ends in
             // an ellipsis tells you less than a shorter one that finishes its
@@ -390,8 +407,18 @@ final class AppEnvironment: ObservableObject {
             library.applyMetadata(metadata)
             library.updateNameIfNeeded(id, name: metadata.displayName)
             failures[id] = nil
-            magnetFlow.metadataArrived(id: id)
-            pauseForSelection(id)
+            // The engine has already stopped a held torrent by now; nothing
+            // here needs to pause it. That used to be this layer's job — an
+            // async pause sent after the metadata had crossed two threads, by
+            // which time the torrent had been downloading since it was added.
+            if !magnetFlow.metadataArrived(id: id), heldWithoutCard.remove(id) != nil {
+                announceHeld(id, name: metadata.displayName)
+            }
+            // Its saved state now carries the file list, so a relaunch after a
+            // crash brings it back complete rather than as a bare hash.
+            if unsavedAdds.remove(id) != nil {
+                Task { await library.saveResumeData(for: id) }
+            }
 
         case .completed(let id):
             handleCompleted(id)
@@ -408,19 +435,45 @@ final class AppEnvironment: ObservableObject {
 
         case .removed(let id):
             failures[id] = nil
-            if case .selecting(let selectingID) = magnetFlow.stage, selectingID == id {
-                magnetFlow.dismiss()
-            }
+            heldWithoutCard.remove(id)
+            magnetFlow.torrentRemoved(id)
 
         case .listenChanged(let report):
             network.apply(report)
         }
     }
 
-    private func pauseForSelection(_ id: TorrentID) {
-        guard case .selecting(id) = magnetFlow.stage else { return }
-        // Freeze the torrent while the user picks files; resume applies choices.
-        Task { await engine.pause(id) }
+    /// Downloads added while the card was busy with another one.
+    ///
+    /// They were added held, so each resolves and stops. This is how the app
+    /// remembers to say so when it does, rather than leaving a paused row to be
+    /// discovered.
+    private var heldWithoutCard: Set<TorrentID> = []
+
+    private var isStillResolving: Bool {
+        if case .resolving = magnetFlow.stage { return true }
+        return false
+    }
+
+    /// Saves a new torrent straight away, and again once its metadata is in.
+    private func rememberAdded(_ id: TorrentID) {
+        guard !ProcessInfo.processInfo.arguments.contains("-simulate") else { return }
+        if library.metadataCache[id] == nil { unsavedAdds.insert(id) }
+        Task { await library.saveResumeData(for: id) }
+    }
+
+    private func announceHeld(_ id: TorrentID, name: String) {
+        toasts.show(
+            .info,
+            title: "Ready to download",
+            message: name,
+            actionTitle: "Start",
+            coalesceKey: "held-\(id.raw)",
+            action: { [weak self] in
+                guard let self else { return }
+                Task { await self.engine.resume(id) }
+            }
+        )
     }
 
     private func handleCompleted(_ id: TorrentID) {
@@ -462,14 +515,56 @@ final class AppEnvironment: ObservableObject {
             return
         }
 
-        magnetFlow.beginResolving(nameHint: hint)
+        // Always held. A magnet is a link a web page wrote, and nothing it
+        // names is fetched until someone has said yes on the card — or, if the
+        // card is busy with another download, pressed Start on this one.
+        let claimsFlow = magnetFlow.beginResolving(nameHint: hint)
         do {
-            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder)
+            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder, held: true)
+            if alreadyInLibrary(id, claimsFlow: claimsFlow) { return }
             library.registerAdded(id, name: hint, magnet: uri, saveDirectory: settings.downloadsFolder)
+            claimOrPark(id, claimsFlow: claimsFlow)
         } catch {
-            magnetFlow.resolveFailed(message: error.localizedDescription)
+            if claimsFlow { magnetFlow.dismiss() }
             let failure = (error as? EngineFailure) ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
             toasts.show(.warning, title: failure.title, message: failure.explanation)
+        }
+    }
+
+    /// libtorrent answers a torrent it already has with that torrent, not an
+    /// error. Treated as new, it got the confirm card — about a download that
+    /// was already running, where choosing another folder would *move its
+    /// files*. So it's caught here, before anything is registered or asked.
+    private func alreadyInLibrary(_ id: TorrentID, claimsFlow: Bool) -> Bool {
+        guard library.snapshot(for: id) != nil || library.record(for: id) != nil else { return false }
+        if claimsFlow { magnetFlow.dismiss() }
+        toasts.show(.info, title: "Already in your library", message: "This torrent was added earlier.")
+        return true
+    }
+
+    /// Ties a held torrent to the card, or remembers to announce it later.
+    private func claimOrPark(_ id: TorrentID, claimsFlow: Bool) {
+        rememberAdded(id)
+        if claimsFlow, !isStillResolving {
+            // The card was cancelled while the engine was still adding this.
+            // Cancel means no, so it goes rather than waiting in the library.
+            Task {
+                await engine.remove(id, deleteFiles: false)
+                await library.remove([id], deleteFiles: false)
+            }
+            return
+        }
+        if claimsFlow {
+            magnetFlow.awaiting(id)
+            // Metadata can beat the add's return — a .torrent file carries it,
+            // and its alert races this await. It was cached, just not claimed.
+            if library.metadataCache[id] != nil {
+                magnetFlow.metadataArrived(id: id)
+            }
+        } else if let metadata = library.metadataCache[id] {
+            announceHeld(id, name: metadata.displayName)
+        } else {
+            heldWithoutCard.insert(id)
         }
     }
 
@@ -478,9 +573,11 @@ final class AppEnvironment: ObservableObject {
     /// metadata that cannot arrive until the connection is back.
     private func addWhileBlocked(_ uri: String, name: String?) async {
         do {
-            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder)
+            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder, held: true)
+            if alreadyInLibrary(id, claimsFlow: false) { return }
             library.registerAdded(id, name: name, magnet: uri, saveDirectory: settings.downloadsFolder)
             await engine.pause(id)
+            rememberAdded(id)
             toasts.show(
                 .warning,
                 title: "Added, but not started",
@@ -504,7 +601,11 @@ final class AppEnvironment: ObservableObject {
             toasts.show(.warning, title: "Couldn't read torrent file", message: url.lastPathComponent)
             return
         }
-        let name = url.deletingPathExtension().lastPathComponent
+        // Cleaned like a magnet's name. It's only a hint until the torrent's own
+        // name arrives, but a file saved from a web page can carry a
+        // direction override in its name as easily as a link can.
+        let name = DropParser.sanitisedName(url.deletingPathExtension().lastPathComponent)
+            ?? "Torrent"
         // A .torrent file is a download like any other, so it gets the same
         // confirm card — which is what asks where it should go and which files
         // to take. It carries its metadata with it, so the resolving stage it
@@ -513,14 +614,18 @@ final class AppEnvironment: ObservableObject {
         // Only when nothing else is mid-flow, which is the guard that makes
         // opening a folder of ten .torrent files sane: the first one asks, the
         // rest go to the default folder rather than queueing ten questions.
-        let claimsFlow = magnetFlow.stage == .idle
-        if claimsFlow {
-            magnetFlow.beginResolving(nameHint: name)
-        }
+        let claimsFlow = magnetFlow.beginResolving(nameHint: name)
         do {
-            let id = try await engine.addTorrentFile(data, saveDirectory: settings.downloadsFolder)
+            // Held only when it's going to be asked about. The rest go straight
+            // to the default folder, which is the rule above — and a local file
+            // someone opened, not a link a page fired.
+            let id = try await engine.addTorrentFile(data, saveDirectory: settings.downloadsFolder, held: claimsFlow)
+            if alreadyInLibrary(id, claimsFlow: claimsFlow) { return }
             library.registerAdded(id, name: name, magnet: nil, saveDirectory: settings.downloadsFolder)
-            if !claimsFlow {
+            if claimsFlow {
+                claimOrPark(id, claimsFlow: true)
+            } else {
+                rememberAdded(id)
                 toasts.show(.info, title: "Added", message: name)
             }
         } catch let failure as EngineFailure where failure.kind == .duplicateTorrent {
@@ -572,7 +677,7 @@ final class AppEnvironment: ObservableObject {
         panel.message = "Choose where this download should go."
         panel.directoryURL = downloadDestination
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = SaveFolderValidator.run(panel) else { return }
         magnetFlow.chosenDestination = url
     }
 
@@ -597,6 +702,10 @@ final class AppEnvironment: ObservableObject {
         }
 
         library.setPriorities(priorities, for: id)
+        // Awaited before the resume, not left to the store's own fire-and-
+        // forget send: resuming is what lets a held torrent request pieces, and
+        // the files you just unticked must already be off by then.
+        await engine.setFilePriorities(id, priorities)
         magnetFlow.confirmSelection()
         await engine.resume(id)
         Task { @MainActor in
@@ -614,7 +723,14 @@ final class AppEnvironment: ObservableObject {
     }
 
     func cancelMagnetSelection() async {
-        if case .selecting(let id) = magnetFlow.stage {
+        // Cancelling while it's still resolving removes it too. The card used
+        // to go away and leave the magnet running — so it resolved a minute
+        // later and downloaded every file, after the user had said no.
+        let resolvingID: TorrentID? = if case .resolving = magnetFlow.stage { magnetFlow.awaitedID } else { nil }
+        if let id = resolvingID {
+            await engine.remove(id, deleteFiles: false)
+            await library.remove([id], deleteFiles: false)
+        } else if case .selecting(let id) = magnetFlow.stage {
             // `deleteFiles: false`, and this is a security fix rather than a
             // tidiness regression.
             //
@@ -904,7 +1020,39 @@ final class AppEnvironment: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("-simulate") {
             await seedDemoLibraryIfRequested()
         } else {
-            await library.restoreResumeData()
+            let (lost, pausedForUpgrade) = await library.restoreResumeData()
+            if pausedForUpgrade > 0 {
+                // Once, on the first launch after 1.2. Everything came back
+                // paused on purpose (see `restoreResumeData`), and a library
+                // that is suddenly all paused needs to say why.
+                toasts.show(
+                    .info,
+                    title: pausedForUpgrade == 1
+                        ? "A torrent is back, paused"
+                        : "\(pausedForUpgrade) torrents are back, paused",
+                    message: "Older versions lost them. Resume the ones you want.",
+                    coalesceKey: "restore.upgrade"
+                )
+            }
+            if lost > 0 {
+                toasts.show(
+                    .warning,
+                    title: lost == 1 ? "A torrent couldn't be restored" : "\(lost) torrents couldn't be restored",
+                    message: lost == 1
+                        ? "Its saved state was unreadable. Add it again to continue."
+                        : "Their saved state was unreadable. Add them again to continue.",
+                    coalesceKey: "restore.failed"
+                )
+            }
+            // Saved on a timer as well as at quit. Quitting is the only save
+            // there used to be, so a crash lost everything since launch.
+            resumeSaveTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(300))
+                    guard let self else { return }
+                    await self.library.saveAllResumeData()
+                }
+            }
         }
 
         // Last, and only now: a magnet clicked in a browser launches the app,
@@ -919,7 +1067,10 @@ final class AppEnvironment: ObservableObject {
         // while resume data is still being written.
         statusItem?.tearDown()
         statusItem = nil
+        resumeSaveTask?.cancel()
         await library.saveAllResumeData()
+        settings.flushPendingWrites()
+        library.flushPendingWrites()
         eventTask?.cancel()
     }
 

@@ -20,6 +20,7 @@ final class StorageBudgetTests: XCTestCase {
     private func makeDatabase() -> AppDatabase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("budget-\(UUID().uuidString).sqlite")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return AppDatabase(url: url)
     }
 
@@ -52,18 +53,19 @@ final class StorageBudgetTests: XCTestCase {
         )
     }
 
-    /// Skips rather than fails when the fixture isn't eligible.
+    /// Fails, loudly, when the fixture isn't eligible.
     ///
-    /// What counts as a healthy swarm is being reworked, and a test that
-    /// hard-fails while that lands would be noise pointing at the wrong place.
-    /// Skipping says plainly what happened: the tests below are about the
-    /// budget gate, and they cannot say anything about it without something
-    /// the planner would agree to remove.
-    private func requireCleanableFixture(_ harness: Harness) throws {
+    /// This used to skip, on the reasoning that a failure here pointed at the
+    /// wrong place. But a skip is silent in CI, and it made every test below
+    /// pass without testing anything — which is how automatic cleanup went on
+    /// being unable to remove a single torrent for everyone who hadn't changed
+    /// their download folder, with all of these reported green.
+    private func requireCleanableFixture(_ harness: Harness, file: StaticString = #filePath, line: UInt = #line) throws {
         harness.cleanup.refreshPlan()
-        try XCTSkipUnless(
-            harness.cleanup.plan.candidates.count == 1,
-            "fixture is not eligible for cleanup, so this proves nothing — check the swarm health rules"
+        XCTAssertEqual(
+            harness.cleanup.plan.candidates.count, 1,
+            "fixture is not eligible for cleanup: \(harness.cleanup.plan.kept.first?.reasons ?? [])",
+            file: file, line: line
         )
     }
 
@@ -72,15 +74,15 @@ final class StorageBudgetTests: XCTestCase {
         let settings: SettingsStore
         let cleanup: CleanupCenter
         let automation: AutomationCoordinator
+        /// The torrent's one file, really on disk.
+        let content: URL
+        /// Everything the app asked to move to the Trash.
+        let trashed: TrashRecorder
     }
 
     /// Builds the object graph the coordinator needs, with one cleanable
-    /// torrent of `bytes` in a directory of its own.
-    ///
-    /// Each torrent gets its own save directory: the planner excludes anything
-    /// sharing a folder with another torrent, so putting two in one place
-    /// would make them ineligible for a reason the test never intended.
-    private func makeHarness(torrentBytes: Int64) -> Harness {
+    /// torrent of `bytes` whose file really exists.
+    private func makeHarness(torrentBytes: Int64) throws -> Harness {
         let database = makeDatabase()
         let settings = SettingsStore(database: database)
         let library = LibraryStore(engine: SimulationEngine(), database: database, persistsRecords: false)
@@ -93,13 +95,23 @@ final class StorageBudgetTests: XCTestCase {
             cleanup: cleanup
         )
 
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let directory = try makeScratchDirectory(self, "budget")
+        let content = directory.appendingPathComponent("done")
+        try Data("payload".utf8).write(to: content)
+        let trashed = TrashRecorder()
+        library.contentTrash.moveToTrash = trashed.move
+
         let snapshot = cleanableSnapshot(id: "done", bytes: torrentBytes, directory: directory)
         library.applySnapshots([snapshot])
+        library.applyMetadata(TorrentMetadata(
+            id: snapshot.id, displayName: "done", totalSize: torrentBytes,
+            pieceCount: 1, pieceLength: 16_384,
+            files: [FileInfo(pathComponents: ["done"], size: torrentBytes)]
+        ))
         library.setPolicy(.temporary, for: [snapshot.id])
 
-        return Harness(library: library, settings: settings, cleanup: cleanup, automation: automation)
+        return Harness(library: library, settings: settings, cleanup: cleanup,
+                       automation: automation, content: content, trashed: trashed)
     }
 
     // MARK: - The torrent has to actually be eligible
@@ -107,15 +119,42 @@ final class StorageBudgetTests: XCTestCase {
     /// Guards the other tests: if the fixture stopped being cleanable they
     /// would all pass for the wrong reason.
     func testFixtureIsEligibleForCleanup() throws {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         try requireCleanableFixture(harness)
-        XCTAssertEqual(harness.cleanup.plan.candidates.count, 1)
+    }
+
+    /// Cleanup that can't find the files must leave the torrent alone. If it
+    /// removed it anyway, a budget would work its way through the whole
+    /// library — still over budget after every pass — without freeing a byte.
+    func testATorrentWhoseFilesAreGoneIsNotCleanedAway() async throws {
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
+        try requireCleanableFixture(harness)
+        try FileManager.default.removeItem(at: harness.content)
+
+        let summary = await harness.cleanup.performCleanup(harness.cleanup.plan.candidates)
+        XCTAssertEqual(summary.torrentsCleaned, 0)
+        XCTAssertEqual(summary.bytesReclaimed, 0)
+        XCTAssertEqual(harness.library.orderedIDs.count, 1)
+    }
+
+    /// Two torrents in the default folder are not "sharing files". Treating
+    /// them as if they were excluded every torrent in the library.
+    func testTorrentsInTheSameFolderAreStillCleanable() throws {
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
+        let neighbour = cleanableSnapshot(
+            id: "neighbour", bytes: 5_000_000_000,
+            directory: harness.content.deletingLastPathComponent()
+        )
+        harness.library.applySnapshots([neighbour])
+        harness.library.setPolicy(.temporary, for: [neighbour.id])
+        harness.cleanup.refreshPlan()
+        XCTAssertEqual(Set(harness.cleanup.plan.candidates.map(\.id)), [TorrentID("done"), neighbour.id])
     }
 
     // MARK: - When it must decline
 
     func testDoesNothingWithoutAStorageBudget() throws {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         try requireCleanableFixture(harness)
         harness.settings.isAutoCleanupEnabled = true
         harness.settings.storageLimitBytes = nil
@@ -129,7 +168,7 @@ final class StorageBudgetTests: XCTestCase {
     }
 
     func testDoesNothingWhenUnderBudget() throws {
-        let harness = makeHarness(torrentBytes: 1_000_000_000)
+        let harness = try makeHarness(torrentBytes: 1_000_000_000)
         try requireCleanableFixture(harness)
         harness.settings.isAutoCleanupEnabled = true
         harness.settings.storageLimitBytes = 500_000_000_000
@@ -140,7 +179,7 @@ final class StorageBudgetTests: XCTestCase {
     }
 
     func testDoesNothingWhenTheSwitchIsOff() throws {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         try requireCleanableFixture(harness)
         harness.settings.isAutoCleanupEnabled = false
         harness.settings.storageLimitBytes = 1_000_000
@@ -155,7 +194,7 @@ final class StorageBudgetTests: XCTestCase {
 
     /// The one path in the app that removes a download nobody asked about.
     func testCleansAutomaticallyWhenOverBudgetAndAllowed() async throws {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         try requireCleanableFixture(harness)
         harness.settings.isAutoCleanupEnabled = true
         harness.settings.storageLimitBytes = 1_000_000
@@ -167,16 +206,16 @@ final class StorageBudgetTests: XCTestCase {
 
         // The cleanup is launched as a task, so the tick returns before it has
         // finished.
-        try await Task.sleep(nanoseconds: 500_000_000)
-
-        XCTAssertTrue(harness.library.orderedIDs.isEmpty, "should have cleaned the eligible torrent")
+        let cleaned = await eventually { harness.library.orderedIDs.isEmpty }
+        XCTAssertTrue(cleaned, "should have cleaned the eligible torrent")
+        XCTAssertEqual(harness.trashed.urls, [harness.content], "exactly the torrent's file, and nothing else")
         XCTAssertEqual(reported, 0, "no need to ask for attention when it handled it itself")
     }
 
     // MARK: - When it must speak up
 
-    func testReportsPressureItCannotResolveItself() {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+    func testReportsPressureItCannotResolveItself() throws {
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         harness.settings.isAutoCleanupEnabled = false
         harness.settings.storageLimitBytes = 1_000_000
 
@@ -195,8 +234,8 @@ final class StorageBudgetTests: XCTestCase {
 
     /// Dropping back under budget re-arms the warning, so the *next* crossing
     /// is reported rather than silently swallowed.
-    func testPressureIsReportedAgainAfterRecovering() {
-        let harness = makeHarness(torrentBytes: 10_000_000_000)
+    func testPressureIsReportedAgainAfterRecovering() throws {
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
         harness.settings.isAutoCleanupEnabled = false
         harness.settings.storageLimitBytes = 1_000_000
 
@@ -230,5 +269,27 @@ final class StorageBudgetTests: XCTestCase {
         library.registerAdded(id, name: "Fresh", magnet: nil, saveDirectory: FileManager.default.temporaryDirectory)
 
         XCTAssertEqual(library.record(for: id)?.policy, .archive)
+    }
+}
+
+/// Stands in for the Trash: records what it was given, and moves it out of
+/// the way so a later existence check sees it gone.
+final class TrashRecorder: @unchecked Sendable {
+    private(set) var urls: [URL] = []
+    private let bin: URL
+
+    init() {
+        bin = FileManager.default.temporaryDirectory
+            .appendingPathComponent("current-trash-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    }
+
+    deinit { try? FileManager.default.removeItem(at: bin) }
+
+    func move(_ url: URL) throws {
+        urls.append(url)
+        try FileManager.default.moveItem(
+            at: url, to: bin.appendingPathComponent("\(urls.count)-\(url.lastPathComponent)")
+        )
     }
 }

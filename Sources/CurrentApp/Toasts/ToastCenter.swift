@@ -37,7 +37,10 @@ final class ToastCenter: ObservableObject {
 
     @Published private(set) var toasts: [PresentedToast] = []
     private var hoverPaused = Set<UUID>()
-    private let displayDuration: TimeInterval = 5
+    /// How long a toast stays, not counting time spent under the cursor.
+    /// `ToastCard` draws this as the line along its bottom edge, so the two
+    /// have to be the same number.
+    static let displayDuration: TimeInterval = 5
 
     /// Poll interval for the auto-dismiss countdown. Coarse on purpose — this
     /// is a 5 second timer, not an animation.
@@ -45,7 +48,7 @@ final class ToastCenter: ObservableObject {
 
     private func scheduleDismissal(of id: UUID) -> Task<Void, Never> {
         Task { [weak self] in
-            var remaining = self?.displayDuration ?? 5
+            var remaining = Self.displayDuration
             while remaining > 0 {
                 try? await Task.sleep(
                     nanoseconds: UInt64(Self.dismissPollInterval * 1_000_000_000)

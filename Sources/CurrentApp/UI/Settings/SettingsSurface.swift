@@ -61,6 +61,9 @@ enum SettingsTab: Hashable, CaseIterable, Identifiable {
 struct SettingsSurface: View {
     @EnvironmentObject private var app: AppEnvironment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The VPN shield or a palette row, when one of those opened settings;
+    /// nil for ⌘, and the menu bar panel. See `PresentationOrigin`.
+    @State private var origin = PresentationOrigin.current()
     @Environment(\.windowSize) private var windowSize
 
     /// The card's own width, resolved the same way `.modalSize` resolves it
@@ -101,7 +104,7 @@ struct SettingsSurface: View {
                 .onTapGesture { close() }
 
             card
-                .popTransition(reduceMotion: reduceMotion)
+                .popTransition(reduceMotion: reduceMotion, from: origin)
         }
         // Centred on the window rather than on the safe area — see
         // `ModalSurface`. This card is 540pt tall, so in a short window the

@@ -19,7 +19,8 @@ enum Motion {
     /// Large surface transitions (magnet flow stages).
     static let expressive: TimeInterval = 0.38
 
-    /// Critically damped — the default. No overshoot anywhere in the app.
+    /// Critically damped — the default. No overshoot except where
+    /// `gestureSpring` and `pop` say so.
     /// Response defaults to `standard` so springs sit on the same scale as
     /// durations rather than drifting into hand-typed values.
     static func spring(_ response: TimeInterval = Self.standard) -> Animation {
@@ -27,13 +28,22 @@ enum Motion {
     }
 
     /// Slight bounce, reserved for physical gestures (drag releases) and for the
-    /// one or two places where a thing should feel like it has weight — a
-    /// toggle's knob, a toast arriving.
+    /// few places where a thing should feel like it has weight — a toggle's
+    /// knob, a checkbox filling, a selected tick landing, a toast arriving.
     static func gestureSpring(_ response: TimeInterval = Self.expressive) -> Animation {
         .spring(response: response, dampingFraction: 0.82)
     }
 
     static let easeOut = Animation.easeOut(duration: Self.standard)
+
+    /// One full turn of the spinner.
+    ///
+    /// The only duration in the app allowed past `expressive`, because it is not
+    /// a movement between two states — it is a loop, and the cap exists so that
+    /// a *transition* doesn't start reading as a wait. A spinner that completed
+    /// a revolution in 380 ms reads as panic. This was a hand-typed 0.85 sitting
+    /// in `Spinner`, which is exactly how a scale stops being one.
+    static let revolution: TimeInterval = 0.85
 
     /// Reduced Motion keeps feedback but drops movement distance.
     static func adaptive(_ duration: TimeInterval, reduceMotion: Bool) -> Animation {
@@ -118,4 +128,69 @@ enum Motion {
     static let stagger: TimeInterval = 0.028
     /// Cap on a stagger, so a list of forty rows doesn't take a second to arrive.
     static let staggerCap: Int = 8
+
+    // MARK: - The vocabulary
+    //
+    // Colour in this app already means something — accent is happening, green
+    // worked, red broke — and motion now works the same way. Five movements,
+    // one meaning each, so that what moves on screen can be read like what is
+    // coloured:
+    //
+    //   flow    — data is moving right now. A light runs along a progress bar,
+    //             and stops the moment the transfer does. (`ProgressTrack`)
+    //   drop    — something arrived or finished. One ripple, once. (`Ripple`)
+    //   shake   — that didn't work. Two small swings. (`.shake(trigger:)`)
+    //   stretch — you moved between choices. The front edge leaves first and
+    //             the back catches up. (`StretchSpan`)
+    //   origin  — a summoned surface grows out of whatever you clicked, and
+    //             goes back into it. (`PopTransition`, `PresentationOrigin`)
+    //
+    // A new animation should be one of these, or have a reason it isn't. Motion
+    // that means nothing in particular is decoration, and the colour policy
+    // already says what this app thinks of that.
+
+    /// How far a shake swings. Small: it is a head shake, not a tantrum, and
+    /// the thing shaking is usually a 26pt glyph or a text field.
+    static let shakeDistance: CGFloat = 3
+    /// The whole shake, both swings and the settle.
+    static let shakeDuration: TimeInterval = 0.3
+
+    /// A ripple travels for `expressive` — it is the one moment in a transfer
+    /// that is allowed to be noticed — and starts at this opacity.
+    static let rippleOpacity: Double = 0.6
+
+    /// One pass of the flowing light along a bar, at each of three speeds.
+    ///
+    /// Three, not a continuous mapping from the rate. Rates change on every
+    /// engine tick, and a speed that changed with them would never settle.
+    /// A rate sitting near a boundary will still flip between two buckets;
+    /// `FlowLight` carries its position across a change of speed so that
+    /// reads as the light speeding up or slowing down, never as a jump.
+    static let flowPassFast: TimeInterval = 1.5
+    static let flowPassMedium: TimeInterval = 2.0
+    static let flowPassSlow: TimeInterval = 2.6
+    /// Which bucket a transfer rate falls in, in bytes per second.
+    static func flowPeriod(for rate: Double) -> TimeInterval {
+        if rate >= 5_000_000 { return flowPassFast }
+        if rate >= 500_000 { return flowPassMedium }
+        return flowPassSlow
+    }
+    /// The share of each cycle the light spends travelling; the rest is a
+    /// pause. A light that never rests reads as a loading shimmer — something
+    /// waiting — rather than as something moving.
+    static let flowTravelShare: Double = 0.62
+
+    /// Stretch: the edge in the direction of travel.
+    static let stretchLead: TimeInterval = 0.15
+    /// Stretch: the edge left behind. Twice the lead, which is what makes the
+    /// highlight read as a drop of water sliding rather than a box moving.
+    static let stretchTrail: TimeInterval = 0.3
+
+    /// Where a surface starts when it has somewhere to grow from. Smaller than
+    /// `popScale`, because the distance now has a direction — it comes *from*
+    /// the button instead of *at* you — and at 92% that direction is too
+    /// small to see.
+    static let popScaleFromOrigin: CGFloat = 0.86
+    /// And how far it shrinks going back into the button.
+    static let popExitScaleToOrigin: CGFloat = 0.92
 }

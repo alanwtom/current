@@ -9,7 +9,7 @@ public actor LibtorrentEngine: TorrentEngine {
     // MARK: - Event plumbing
 
     private let continuation: AsyncStream<EngineEvent>.Continuation
-    public let events: AsyncStream<EngineEvent>
+    public nonisolated let events: AsyncStream<EngineEvent>
 
     /// Context object handed to the C callback. Holds a weak reference to the
     /// owning actor; the session is destroyed before the actor deallocates,
@@ -21,6 +21,28 @@ public actor LibtorrentEngine: TorrentEngine {
     private var bridge: Bridge
     private nonisolated(unsafe) var session: OpaquePointer?
     private nonisolated(unsafe) let contextPtr: UnsafeMutableRawPointer
+
+    /// Everything the alert thread hands over, in the order it happened.
+    ///
+    /// **One stream, one consumer, nothing dropped.** Events used to cross into
+    /// the actor as a `Task` each, which Swift does not run in order — a late
+    /// metadata event could land after the removal of the torrent it described
+    /// and bring its name back — and the stream out to the app kept only the
+    /// newest 32. Restoring a library of more than 32 torrents produces a burst
+    /// of metadata events at launch, and the oldest of them simply vanished:
+    /// those rows sat on "Waiting for details…" with no Files tab until the
+    /// next launch, where the same thing happened to a different 32.
+    fileprivate enum Inbound: Sendable {
+        case stats([RawStats])
+        case metadata(TorrentMetadata)
+        case completed(TorrentID)
+        case failed(TorrentID, EngineFailure)
+        case removed(TorrentID)
+        case resumeData(TorrentID, Data?)
+        case listen(ListenReport)
+    }
+
+    private nonisolated let inbound: AsyncStream<Inbound>.Continuation
 
     // Bookkeeping so snapshots can carry names and save locations.
     private var displayNames: [TorrentID: String] = [:]
@@ -51,15 +73,28 @@ public actor LibtorrentEngine: TorrentEngine {
         var hasMetadata: Bool
     }
 
-    public init() {
+    /// - Parameter statePath: where the DHT routing table is kept between
+    ///   launches. `nil` means the app's own, beside its library; `""` keeps
+    ///   none. Tests pass their own so they never read or overwrite the real
+    ///   client's table.
+    public init(statePath: String? = nil) {
         Self.useBundledCertificates()
 
+        // Unbounded in both directions. The volume is small — one stats batch
+        // a second plus a handful of events — and every event that isn't a
+        // stats batch is one the app cannot afford to lose.
         let (stream, continuation) = AsyncStream.makeStream(
             of: EngineEvent.self,
-            bufferingPolicy: .bufferingNewest(32)
+            bufferingPolicy: .unbounded
         )
         self.events = stream
         self.continuation = continuation
+
+        let (inboundStream, inbound) = AsyncStream.makeStream(
+            of: Inbound.self,
+            bufferingPolicy: .unbounded
+        )
+        self.inbound = inbound
 
         // The callback captures the box directly; `target` is wired up right
         // after session creation, long before the first alert can fire
@@ -73,7 +108,7 @@ public actor LibtorrentEngine: TorrentEngine {
             guard let context else { return }
             let box = Unmanaged<Bridge>.fromOpaque(context).takeUnretainedValue()
             box.target?.ingest(kind: kind, payload: payload, count: count)
-        }, context, Self.dhtStatePath())
+        }, context, statePath ?? Self.dhtStatePath())
 
         // Wired after creation on the same thread; the engine worker waits
         // ≥250 ms between polls, so no event can observe a nil target.
@@ -84,6 +119,27 @@ public actor LibtorrentEngine: TorrentEngine {
             // allocation/native failures); degrade to a no-op engine
             // instead of crashing the app.
             NSLog("Current: libtorrent session failed to start")
+        }
+
+        // The one consumer. Holds the engine only while handling an event, so
+        // it never keeps it alive; `deinit` finishes the stream and this ends.
+        Task { [weak self] in
+            for await item in inboundStream {
+                guard let self else { return }
+                await self.process(item)
+            }
+        }
+    }
+
+    private func process(_ item: Inbound) {
+        switch item {
+        case .stats(let rows): handleStats(rows)
+        case .metadata(let metadata): metadataArrived(metadata)
+        case .completed(let id): completed(id)
+        case .failed(let id, let failure): failed(id, failure)
+        case .removed(let id): forgot(id)
+        case .resumeData(let id, let data): resumeDataArrived(id, data)
+        case .listen(let report): listenChanged(report)
         }
     }
 
@@ -150,6 +206,7 @@ public actor LibtorrentEngine: TorrentEngine {
         for waiter in resumePending.values {
             waiter.resume(returning: nil)
         }
+        inbound.finish()
         continuation.finish()
     }
 
@@ -185,7 +242,7 @@ public actor LibtorrentEngine: TorrentEngine {
                     hasMetadata: row.has_metadata != 0
                 )
             }
-            Task { await self.handleStats(raw) }
+            inbound.yield(.stats(raw))
 
         case LT_EVENT_METADATA:
             let info = payload.assumingMemoryBound(to: lt_metadata_info.self).pointee
@@ -209,11 +266,11 @@ public actor LibtorrentEngine: TorrentEngine {
                 pieceLength: Int(info.piece_length),
                 files: files
             )
-            Task { await self.metadataArrived(metadata) }
+            inbound.yield(.metadata(metadata))
 
         case LT_EVENT_COMPLETED:
             let id = TorrentID(String(cString: payload.assumingMemoryBound(to: CChar.self)))
-            Task { await self.completed(id) }
+            inbound.yield(.completed(id))
 
         case LT_EVENT_ERROR:
             let info = payload.assumingMemoryBound(to: lt_error_info.self).pointee
@@ -222,11 +279,11 @@ public actor LibtorrentEngine: TorrentEngine {
                 kind: Self.failureKind(for: Int(info.error_kind)),
                 technicalMessage: String(cString: info.message)
             )
-            Task { await self.failed(id, failure) }
+            inbound.yield(.failed(id, failure))
 
         case LT_EVENT_REMOVED:
             let id = TorrentID(String(cString: payload.assumingMemoryBound(to: CChar.self)))
-            Task { await self.forgot(id) }
+            inbound.yield(.removed(id))
 
         case LT_EVENT_RESUME_DATA:
             let info = payload.assumingMemoryBound(to: lt_resume_data_info.self).pointee
@@ -235,7 +292,7 @@ public actor LibtorrentEngine: TorrentEngine {
             let data: Data? = (size > 0 && info.data != nil)
                 ? Data(bytes: info.data!, count: size)
                 : nil
-            Task { await self.resumeDataArrived(id, data) }
+            inbound.yield(.resumeData(id, data))
 
         case LT_EVENT_LISTEN:
             let info = payload.assumingMemoryBound(to: lt_listen_info.self).pointee
@@ -246,7 +303,7 @@ public actor LibtorrentEngine: TorrentEngine {
                 succeeded: info.succeeded != 0,
                 message: info.message.map(String.init(cString:)) ?? ""
             )
-            Task { await self.listenChanged(report) }
+            inbound.yield(.listen(report))
 
         default:
             break
@@ -330,40 +387,65 @@ public actor LibtorrentEngine: TorrentEngine {
 
     // MARK: - TorrentEngine
 
-    public func add(_ source: AddSource, saveDirectory: URL) async throws -> TorrentID {
+    public func add(_ source: AddSource, saveDirectory: URL, held: Bool) async throws -> TorrentID {
+        guard let session else {
+            throw EngineFailure(kind: .engineShutdown, technicalMessage: "no session")
+        }
         try FileManager.default.createDirectory(at: saveDirectory, withIntermediateDirectories: true)
 
         var idBuffer = [CChar](repeating: 0, count: 41)
         var errorBuffer = [CChar](repeating: 0, count: 256)
         var errorKind = Int32(LT_ERROR_UNKNOWN)
+        let hold: Int32 = held ? 1 : 0
 
+        let result: Int32
         switch source {
         case .magnet(let uri):
-            let result = uri.withCString { uriC in
+            result = uri.withCString { uriC in
                 saveDirectory.path.withCString { pathC in
                     withUnsafeMutablePointer(to: &errorKind) { kindPtr in
-                        lt_add_magnet(session, uriC, pathC, &idBuffer, &errorBuffer, kindPtr)
+                        lt_add_magnet(session, uriC, pathC, hold, &idBuffer, &errorBuffer, kindPtr)
                     }
                 }
             }
-            try Self.throwIfFailed(result, errorBuffer, kind: errorKind)
-            let torrentID = TorrentID(Self.cString(idBuffer))
-            register(torrentID, saveDirectory: saveDirectory)
-            return torrentID
 
-        case .torrentFile(let data), .resumeData(let data):
-            let result = data.withUnsafeBytes { raw -> Int32 in
-                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
-                return saveDirectory.path.withCString { pathC in
+        case .torrentFile(let data):
+            result = Self.withBytes(data) { base, count in
+                saveDirectory.path.withCString { pathC in
                     withUnsafeMutablePointer(to: &errorKind) { kindPtr in
-                        lt_add_torrent_data(session, base, raw.count, pathC, &idBuffer, &errorBuffer, kindPtr)
+                        lt_add_torrent_data(session, base, count, pathC, hold, &idBuffer, &errorBuffer, kindPtr)
                     }
                 }
             }
-            try Self.throwIfFailed(result, errorBuffer, kind: errorKind)
-            let torrentID = TorrentID(Self.cString(idBuffer))
-            register(torrentID, saveDirectory: saveDirectory)
-            return torrentID
+
+        case .resumeData(let data):
+            // Its own entry point: resume data is not a .torrent file, and
+            // feeding it to the .torrent parser is what lost every torrent on
+            // relaunch. A restore was confirmed the first time, so it never
+            // needs the confirm card; `held` here only means "come back
+            // paused, whatever the blob says" — which the first launch after
+            // upgrading from 1.2 asks for. See `LibraryStore.restoreResumeData`.
+            result = Self.withBytes(data) { base, count in
+                saveDirectory.path.withCString { pathC in
+                    withUnsafeMutablePointer(to: &errorKind) { kindPtr in
+                        lt_add_resume_data(session, base, count, pathC, hold, &idBuffer, &errorBuffer, kindPtr)
+                    }
+                }
+            }
+        }
+
+        try Self.throwIfFailed(result, errorBuffer, kind: errorKind)
+        let torrentID = TorrentID(Self.cString(idBuffer))
+        register(torrentID, saveDirectory: saveDirectory)
+        return torrentID
+    }
+
+    private static func withBytes(
+        _ data: Data, _ body: (UnsafePointer<UInt8>, Int) -> Int32
+    ) -> Int32 {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+            return body(base, raw.count)
         }
     }
 
@@ -416,6 +498,17 @@ public actor LibtorrentEngine: TorrentEngine {
         guard let session else { return }
         let result = id.raw.withCString { lt_force_recheck(session, $0) }
         logEngineFailure(result, "recheck", id)
+    }
+
+    /// Points a torrent at one peer directly. Not part of `TorrentEngine`: the
+    /// app has no use for it. It exists so tests can join two local sessions
+    /// over loopback with no tracker, DHT or internet involved.
+    public func connectPeer(_ id: TorrentID, host: String, port: Int) {
+        guard let session else { return }
+        let result = id.raw.withCString { idC in
+            host.withCString { hostC in lt_connect_peer(session, idC, hostC, Int32(port)) }
+        }
+        logEngineFailure(result, "connect peer", id)
     }
 
     public func setFilePriorities(_ id: TorrentID, _ priorities: [FilePriority]) {
