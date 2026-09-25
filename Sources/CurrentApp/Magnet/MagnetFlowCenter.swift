@@ -135,8 +135,4 @@ final class MagnetFlowCenter: ObservableObject {
         chosenDestination = nil
         remembersDestination = false
     }
-
-    func resolveFailed(message: String) {
-        dismiss()
-    }
 }

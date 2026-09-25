@@ -145,6 +145,10 @@ final class RealEngineTests: XCTestCase {
         // without a peer to ask.
         let metadata = watcher.metadata(for: restored)
         XCTAssertEqual(metadata?.displayName, fixture.name)
+        // libtorrent says "finished" when a restored seed's check ends, and the
+        // app turned that into "Download complete" for every seed in the
+        // library at every launch. Nothing downloaded, so nothing finished.
+        XCTAssertEqual(watcher.completed, [], "a restored seed announced itself as a new download")
     }
 
     func testGarbageResumeDataIsRefusedNotFatal() async throws {
@@ -223,6 +227,8 @@ final class RealEngineTests: XCTestCase {
         XCTAssertNotNil(done, "released, it must download")
         let written = try Data(contentsOf: leecherDirectory.appendingPathComponent(fixture.name))
         XCTAssertEqual(written, fixture.content)
+        let announced = await eventually { watcher.completed == [id] }
+        XCTAssertTrue(announced, "a torrent that really downloaded must still say it finished")
         _ = seeder
     }
 
@@ -361,6 +367,7 @@ final class EngineWatcher {
     private(set) var latest: [TorrentID: TorrentSnapshot] = [:]
     private(set) var metadataByID: [TorrentID: TorrentMetadata] = [:]
     private(set) var listens: [ListenReport] = []
+    private(set) var completed: [TorrentID] = []
     private var task: Task<Void, Never>?
 
     init(_ engine: LibtorrentEngine) {
@@ -375,6 +382,8 @@ final class EngineWatcher {
                     self.metadataByID[id] = metadata
                 case .listenChanged(let report):
                     self.listens.append(report)
+                case .completed(let id):
+                    self.completed.append(id)
                 default:
                     break
                 }

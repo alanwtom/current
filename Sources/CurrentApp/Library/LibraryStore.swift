@@ -402,6 +402,8 @@ final class LibraryStore: ObservableObject {
             metadataCache[id] = nil
             filePriorities[id] = nil
             rateHistory[id] = nil
+            // Added again later, it's a fresh torrent and gets the timeout.
+            restoredIDs.remove(id)
             selection.remove(id)
             orderedIDs.removeAll { $0 == id }
             // Through the same queue as the record writes, so an update still
@@ -703,14 +705,31 @@ final class LibraryStore: ObservableObject {
     /// app came back after every relaunch without the torrents it had been
     /// running and never said a word.
     @discardableResult
-    func restoreResumeData() async -> Int {
+    /// Brings back every saved torrent. Returns how many couldn't be read, and
+    /// how many came back paused because this is the first launch whose
+    /// restore works.
+    ///
+    /// 1.2 and earlier saved every torrent's state and never managed to
+    /// restore one — each relaunch dropped the lot. So the first launch that
+    /// *can* restore brings back everything ever added and not removed: much
+    /// of it long gone as far as the user knew, some with its files since
+    /// deleted. Those come back paused, once, so nothing starts downloading
+    /// that nobody asked for today. Every launch after that restores each
+    /// torrent exactly as it was saved.
+    func restoreResumeData() async -> (failed: Int, pausedForUpgrade: Int) {
+        let firstWorkingRestore = database.allSettings()[Self.restoreWorksKey] == nil
         var failed = 0
+        var paused = 0
         for (id, data) in database.allResumeData() {
             // Re-add where the torrent lived before, not wherever the default
             // downloads folder points today.
             let directory = records[id]?.saveDirectory ?? downloadsDirectory
             do {
-                _ = try await engine.add(.resumeData(data), saveDirectory: directory)
+                let restored = try await engine.add(
+                    .resumeData(data), saveDirectory: directory, held: firstWorkingRestore
+                )
+                restoredIDs.insert(restored)
+                if firstWorkingRestore { paused += 1 }
             } catch let failure as EngineFailure where failure.kind == .duplicateTorrent {
                 // Already there — nothing lost.
             } catch {
@@ -718,8 +737,21 @@ final class LibraryStore: ObservableObject {
                 NSLog("Current: couldn't restore torrent \(id.raw.prefix(12))…: \(error)")
             }
         }
-        return failed
+        try? database.set("1", forKey: Self.restoreWorksKey)
+        return (failed, paused)
     }
+
+    /// Set once a version whose restore works has launched. Kept in the
+    /// library database beside the saved states it describes, so it travels
+    /// with them.
+    static let restoreWorksKey = "restoreWorks"
+
+    /// Torrents brought back from saved state at this launch. The magnet
+    /// timeout leaves these alone: it counts from when a torrent arrived, and
+    /// a restored torrent "arrived" at launch however old it really is — so a
+    /// restored torrent still looking for its file details was deleted from
+    /// the library two minutes after every launch.
+    private(set) var restoredIDs: Set<TorrentID> = []
 
     /// Saves resume data for every torrent. Budgeted in wall-clock time so a
     /// wedged engine can never stall app termination; each individual fetch

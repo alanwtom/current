@@ -548,8 +548,17 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                         dispatch_metadata(ctx, added->handle);
                     }
                 } else if (auto const* done = alert_cast<torrent_finished_alert>(a)) {
-                    std::string id = hex_id(done->handle);
-                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_COMPLETED, id.c_str(), 1);
+                    // libtorrent posts this whenever a check ends with the
+                    // torrent complete — including a finished torrent restored
+                    // at launch, which downloaded nothing. Passed on as-is,
+                    // every seed in the library announced "Download complete"
+                    // again each time the app opened. It never did before only
+                    // because restoring never worked. A torrent that has just
+                    // finished is one that moved payload this session.
+                    if (done->handle.status({}).total_payload_download > 0) {
+                        std::string id = hex_id(done->handle);
+                        if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_COMPLETED, id.c_str(), 1);
+                    }
                 } else if (auto const* err = alert_cast<torrent_error_alert>(a)) {
                     dispatch_error(ctx, err->handle, err->message(), err->error);
                 } else if (auto const* srd = alert_cast<save_resume_data_alert>(a)) {
@@ -781,8 +790,8 @@ int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
 /// fetch their metadata from the swarm like a magnet would, rather than being
 /// lost.
 int lt_add_resume_data(lt_session* opaque, const uint8_t* data, size_t len,
-                       const char* save_path, char out_id[41], char out_error[256],
-                       int* out_error_kind) {
+                       const char* save_path, int paused, char out_id[41],
+                       char out_error[256], int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
     try {
@@ -796,6 +805,12 @@ int lt_add_resume_data(lt_session* opaque, const uint8_t* data, size_t len,
             return -1;
         }
         if (save_path && save_path[0] != '\0') atp.save_path = save_path;
+        if (paused) {
+            // Whatever the blob says. Not auto-managed either, or libtorrent's
+            // queue would start it again on its own; lt_resume is the way on.
+            atp.flags |= torrent_flags::paused;
+            atp.flags &= ~torrent_flags::auto_managed;
+        }
         torrent_handle h = ctx->ses->add_torrent(atp);
         copy_string(out_id, 41, hex_id(h).c_str());
         return 0;
