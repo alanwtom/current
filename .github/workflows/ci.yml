@@ -34,7 +34,7 @@ jobs:
       - name: Soak launch (simulate mode)
         run: |
           BEFORE=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || echo 0)
-          .build/arm64-apple-macosx/release/Current -simulate &
+          "$(swift build -c release --show-bin-path)/Current" -simulate &
           APP_PID=$!
           for i in $(seq 1 18); do
             sleep 5
