@@ -128,6 +128,19 @@ rpaths_of() {
         | sed -E 's/^ *path (.*) \(offset [0-9]+\)$/\1/'
 }
 
+# The oldest macOS a Mach-O file will load on, or nothing if it isn't one. A
+# universal file states one per architecture, and the highest is what counts.
+# Very old binaries state it as LC_VERSION_MIN_MACOSX rather than minos.
+# vtool fails on anything that isn't a binary, which under pipefail would stop
+# the whole script, hence the `|| true`.
+minos_of() {
+    { vtool -show-build "$1" 2>/dev/null || true; } \
+        | awk '$1 == "minos" { print $2 }
+               /LC_VERSION_MIN_MACOSX/ { old = 1 }
+               old && $1 == "version" { print $2; old = 0 }' \
+        | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
+}
+
 # Removes every rpath that names a folder on this Mac. Two kinds turn up:
 # Homebrew's libraries carry their own Cellar folder, and swiftbuild gives the
 # executable one into `.build/out/Products/<Config>/PackageFrameworks`. Neither
@@ -268,6 +281,38 @@ if (( ${#leaks} )); then
     printf '  %s\n' "${leaks[@]}" >&2
     echo "  (these paths exist on this Mac, not on the ones the app ships to)" >&2
     exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Every binary has to load on the oldest macOS the app promises
+#
+# Homebrew installs builds made for the macOS it is running on. Once this Mac
+# moved to 27, Homebrew's next OpenSSL update arrived built for 27 only, and
+# the bundle would have shipped it inside an app that says it runs on 26 —
+# where the library can't load, so the app doesn't open at all. The linker
+# did say so, on every build, as one warning among dozens. So a release stops
+# here.
+#
+# A debug bundle only warns: it never leaves this Mac, and stopping it would
+# stall ordinary work every time Homebrew updates something.
+# ---------------------------------------------------------------------------
+autoload -Uz is-at-least
+MIN_OS="$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist")"
+too_new=()
+while IFS= read -r -d '' file; do
+    needs="$(minos_of "$file")"
+    [[ -z "$needs" ]] && continue
+    is-at-least "$needs" "$MIN_OS" || too_new+=("${file#$APP/} needs macOS $needs")
+done < <(find "$APP" -type f -print0)
+if (( ${#too_new} )); then
+    level="error"; [[ "$CONFIG" == "debug" ]] && level="warning"
+    echo "$level: the app promises macOS $MIN_OS, but these need newer:" >&2
+    printf '  %s\n' "${too_new[@]}" >&2
+    echo "  (on macOS $MIN_OS the app would not open at all)" >&2
+    echo "  Homebrew installs the build made for this Mac's macOS; ask for the $MIN_OS one:" >&2
+    echo "    HOMEBREW_FAKE_MACOS=$MIN_OS brew reinstall <formula>" >&2
+    echo "  (not --build-from-source: that targets the SDK's version, e.g. 26.5, not $MIN_OS)" >&2
+    [[ "$level" == "error" ]] && exit 1
 fi
 
 # Signing comes last: every install_name_tool edit above invalidates whatever

@@ -58,6 +58,22 @@ strips every absolute rpath from what it bundles, and its closing check now
 fails the bundle if one is left, the same way it fails on an absolute library
 path.
 
+**Every bundled library has to load on the oldest macOS the app promises**
+(`LSMinimumSystemVersion`, 26.0). Homebrew installs the build made for the Mac
+it's on, so once this Mac moved to macOS 27, the next OpenSSL update arrived
+built for 27 only — and a release made then would not have opened on macOS 26
+at all. Nothing failed; the linker printed one warning among dozens.
+`make-app.sh` now refuses a release bundle holding any binary that needs a
+newer macOS than the app claims (a debug bundle only warns).
+
+The fix is `HOMEBREW_FAKE_MACOS=26.0 brew reinstall <formula>`, which pours
+Homebrew's own macOS 26 build. **Not `--build-from-source`**: Homebrew
+discards any deployment target you set, so the compiler takes the SDK's
+version instead — 26.5 here — and that still locks out 26.0–26.4. Expect to
+redo this every time Homebrew updates OpenSSL or libtorrent. Homebrew marks
+`HOMEBREW_FAKE_MACOS` for removal from late 2027; when it goes, building
+releases on a macOS 26 machine is the way out.
+
 **Run against the simulator, not the network:**
 
 ```bash
