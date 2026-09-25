@@ -463,13 +463,12 @@ struct MagnetSelectionSheet: View {
 
     let metadata: TorrentMetadata
     let close: () -> Void
-    @State private var nodes: [FileNode]
-
-    init(metadata: TorrentMetadata, close: @escaping () -> Void) {
-        self.metadata = metadata
-        self.close = close
-        _nodes = State(initialValue: FileTreeBuilder.build(from: metadata.files))
-    }
+    /// Built once, when the picker opens. It used to be built in `init`, and
+    /// this view is re-created every time the shell redraws — which, with the
+    /// library observing the engine, is every second — so the tree was rebuilt
+    /// once a second for as long as the picker was open, and `State` threw each
+    /// copy away.
+    @State private var nodes: [FileNode] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -480,6 +479,9 @@ struct MagnetSelectionSheet: View {
             footerBar
         }
         .modalSize(width: 560, height: 520)
+        .onAppear {
+            if nodes.isEmpty { nodes = FileTreeBuilder.build(from: metadata.files) }
+        }
     }
 
     private var header: some View {

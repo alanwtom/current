@@ -295,10 +295,25 @@ final class SettingsStore: ObservableObject {
 
     var usedStorageBytes: Int64 = 0
 
+    /// Every settings write, in the order it was made.
+    ///
+    /// Each write used to be its own detached task, and detached tasks have no
+    /// order: flip a switch on and straight back off and the database could
+    /// end up holding "on". Nothing looked wrong until the next launch, which
+    /// read back the value you had left behind — for the VPN binding, a
+    /// confinement you'd turned off, or worse, one you'd turned on and lost.
+    private let writes = DispatchQueue(label: "dev.alantom.current.settings", qos: .utility)
+
     private func persist(_ value: String, forKey key: String) {
-        Task.detached(priority: .utility) { [database] in
-            try? await database.set(value, forKey: key)
-        }
+        let database = self.database
+        writes.async { try? database.set(value, forKey: key) }
+    }
+
+    /// Waits for every write made so far. Called at quit, so a change made the
+    /// moment before isn't lost with the process — and by tests, instead of
+    /// sleeping and hoping.
+    func flushPendingWrites() {
+        writes.sync {}
     }
 
     private func persist(_ value: Bool, forKey key: String) {

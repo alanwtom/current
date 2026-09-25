@@ -82,9 +82,15 @@ public enum DropParser {
     static let maximumNameLength = 200
 
     public static func nameHint(fromMagnet uri: String) -> String? {
-        guard let range = uri.range(of: "dn=") else { return nil }
-        let tail = String(uri[range.upperBound...])
-        let token = tail.split(separator: "&").first.map(String.init) ?? tail
+        // The `dn` parameter itself, found by key. Searching the text for
+        // "dn=" matched it inside any other key — `xdn=`, `adn=` — so a link
+        // could put one name on screen while its real `dn` said another.
+        guard let query = uri.split(separator: "?", maxSplits: 1).dropFirst().first,
+              let token = query.split(separator: "&", omittingEmptySubsequences: true)
+                .first(where: { $0.lowercased().hasPrefix("dn=") })
+                .map({ String($0.dropFirst(3)) }),
+              !token.isEmpty
+        else { return nil }
         let spaced = token.replacingOccurrences(of: "+", with: " ")
         let decoded = spaced.removingPercentEncoding ?? spaced
         return sanitisedName(decoded)
@@ -92,7 +98,7 @@ public enum DropParser {
 
     /// Makes a name from an untrusted source safe to show.
     ///
-    /// Two things get stripped, and neither is hypothetical for a format whose
+    /// Three things get stripped, and none is hypothetical for a format whose
     /// links arrive from web pages:
     ///
     /// - **Control characters and direction overrides.** A U+202E in a name
@@ -100,6 +106,13 @@ public enum DropParser {
     ///   something it isn't — the same trick that has been used on filenames
     ///   for years. Newlines and tabs get stripped for the plainer reason that
     ///   a name is one line in a fixed-height row.
+    /// - **Path separators.** A display name is not a path and must never be
+    ///   able to act like one. This one is not about display at all: the name
+    ///   reached the filesystem, and a `/` in it was enough to make "delete
+    ///   the files" target the whole download folder instead of one torrent.
+    ///   `ContentLocation` refuses such a path outright now and is the real
+    ///   defence — this is the other half of it, so the bad name never gets
+    ///   that far and never appears in the library either.
     /// - **Length.** See `maximumNameLength`.
     ///
     /// Returns nil rather than an empty string when nothing survives, so the
@@ -111,6 +124,7 @@ public enum DropParser {
             // and other invisible formatting characters.
             !CharacterSet.controlCharacters.contains(scalar)
                 && !CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}").contains(scalar)
+                && scalar != "/"
         }
         var name = String(String.UnicodeScalarView(cleaned))
             .trimmingCharacters(in: .whitespacesAndNewlines)

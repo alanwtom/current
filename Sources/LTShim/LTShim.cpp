@@ -12,6 +12,8 @@
 #include <libtorrent/load_torrent.hpp>
 #include <libtorrent/write_resume_data.hpp>
 #include <libtorrent/session_params.hpp>
+#include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/address.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -26,6 +28,9 @@
 #include <system_error>
 #include <thread>
 #include <vector>
+
+#include <sys/stat.h>
+#include <arpa/inet.h>
 
 using namespace lt;
 
@@ -65,7 +70,13 @@ session_params load_session_params(std::string const& path) {
     std::vector<char> buf{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     if (buf.empty()) return session_params();
     try {
-        return read_session_params(std::span<char const>(buf.data(), buf.size()));
+        // DHT state and nothing else, matching what `save_session_params`
+        // writes. The default flags would also read an IP filter and extension
+        // state out of this file if one were ever put there — settings are
+        // overwritten straight afterwards, but nothing should be loaded from a
+        // file that isn't meant to carry it.
+        return read_session_params(std::span<char const>(buf.data(), buf.size()),
+                                   session_handle::save_dht_state);
     } catch (...) {
         return session_params();
     }
@@ -86,6 +97,10 @@ void save_session_params(SessionContext* ctx) {
             out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
             if (!out) return;
         }
+        // 0600 like everything else the app keeps in this folder. The routing
+        // table pairs this Mac's addresses with its DHT node id, and the umask
+        // would otherwise leave it readable by every account on the machine.
+        ::chmod(tmp.c_str(), S_IRUSR | S_IWUSR);
         // Renamed into place, so an interrupted write can't leave a half-file
         // that the next launch then has to recover from.
         std::rename(tmp.c_str(), ctx->state_path.c_str());
@@ -101,12 +116,11 @@ inline void copy_string(char* dst, size_t cap, char const* src) {
     std::snprintf(dst, cap, "%s", src ? src : "");
 }
 
-std::string hex_id(torrent_handle const& h) {
+std::string hex_id(info_hash_t const& hashes) {
     static char const* digits = "0123456789abcdef";
     // v1 is all-zero for v2-only torrents; fall back to the first 20 bytes of
     // the v2 hash (the standard truncated-v2 identity) so every torrent gets
     // a unique, stable id.
-    info_hash_t const& hashes = h.info_hashes();
     unsigned char const* bytes = hashes.has_v1()
         ? reinterpret_cast<unsigned char const*>(hashes.v1.data())
         : reinterpret_cast<unsigned char const*>(hashes.v2.data());
@@ -117,6 +131,146 @@ std::string hex_id(torrent_handle const& h) {
         out.push_back(digits[bytes[i] & 0xF]);
     }
     return out;
+}
+
+std::string hex_id(torrent_handle const& h) {
+    // `info_hashes()` does not throw on a handle whose torrent has gone; it
+    // returns zeros. Callers that can see a removed torrent must take the hash
+    // from somewhere that outlives it — see the removed alert below.
+    return hex_id(h.info_hashes());
+}
+
+/// The 40-character id back into the hash libtorrent indexes torrents by.
+bool parse_id(char const* id, sha1_hash* out) {
+    if (!id || std::strlen(id) != 40) return false;
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (int i = 0; i < 20; ++i) {
+        int hi = nibble(id[i * 2]), lo = nibble(id[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return false;
+        (*out)[i] = static_cast<char>((hi << 4) | lo);
+    }
+    return true;
+}
+
+/// Whether an address is on this machine or its local network.
+///
+/// A magnet is text any web page can write, and every tracker, web seed and
+/// peer in it is a place libtorrent will send a request the moment it's added.
+/// Pointed at `192.168.1.1/cgi-bin/…`, that is a web page making the user's
+/// Mac send GET requests to their own router — the classic cross-site request
+/// against a device that trusts its LAN. libtorrent's `ssrf_mitigation` only
+/// covers loopback trackers, and only by path, so the rest is done here.
+bool is_local_address(address const& a) {
+    if (a.is_unspecified() || a.is_loopback() || a.is_multicast()) return true;
+    if (a.is_v4()) {
+        auto const b = a.to_v4().to_bytes();
+        if (b[0] == 10) return true;                                   // 10/8
+        if (b[0] == 172 && (b[1] & 0xF0) == 16) return true;           // 172.16/12
+        if (b[0] == 192 && b[1] == 168) return true;                   // 192.168/16
+        if (b[0] == 169 && b[1] == 254) return true;                   // link-local
+        if (b[0] == 100 && (b[1] & 0xC0) == 64) return true;           // CGNAT 100.64/10
+        if (b[0] == 0) return true;
+        return false;
+    }
+    auto const v6 = a.to_v6();
+    if (v6.is_link_local() || v6.is_site_local() || v6.is_v4_mapped()) {
+        if (v6.is_v4_mapped()) {
+            return is_local_address(make_address_v4(boost::asio::ip::v4_mapped, v6));
+        }
+        return true;
+    }
+    auto const b = v6.to_bytes();
+    return (b[0] & 0xFE) == 0xFC;                                        // fc00::/7
+}
+
+/// True for a URL whose host is a local address or `localhost`.
+///
+/// Literal addresses only. A hostname that *resolves* to the LAN is not caught
+/// here — that would need a lookup at add time, and the lookup is itself a
+/// request the link asked for.
+bool url_targets_local_network(std::string const& url) {
+    auto const scheme = url.find("://");
+    if (scheme == std::string::npos) return false;
+    std::string rest = url.substr(scheme + 3);
+    auto const end = rest.find_first_of("/?#");
+    std::string authority = end == std::string::npos ? rest : rest.substr(0, end);
+    auto const at = authority.rfind('@');
+    if (at != std::string::npos) authority = authority.substr(at + 1);
+    std::string host;
+    if (!authority.empty() && authority[0] == '[') {
+        auto const close = authority.find(']');
+        if (close == std::string::npos) return true;   // malformed: refuse
+        host = authority.substr(1, close - 1);
+    } else {
+        auto const colon = authority.find(':');
+        host = colon == std::string::npos ? authority : authority.substr(0, colon);
+    }
+    for (auto& c : host) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (host == "localhost" || (host.size() > 10 && host.ends_with(".localhost"))) return true;
+    if (host.ends_with(".local")) return true;                           // mDNS
+    error_code ec;
+    address const a = make_address(host, ec);
+    if (!ec) return is_local_address(a);
+    // The system resolver also reads an address written as one number
+    // (`3232235777` is 192.168.1.1), or in octal or hex parts, and that is
+    // what libtorrent's lookup goes through. `inet_aton` is the same lenient
+    // parser, so anything it accepts is an address, not a hostname.
+    in_addr legacy{};
+    if (inet_aton(host.c_str(), &legacy) != 0) {
+        return is_local_address(address_v4(ntohl(legacy.s_addr)));
+    }
+    return false;                                                        // a hostname
+}
+
+/// Drops every tracker, web seed and peer that points into the local network.
+void strip_local_targets(add_torrent_params& atp) {
+    std::vector<std::string> trackers;
+    std::vector<int> tiers;
+    for (std::size_t i = 0; i < atp.trackers.size(); ++i) {
+        if (url_targets_local_network(atp.trackers[i])) continue;
+        trackers.push_back(atp.trackers[i]);
+        if (i < atp.tracker_tiers.size()) tiers.push_back(atp.tracker_tiers[i]);
+    }
+    atp.trackers = std::move(trackers);
+    atp.tracker_tiers = std::move(tiers);
+
+    std::vector<std::string> seeds;
+    for (auto const& u : atp.url_seeds) {
+        if (!url_targets_local_network(u)) seeds.push_back(u);
+    }
+    atp.url_seeds = std::move(seeds);
+
+    std::vector<tcp::endpoint> peers;
+    for (auto const& ep : atp.peers) {
+        if (!is_local_address(ep.address())) peers.push_back(ep);
+    }
+    atp.peers = std::move(peers);
+}
+
+/// How a torrent the user hasn't said yes to yet is added.
+///
+/// A magnet has to run to fetch its metadata, so it can't simply be added
+/// paused. It is added in upload mode instead — libtorrent's own tool for this
+/// race: the torrent connects and trades metadata but never requests a piece —
+/// and not auto-managed, or the queue would eventually take it out of upload
+/// mode by itself. When its metadata arrives the worker pauses it, and it sits
+/// there, having written nothing, until something resumes it (`lt_resume`
+/// clears upload mode, because every resume is a decision to download).
+///
+/// A .torrent file already has its metadata, so held just means paused.
+void apply_hold(add_torrent_params& atp, bool is_magnet) {
+    atp.flags &= ~torrent_flags::auto_managed;
+    if (is_magnet) {
+        atp.flags &= ~torrent_flags::paused;
+        atp.flags |= torrent_flags::upload_mode;
+    } else {
+        atp.flags |= torrent_flags::paused;
+    }
 }
 
 int classify_error(error_code const& ec) {
@@ -238,6 +392,20 @@ void dispatch_error(SessionContext* ctx, torrent_handle const& h,
 }
 
 bool find_handle(SessionContext* ctx, char const* id, torrent_handle* out) {
+    // A direct lookup. This used to copy every handle in the session and
+    // hex-encode each one, on every pause, resume and resume-data request —
+    // which made Pause All over a large library quadratic in blocking calls
+    // to libtorrent's network thread.
+    sha1_hash hash;
+    if (parse_id(id, &hash)) {
+        torrent_handle h = ctx->ses->find_torrent(hash);
+        if (h.is_valid()) {
+            *out = h;
+            return true;
+        }
+    }
+    // The id of a v2-only torrent is its truncated v2 hash, which the direct
+    // lookup may not index. Rare enough that the slow path is fine for it.
     for (auto const& h : ctx->ses->get_torrents()) {
         if (hex_id(h) == id) {
             *out = h;
@@ -245,6 +413,21 @@ bool find_handle(SessionContext* ctx, char const* id, torrent_handle* out) {
         }
     }
     return false;
+}
+
+/// Runs one API call so that nothing libtorrent throws can leave the shim.
+///
+/// A handle can go invalid between `find_handle` and the call on it — the
+/// torrent was removed by cleanup, a magnet timeout or the user a moment
+/// before — and libtorrent reports that by throwing. An exception unwinding
+/// through Swift frames is undefined behaviour; in practice, a crash.
+template <typename F>
+int guarded(F&& body) {
+    try {
+        return body();
+    } catch (...) {
+        return -1;
+    }
 }
 
 } // namespace
@@ -328,13 +511,34 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
     ctx->running = true;
     ctx->worker = std::thread([ctx]() {
         while (ctx->running) {
+          // **Nothing thrown in here may escape.** This is a bare std::thread,
+          // so an exception leaving it is std::terminate — the whole app, gone.
+          // libtorrent throws when a handle is used after its torrent was
+          // removed, and removal races this loop by design: cleanup, a magnet
+          // timeout or the user can remove a torrent between `get_torrents`
+          // and the `status()` call on it. Each alert and each status row is
+          // guarded on its own, so one bad handle costs one row, not a tick.
+          try {
             ctx->ses->wait_for_alert(std::chrono::milliseconds(250));
             std::vector<alert*> alerts;
             ctx->ses->pop_alerts(&alerts);
 
             for (alert const* a : alerts) {
+              try {
                 if (auto const* meta = alert_cast<metadata_received_alert>(a)) {
-                    dispatch_metadata(ctx, meta->handle);
+                    // A held magnet stops here, before the app even hears
+                    // about it: upload mode kept it from requesting a single
+                    // piece while it was fetching metadata, and pausing it now
+                    // is what makes "held" mean stopped rather than idling in
+                    // upload mode. See `apply_hold`. Nothing else puts a torrent
+                    // without metadata into upload mode — it has no storage to
+                    // fail — so the flag is ours.
+                    torrent_handle h = meta->handle;
+                    if (h.is_valid() && (h.flags() & torrent_flags::upload_mode)) {
+                        h.unset_flags(torrent_flags::auto_managed);
+                        h.pause();
+                    }
+                    dispatch_metadata(ctx, h);
                 } else if (auto const* added = alert_cast<add_torrent_alert>(a)) {
                     // Covers .torrent files and resume-data restores, which
                     // arrive with metadata already attached and therefore
@@ -364,7 +568,11 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                     info.data = nullptr;
                     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_RESUME_DATA, &info, 1);
                 } else if (auto const* removed = alert_cast<torrent_removed_alert>(a)) {
-                    std::string id = hex_id(removed->handle);
+                    // From the alert, never from its handle: by the time this
+                    // arrives the torrent is gone and the handle's hashes read
+                    // as zeros, so every removal used to be reported for a
+                    // torrent called "000…0" and matched nothing in the app.
+                    std::string id = hex_id(removed->info_hashes);
                     if (ctx->callback)
                         ctx->callback(ctx->user, LT_EVENT_REMOVED, id.c_str(), 1);
                 } else if (auto const* ok = alert_cast<listen_succeeded_alert>(a)) {
@@ -395,6 +603,9 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                     info.message = detail.c_str();
                     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_LISTEN, &info, 1);
                 }
+              } catch (...) {
+                  // One alert about a torrent that has since gone. Skip it.
+              }
             }
 
             auto const now = std::chrono::steady_clock::now();
@@ -409,17 +620,23 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
             if (!ctx->running || now < ctx->next_stats_tick) continue;
             ctx->next_stats_tick = now + std::chrono::milliseconds(1000);
 
-            std::vector<torrent_handle> torrents = ctx->ses->get_torrents();
-            if (torrents.empty()) continue;
+            // One call for the whole session. This used to be `get_torrents()`
+            // and then `status()` per handle — a blocking round trip to the
+            // network thread for every torrent, every second, with the default
+            // flags copying each one's piece bitfield as well. The session call
+            // is one round trip and asks only for what the row uses.
+            std::vector<torrent_status> statuses = ctx->ses->get_torrent_status(
+                [](torrent_status const&) { return true; },
+                torrent_handle::query_accurate_download_counters);
+            if (statuses.empty()) continue;
 
             std::vector<lt_stats_row> rows;
-            rows.reserve(torrents.size());
+            rows.reserve(statuses.size());
             std::vector<std::string> ids;
-            ids.reserve(torrents.size());
+            ids.reserve(statuses.size());
 
-            for (auto const& h : torrents) {
-                torrent_status st = h.status();
-                ids.push_back(hex_id(h));
+            for (auto const& st : statuses) {
+                ids.push_back(hex_id(st.info_hashes));
 
                 lt_stats_row row{};
                 row.id = ids.back().c_str();
@@ -453,8 +670,8 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                             (long long)st.total_wanted,
                             (long long)st.total_payload_download,
                             row.progress, st.num_peers, st.num_seeds,
-                            st.download_payload_rate,
-                            h.is_valid() ? 1 : 0,
+                            static_cast<double>(st.download_payload_rate),
+                            st.handle.is_valid() ? 1 : 0,
                             (st.flags & torrent_flags::paused) ? 1 : 0);
                     fflush(stderr);
                 }
@@ -469,6 +686,9 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                 fflush(stderr);
             }
             if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_STATS, &batch, 1);
+          } catch (...) {
+              // A whole tick lost — the next one is a second away.
+          }
         }
     });
 
@@ -478,16 +698,19 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
 void lt_session_destroy(lt_session* opaque) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx) return;
-    // Before the worker stops, so the freshest routing table is the one kept.
-    save_session_params(ctx);
+    // Stop the worker *first*. The worker saves on a timer too, and both
+    // writers used the same temporary file — two threads interleaving writes
+    // into it could put a corrupt table in place. Saved afterwards, it is
+    // still the freshest one.
     ctx->running = false;
     if (ctx->worker.joinable()) ctx->worker.join();
+    save_session_params(ctx);
     ctx->ses.reset();
     delete ctx;
 }
 
 int lt_add_magnet(lt_session* opaque, const char* uri, const char* save_path,
-                  char out_id[41], char out_error[256], int* out_error_kind) {
+                  int hold, char out_id[41], char out_error[256], int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
     try {
@@ -499,6 +722,8 @@ int lt_add_magnet(lt_session* opaque, const char* uri, const char* save_path,
             if (out_error_kind) *out_error_kind = classify_error(ec);
             return -1;
         }
+        strip_local_targets(atp);
+        if (hold) apply_hold(atp, true);
         atp.save_path = save_path;
         torrent_handle h = ctx->ses->add_torrent(atp);
         copy_string(out_id, 41, hex_id(h).c_str());
@@ -515,15 +740,62 @@ int lt_add_magnet(lt_session* opaque, const char* uri, const char* save_path,
 }
 
 int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
-                        const char* save_path, char out_id[41], char out_error[256],
-                        int* out_error_kind) {
+                        const char* save_path, int hold, char out_id[41],
+                        char out_error[256], int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
     try {
         add_torrent_params atp = load_torrent_buffer(
             std::span<char const>(reinterpret_cast<char const*>(data),
                                   static_cast<size_t>(len)));
+        // A .torrent file can name a tracker on the LAN just as a magnet can.
+        strip_local_targets(atp);
+        if (hold) apply_hold(atp, false);
         atp.save_path = save_path;
+        torrent_handle h = ctx->ses->add_torrent(atp);
+        copy_string(out_id, 41, hex_id(h).c_str());
+        return 0;
+    } catch (system_error const& e) {
+        copy_string(out_error, 256, e.code().message().c_str());
+        if (out_error_kind) *out_error_kind = classify_error(e.code());
+        return -1;
+    } catch (...) {
+        copy_string(out_error, 256, "Unknown engine error");
+        if (out_error_kind) *out_error_kind = LT_ERROR_UNKNOWN;
+        return -1;
+    }
+}
+
+/// Restores a torrent from the blob `lt_request_resume_data` produced.
+///
+/// **Not `load_torrent_buffer`.** That parses .torrent files, and restores used
+/// to go through it: every launch, every saved torrent was rejected with
+/// "missing or invalid 'info' section", the error was swallowed a layer up, and
+/// the library came back empty of anything the engine was running. Even with an
+/// info dict in the blob it would have thrown away what resume data is *for* —
+/// which pieces are already verified, paused or not, user-edited trackers — and
+/// re-hashed every file from scratch.
+///
+/// Blobs saved before this fix carry no info dict. `read_resume_data` still
+/// reads their hash, trackers and progress, so those torrents come back and
+/// fetch their metadata from the swarm like a magnet would, rather than being
+/// lost.
+int lt_add_resume_data(lt_session* opaque, const uint8_t* data, size_t len,
+                       const char* save_path, char out_id[41], char out_error[256],
+                       int* out_error_kind) {
+    auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses) return -1;
+    try {
+        error_code ec;
+        add_torrent_params atp = read_resume_data(
+            std::span<char const>(reinterpret_cast<char const*>(data),
+                                  static_cast<size_t>(len)), ec);
+        if (ec) {
+            copy_string(out_error, 256, ec.message().c_str());
+            if (out_error_kind) *out_error_kind = LT_ERROR_CORRUPTED;
+            return -1;
+        }
+        if (save_path && save_path[0] != '\0') atp.save_path = save_path;
         torrent_handle h = ctx->ses->add_torrent(atp);
         copy_string(out_id, 41, hex_id(h).c_str());
         return 0;
@@ -541,32 +813,42 @@ int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
 int lt_pause(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    h.unset_flags(torrent_flags::auto_managed);
-    h.pause(torrent_handle::graceful_pause);
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        h.unset_flags(torrent_flags::auto_managed);
+        h.pause(torrent_handle::graceful_pause);
+        return 0;
+    });
 }
 
 int lt_resume(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    h.set_flags(torrent_flags::auto_managed);
-    h.resume();
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        // Every resume is a decision to download, so it releases a held torrent
+        // too — see `apply_hold`. Left set, a held magnet would "resume" into
+        // upload mode and sit at 0 B/s forever.
+        h.unset_flags(torrent_flags::upload_mode);
+        h.set_flags(torrent_flags::auto_managed);
+        h.resume();
+        return 0;
+    });
 }
 
 int lt_remove(lt_session* opaque, const char* id, int delete_files) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    remove_flags_t flags = {};
-    if (delete_files) flags |= session::delete_files;
-    ctx->ses->remove_torrent(h, flags);
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        remove_flags_t flags = {};
+        if (delete_files) flags |= session::delete_files;
+        ctx->ses->remove_torrent(h, flags);
+        return 0;
+    });
 }
 
 /// Changes where a torrent's files are written.
@@ -581,34 +863,58 @@ int lt_remove(lt_session* opaque, const char* id, int delete_files) {
 int lt_set_save_path(lt_session* opaque, const char* id, const char* save_path) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    h.move_storage(save_path, move_flags_t::dont_replace);
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        h.move_storage(save_path, move_flags_t::dont_replace);
+        return 0;
+    });
 }
 
 int lt_force_recheck(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    h.force_recheck();
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        h.force_recheck();
+        return 0;
+    });
 }
 
 int lt_set_file_priorities(lt_session* opaque, const char* id,
                            const int* priorities, int32_t count) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    std::vector<download_priority_t> prio;
-    prio.reserve(count > 0 ? count : 0);
-    for (int32_t i = 0; i < count; ++i) {
-        prio.push_back(download_priority_t(static_cast<std::uint8_t>(priorities[i])));
-    }
-    h.prioritize_files(prio);
-    return 0;
+    if (!priorities && count > 0) return -1;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        std::vector<download_priority_t> prio;
+        prio.reserve(count > 0 ? count : 0);
+        for (int32_t i = 0; i < count; ++i) {
+            // Clamped: libtorrent's range is 0-7 and anything else is a bug
+            // upstream, not a priority.
+            int const p = priorities[i] < 0 ? 0 : (priorities[i] > 7 ? 7 : priorities[i]);
+            prio.push_back(download_priority_t(static_cast<std::uint8_t>(p)));
+        }
+        h.prioritize_files(prio);
+        return 0;
+    });
+}
+
+int lt_connect_peer(lt_session* opaque, const char* id, const char* ip, int port) {
+    auto* ctx = reinterpret_cast<SessionContext*>(opaque);
+    if (!ctx || !ctx->ses || !ip || port <= 0 || port > 65535) return -1;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        error_code ec;
+        address const a = make_address(ip, ec);
+        if (ec) return -1;
+        h.connect_peer(tcp::endpoint(a, static_cast<std::uint16_t>(port)));
+        return 0;
+    });
 }
 
 int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
@@ -686,16 +992,22 @@ int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
         case 2:
             pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_forced);
             pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_forced);
+            // Forced covers the handshake only. Without this a peer can agree
+            // to an encrypted handshake and then negotiate a plaintext payload,
+            // which is not what anyone choosing "Required" meant.
+            pack.set_int(settings_pack::allowed_enc_level, settings_pack::pe_rc4);
             pack.set_bool(settings_pack::prefer_rc4, true);
             break;
         case 1:
             pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_enabled);
             pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_enabled);
+            pack.set_int(settings_pack::allowed_enc_level, settings_pack::pe_both);
             pack.set_bool(settings_pack::prefer_rc4, true);
             break;
         default:
             pack.set_int(settings_pack::out_enc_policy, settings_pack::pe_enabled);
             pack.set_int(settings_pack::in_enc_policy, settings_pack::pe_enabled);
+            pack.set_int(settings_pack::allowed_enc_level, settings_pack::pe_both);
             pack.set_bool(settings_pack::prefer_rc4, false);
             break;
     }
@@ -712,17 +1024,24 @@ int lt_apply_settings(lt_session* opaque, const lt_settings* cfg) {
         fflush(stderr);
     }
 
-    ctx->ses->apply_settings(pack);
-    return 0;
+    return guarded([&] {
+        ctx->ses->apply_settings(pack);
+        return 0;
+    });
 }
 
 int lt_request_resume_data(lt_session* opaque, const char* id) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
-    torrent_handle h;
-    if (!find_handle(ctx, id, &h)) return -1;
-    h.save_resume_data();
-    return 0;
+    return guarded([&] {
+        torrent_handle h;
+        if (!find_handle(ctx, id, &h)) return -1;
+        // With the info dict, so a restore needs nothing but this blob. Without
+        // it the blob cannot bring back a torrent's metadata, which is half of
+        // why restores failed — see `lt_add_resume_data`.
+        h.save_resume_data(torrent_handle::save_info_dict);
+        return 0;
+    });
 }
 
 } // extern "C"

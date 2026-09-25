@@ -138,20 +138,35 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
 void lt_session_destroy(lt_session* session);
 
 /* Returns 0 on success. On failure returns -1, writes out_error and sets
- * *out_error_kind to an LT_ERROR_* constant. */
+ * *out_error_kind to an LT_ERROR_* constant.
+ *
+ * `hold` adds the torrent without letting it download: a magnet fetches its
+ * metadata and then pauses, a .torrent file is added paused, and neither
+ * writes anything until lt_resume. Trackers, web seeds and peers that point
+ * into the local network are dropped from both. */
 int lt_add_magnet(lt_session* session, const char* uri, const char* save_path,
-                  char out_id[41], char out_error[256], int* out_error_kind);
+                  int hold, char out_id[41], char out_error[256], int* out_error_kind);
 int lt_add_torrent_data(lt_session* session, const uint8_t* data, size_t len,
-                        const char* save_path, char out_id[41], char out_error[256],
-                        int* out_error_kind);
+                        const char* save_path, int hold, char out_id[41],
+                        char out_error[256], int* out_error_kind);
+/* Restores a torrent from a blob produced by lt_request_resume_data. Not
+ * interchangeable with lt_add_torrent_data: the two formats differ. */
+int lt_add_resume_data(lt_session* session, const uint8_t* data, size_t len,
+                       const char* save_path, char out_id[41], char out_error[256],
+                       int* out_error_kind);
 
 int lt_pause(lt_session* session, const char* id);
+/* Also releases a torrent that was added held. */
 int lt_resume(lt_session* session, const char* id);
 int lt_remove(lt_session* session, const char* id, int delete_files);
 /* Changes where a torrent's files go. Meant for a torrent that has resolved but
  * not started, which is when the app asks the user where to put it. */
 int lt_set_save_path(lt_session* session, const char* id, const char* save_path);
 int lt_force_recheck(lt_session* session, const char* id);
+/* Connects a torrent to one peer by address. Only the tests use this — it is
+ * how two local sessions find each other with no tracker or DHT. The app
+ * never calls it. */
+int lt_connect_peer(lt_session* session, const char* id, const char* ip, int port);
 int lt_set_file_priorities(lt_session* session, const char* id,
                            const int* priorities, int32_t count);
 

@@ -75,7 +75,7 @@ final class RealNetworkTests: XCTestCase {
         let directory = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         // The session opens no listen sockets until it is configured — see
         // `lt_session_create`, which fails closed so that a VPN-confined user
@@ -155,7 +155,7 @@ final class RealNetworkTests: XCTestCase {
         let directory = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         // The session opens no listen sockets until it is configured — see
         // `lt_session_create`, which fails closed so that a VPN-confined user
@@ -272,7 +272,7 @@ final class RealNetworkTests: XCTestCase {
     func testTheEngineReportsTheAddressItActuallyListensOn() async throws {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events, binding: .unrestricted,
@@ -298,7 +298,7 @@ final class RealNetworkTests: XCTestCase {
         let usable = await MainActor.run { NetworkMonitor().selectableInterfaces }
         try XCTSkipUnless(usable.count > 1, "only one usable interface on this Mac")
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events, binding: .unrestricted,
@@ -321,7 +321,7 @@ final class RealNetworkTests: XCTestCase {
     func testBindingToADeviceThatCannotExistListensNowhere() async throws {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,
@@ -339,7 +339,7 @@ final class RealNetworkTests: XCTestCase {
     func testALostConnectionListensNowhere() async throws {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,
@@ -372,7 +372,7 @@ final class RealNetworkTests: XCTestCase {
             throw XCTSkip("no ordinary interface with an address to bind to")
         }
 
-        let engine = LibtorrentEngine()
+        let engine = LibtorrentEngine(statePath: "")
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,

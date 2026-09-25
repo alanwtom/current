@@ -37,6 +37,9 @@ public actor SimulationEngine: TorrentEngine {
         /// default value or not.
         var swarmSeeds: Int?
         var swarmPeers: Int?
+        /// Added held: resolves, then stops paused until `resume`. Optional for
+        /// the same decoding reason as the swarm figures.
+        var held: Bool?
     }
 
     /// Swarm sizes handed out to simulated torrents, in order.
@@ -67,6 +70,9 @@ public actor SimulationEngine: TorrentEngine {
     private var records: [TorrentID: Record] = [:]
     private var ticker: Task<Void, Never>?
     private var counter = 0
+    /// How many ticks the simulation has run. Only the rate wobble reads it —
+    /// see `speedFactor(for:step:)`.
+    private var steps = 0
 
     // Tunables (useful for previews and tests).
     private let tickInterval: TimeInterval
@@ -98,7 +104,7 @@ public actor SimulationEngine: TorrentEngine {
 
     // MARK: - TorrentEngine
 
-    public func add(_ source: AddSource, saveDirectory: URL) async throws -> TorrentID {
+    public func add(_ source: AddSource, saveDirectory: URL, held: Bool) async throws -> TorrentID {
         counter += 1
         let id = TorrentID(String(format: "sim%04d", counter))
         let now = clock()
@@ -128,6 +134,7 @@ public actor SimulationEngine: TorrentEngine {
             )
             record.metadata = Self.metadata(for: record)
             record.priorities = Array(repeating: .normal, count: record.metadata!.files.count)
+            record.held = held ? true : nil
             records[id] = record
 
         case .torrentFile(let data):
@@ -160,6 +167,7 @@ public actor SimulationEngine: TorrentEngine {
             )
             record.metadata = Self.metadata(for: record)
             record.priorities = Array(repeating: .normal, count: record.metadata!.files.count)
+            record.held = held ? true : nil
             records[id] = record
 
         case .resumeData(let data):
@@ -190,6 +198,7 @@ public actor SimulationEngine: TorrentEngine {
 
     public func resume(_ id: TorrentID) {
         mutate(id) {
+            $0.held = nil
             if $0.state.isPaused {
                 $0.state = $0.state.isComplete ? .seeding : .downloading
             }
@@ -260,6 +269,7 @@ public actor SimulationEngine: TorrentEngine {
     public func step() async {
         let now = clock()
         let dt = tickInterval
+        steps += 1
 
         for (id, record) in records {
             var updated = record
@@ -273,7 +283,9 @@ public actor SimulationEngine: TorrentEngine {
                     let next = remaining - dt
                     if next <= 0 {
                         updated.resolveDelayRemaining = nil
-                        updated.state = .downloading
+                        // Held stops here, the way the real engine pauses a
+                        // held magnet the moment its metadata arrives.
+                        updated.state = updated.held == true ? .paused(.user) : .downloading
                         updated.seeds = max(1, updated.seeds)
                         updated.peers = max(8, updated.peers)
                         // The announce that resolved the torrent is also the
@@ -306,9 +318,12 @@ public actor SimulationEngine: TorrentEngine {
             if case .downloading = updated.state { isDownloading = true }
 
             if isDownloading {
-                let speed = baseSpeed * Self.speedFactor(for: id)
+                let speed = baseSpeed * Self.speedFactor(for: id, step: steps)
                 updated.downloadRate = speed
-                updated.uploadRate = speed * 0.15
+                // Uploads wobble on their own schedule — offsetting the phase
+                // by a few ticks stops the two curves in the inspector's graph
+                // being mirror images of each other, which they never are.
+                updated.uploadRate = baseSpeed * 0.15 * Self.speedFactor(for: id, step: steps + 5)
                 updated.downloaded = min(target, updated.downloaded + Int64(speed * dt))
                 updated.uploaded += Int64(speed * 0.1 * dt)
 
@@ -318,9 +333,22 @@ public actor SimulationEngine: TorrentEngine {
                     updated.downloadRate = 0
                     continuation.yield(.completed(id))
                 }
+            } else if updated.state == .completed {
+                // **A finished torrent that is still running is seeding, and
+                // the simulator never said so.** It parked everything in
+                // `.completed` for good, which only the `resume` path ever
+                // moved on — so under `-simulate` nothing ever uploaded after
+                // it finished. The Seeding section stayed empty, seed goals
+                // never came due, and the inspector's meter said "Nothing
+                // moving" about a torrent whose whole job at that point is to
+                // move something. One tick in `.completed` so the state is
+                // still reachable, then it seeds, which is what libtorrent
+                // reports for the same torrent.
+                updated.state = .seeding
+                updated.downloadRate = 0
             } else if updated.state == .seeding {
                 updated.seedSeconds += dt
-                updated.uploadRate = baseSpeed * 0.2 * Self.speedFactor(for: id)
+                updated.uploadRate = baseSpeed * 0.2 * Self.speedFactor(for: id, step: steps)
                 updated.uploaded += Int64(updated.uploadRate * dt)
                 updated.downloadRate = 0
             } else {
@@ -420,23 +448,50 @@ public actor SimulationEngine: TorrentEngine {
     }
 
     private static func speedFactor(for id: TorrentID) -> Double {
-        let hash = abs(id.raw.hashValue)
-        return 0.5 + Double(hash % 100) / 100.0
+        return 0.5 + Double(seed(for: id) % 100) / 100.0
     }
 
+    /// The same factor, wobbling.
+    ///
+    /// **A flat rate is the one thing a real transfer never is,** and the
+    /// simulator used to produce exactly that: `speedFactor` alone, tick after
+    /// tick, to the byte. That was invisible for as long as nothing plotted it
+    /// — every surface showed one number at a time — and the moment the
+    /// inspector grew a throughput graph it drew a dead straight line, which
+    /// looks far more like a broken graph than like a calm download.
+    ///
+    /// Two sine waves at unrelated periods, so the shape doesn't read as a
+    /// pattern, and phased by the torrent's own seed so no two rows move
+    /// together. Deterministic: it is a function of the tick count, not of
+    /// `random`, so `step()` remains reproducible for the tests that drive it.
+    private static func speedFactor(for id: TorrentID, step: Int) -> Double {
+        let phase = Double(seed(for: id) % 360) * .pi / 180
+        let time = Double(step)
+        let swell = sin(time / 11 + phase)          // the slow drift
+        let chop = sin(time / 2.7 + phase * 2)      // tick-to-tick noise
+        // Never below a third of the torrent's own pace: a swarm can be uneven
+        // without stalling, and a curve that touches the baseline every few
+        // seconds would say the transfer keeps dying.
+        let wobble = 1 + swell * 0.3 + chop * 0.12
+        return speedFactor(for: id) * max(0.35, wobble)
+    }
+
+    /// A stable number per torrent.
+    ///
+    /// Not `hashValue`: Swift seeds string hashing per process, so the same
+    /// simulated library came back at different speeds on every launch — which
+    /// is the opposite of what `-simulate` is for.
+    private static func seed(for id: TorrentID) -> Int {
+        id.raw.unicodeScalars.reduce(7) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+    }
+
+    /// The app's own parser, not a second one. The simulator used to decode
+    /// `dn=` itself with no sanitising at all, so a name like `../../Pictures`
+    /// reached `snapshot.name` under `-simulate` and nowhere else — the one
+    /// build where a hostile name could reach the delete path was the one
+    /// every screenshot and demo runs.
     static func displayName(fromMagnet uri: String, index: Int) -> String {
-        if let range = uri.range(of: "dn=") {
-            let tail = uri[range.upperBound...]
-            if let end = tail.firstIndex(of: "&") {
-                let encoded = String(tail[..<end])
-                if let decoded = encoded.removingPercentEncoding, !decoded.isEmpty {
-                    return decoded
-                }
-            } else if let decoded = String(tail).removingPercentEncoding, !decoded.isEmpty {
-                return decoded
-            }
-        }
-        return "Sample torrent \(index)"
+        DropParser.nameHint(fromMagnet: uri) ?? "Sample torrent \(index)"
     }
 
     static func size(forName name: String) -> Int64 {

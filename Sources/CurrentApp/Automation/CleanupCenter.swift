@@ -54,7 +54,11 @@ final class CleanupCenter: ObservableObject {
 
         for candidate in candidates {
             let snapshot = candidate.snapshot
-            trashContent(for: snapshot)
+            // Nothing moved means nothing reclaimed, and then the torrent
+            // stays. Removing it anyway is how a storage budget would work its
+            // way through the whole library without freeing a byte: each pass
+            // still over budget, each pass taking the next one.
+            guard library.trashContent(snapshot.id) > 0 else { continue }
 
             await library.engine.remove(snapshot.id, deleteFiles: false)
             await library.remove([snapshot.id], deleteFiles: false)
@@ -83,19 +87,5 @@ final class CleanupCenter: ObservableObject {
             refreshPlan()
         }
         return summary
-    }
-
-    /// Moves the torrent's on-disk content to the macOS Trash.
-    private func trashContent(for snapshot: TorrentSnapshot) {
-        let manager = FileManager.default
-        let directory = snapshot.saveDirectory
-        let folderCandidate = directory.appendingPathComponent(snapshot.name)
-        let fileCandidate = directory.appendingPathComponent(snapshot.name, isDirectory: false)
-
-        if manager.fileExists(atPath: folderCandidate.path) {
-            try? manager.trashItem(at: folderCandidate, resultingItemURL: nil)
-        } else if manager.fileExists(atPath: fileCandidate.path) {
-            try? manager.trashItem(at: fileCandidate, resultingItemURL: nil)
-        }
     }
 }

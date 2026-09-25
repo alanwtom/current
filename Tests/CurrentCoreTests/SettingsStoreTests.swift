@@ -32,8 +32,7 @@ final class SettingsStoreTests: XCTestCase {
         let first = SettingsStore(database: database)
         first.storageLimitBytes = hundredGB
 
-        // The write is detached; give it a moment to land before reopening.
-        try await Task.sleep(for: .milliseconds(250))
+        first.flushPendingWrites()
 
         let second = SettingsStore(database: database)
         XCTAssertEqual(second.storageLimitBytes, hundredGB)
@@ -74,7 +73,7 @@ final class SettingsStoreTests: XCTestCase {
 
         let first = SettingsStore(database: database)
         first.networkBinding = .activeVPN
-        try await Task.sleep(for: .milliseconds(250))
+        first.flushPendingWrites()
 
         XCTAssertEqual(SettingsStore(database: database).networkBinding, .activeVPN)
     }
@@ -133,5 +132,20 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(configuration.binding.blocksTransfers)
         XCTAssertNil(configuration.binding.device)
         XCTAssertNotEqual(configuration.binding, .unrestricted)
+    }
+
+    /// Saves land in the order they were made. Each one used to be its own
+    /// detached task, and a burst of them — a switch flicked back and forth —
+    /// could leave the database holding a value from the middle of the burst.
+    func testTheLastOfManyQuickChangesIsTheOneThatSurvives() {
+        let database = makeDatabase()
+        let first = SettingsStore(database: database)
+        for index in 0..<300 {
+            first.networkBinding = index.isMultiple(of: 2) ? .activeVPN : .anyInterface
+        }
+        first.networkBinding = .activeVPN
+        first.flushPendingWrites()
+
+        XCTAssertEqual(SettingsStore(database: database).networkBinding, .activeVPN)
     }
 }

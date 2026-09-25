@@ -18,6 +18,14 @@ import CurrentCore
 /// The pulse is opacity only, and nothing here changes the view's size. A
 /// progress bar whose *layout* changed on every engine tick is the kind of thing
 /// that has killed this app before.
+///
+/// **It flows while data moves.** Hand it a `Flow` and a soft light runs along
+/// the filled part — forwards for a download, backwards for a seed, which is
+/// giving back — faster for a faster transfer. The point is not decoration: a
+/// download that has stalled at 0 B/s looks, as a still bar, exactly like one
+/// moving at 8 MB/s, and you had to read the number to tell them apart. Now the
+/// stuck one is the one that isn't moving. The caller decides when there is a
+/// flow (a rate above zero); the bar only draws it.
 struct ProgressTrack: View {
     var fraction: Double
     var tint: Color
@@ -27,6 +35,41 @@ struct ProgressTrack: View {
     /// The unfilled part. Defaults to the value tuned for the library's canvas;
     /// surfaces that float above it need `Theme.trackRaised` instead.
     var track: Color = Theme.track
+    /// Data moving along the bar, if any is. Nil draws a still bar.
+    var flow: Flow?
+    /// Bumped to send one pass of light along the fill — a download finishing.
+    var passTrigger = 0
+
+    /// Which way the light runs and how often it passes.
+    struct Flow: Equatable {
+        /// Seeding: data leaving, so the light runs back toward the start.
+        var reversed = false
+        /// Seconds per cycle, travel and rest together. One of the three
+        /// `Motion.flowPass…` buckets — see `Motion.flowPeriod(for:)`.
+        var period: TimeInterval
+        /// 0…1, so a list of downloads doesn't pulse in lockstep.
+        var seed: Double = 0
+
+        /// The flow for a torrent in `state`: forwards while downloading,
+        /// backwards while seeding, and none at all at 0 B/s — which is the
+        /// point, since a stuck download is then the one bar standing still.
+        ///
+        /// Pass the snapshot as the UI has it, *after* the network block has
+        /// zeroed its rates, so a torrent cut off from its connection stands
+        /// still too.
+        static func of(_ state: TorrentState, snapshot: TorrentSnapshot) -> Flow? {
+            // Stable for a torrent within a run, different between torrents.
+            let seed = Double(UInt(bitPattern: snapshot.id.hashValue) % 997) / 997
+            switch state {
+            case .downloading where snapshot.downloadRate > 1:
+                return Flow(reversed: false, period: Motion.flowPeriod(for: snapshot.downloadRate), seed: seed)
+            case .seeding where snapshot.uploadRate > 1:
+                return Flow(reversed: true, period: Motion.flowPeriod(for: snapshot.uploadRate), seed: seed)
+            default:
+                return nil
+            }
+        }
+    }
 
     @State private var pulsing = false
 
@@ -43,6 +86,13 @@ struct ProgressTrack: View {
                 } else {
                     Capsule(style: .continuous)
                         .fill(tint)
+                        .overlay {
+                            if let flow, !reduceMotion {
+                                FlowLight(flow: flow)
+                            }
+                        }
+                        .overlay { LightPass(trigger: passTrigger) }
+                        .clipShape(Capsule(style: .continuous))
                         // Never narrower than its own corner radius, or a
                         // just-started download shows a sliver with clipped ends.
                         .frame(width: clamped > 0 ? max(clamped * proxy.size.width, 3) : 0)
@@ -53,28 +103,132 @@ struct ProgressTrack: View {
         // Colour changes are their own beat: a download turning into a seed
         // shouldn't look like the bar jumped.
         .animation(Motion.adaptive(Motion.standard, reduceMotion: reduceMotion), value: tint)
-        .onAppear {
-            guard indeterminate, !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: Motion.expressive * 2).repeatForever(autoreverses: true)) {
-                pulsing = true
+        // **On the value, not just on appear.** This used to start the pulse in
+        // `onAppear` alone, which is the one moment a bar is guaranteed *not*
+        // to be indeterminate for a torrent restored from disk: it comes back
+        // paused, and starts resolving a moment later, by which time the view
+        // already exists and `onAppear` has been and gone. The bar then sat
+        // frozen at 14% opacity forever — indistinguishable from a download
+        // that had barely started and then stalled.
+        .onAppear { startPulse() }
+        .onChange(of: indeterminate) { _, _ in startPulse() }
+    }
+
+    private func startPulse() {
+        guard indeterminate, !reduceMotion else { return }
+        // Reset first, so a bar that goes indeterminate for a second time gets
+        // a fresh animation rather than relying on the previous one still
+        // running. Both assignments land in one update, so nothing flickers.
+        pulsing = false
+        withAnimation(.easeInOut(duration: Motion.expressive * 2).repeatForever(autoreverses: true)) {
+            pulsing = true
+        }
+    }
+}
+
+/// The light a flowing bar carries, drawn per frame.
+///
+/// A `TimelineView` and a `Canvas` rather than a `repeatForever` animation, for
+/// three reasons that all bit elsewhere first. The light's position is a pure
+/// function of the clock, so a speed change never has to restart anything and
+/// can't leave a half-finished animation behind. A `repeatForever` started in
+/// `onAppear` inside a lazy list is a known way to have the list's own
+/// insertions pick up the loop. And the drawing happens inside the canvas,
+/// where AppKit never sees it — the only thing that changes per frame is
+/// pixels, which is the one kind of change this app's layout can afford on
+/// every tick.
+private struct FlowLight: View {
+    let flow: ProgressTrack.Flow
+    /// Dynamic colours draw as transparent inside a `Canvas`; resolve first.
+    @Environment(\.self) private var environment
+    @State private var anchor: Anchor
+
+    /// Where the light's cycle was at one moment, and at what speed.
+    ///
+    /// The position is counted from here rather than from the clock alone,
+    /// because a rate hovering near a speed bucket's edge flips between two
+    /// periods every few seconds — and computed straight from the clock, each
+    /// flip put the light wherever the new period would have had it, so it
+    /// teleported or vanished mid-bar. Re-anchored on every speed change, it
+    /// just carries on from where it is, a little faster or slower. The period
+    /// lives in here too, so no frame is ever drawn with the new speed against
+    /// the old anchor.
+    private struct Anchor {
+        var time: TimeInterval
+        var phase: Double
+        var period: TimeInterval
+
+        func phase(at time: TimeInterval) -> Double {
+            phase + (time - self.time) / period
+        }
+    }
+
+    init(flow: ProgressTrack.Flow) {
+        self.flow = flow
+        _anchor = State(initialValue: Anchor(
+            time: Date().timeIntervalSinceReferenceDate,
+            phase: flow.seed,
+            period: flow.period
+        ))
+    }
+
+    var body: some View {
+        let light = Color(Theme.flowLight.resolve(in: environment))
+        let current = anchor
+        TimelineView(.animation) { timeline in
+            Canvas(rendersAsynchronously: true) { context, size in
+                let cycles = current.phase(at: timeline.date.timeIntervalSinceReferenceDate)
+                let cycle = cycles - cycles.rounded(.down)
+                // The rest of the cycle is a pause: a light that never rests
+                // reads as a loading shimmer, something waiting, rather than
+                // as something moving.
+                guard cycle < Motion.flowTravelShare else { return }
+                let linear = cycle / Motion.flowTravelShare
+                let travel = linear * linear * (3 - 2 * linear)
+                let band = max(size.width * 0.34, 10)
+                let span = size.width + band
+                let x = flow.reversed ? size.width - span * travel : -band + span * travel
+                let rect = CGRect(x: x, y: 0, width: band, height: size.height)
+                context.fill(
+                    Path(rect),
+                    with: .linearGradient(
+                        Gradient(colors: [light.opacity(0), light, light.opacity(0)]),
+                        startPoint: CGPoint(x: rect.minX, y: rect.midY),
+                        endPoint: CGPoint(x: rect.maxX, y: rect.midY)
+                    )
+                )
             }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: flow.period) { _, period in
+            let now = Date().timeIntervalSinceReferenceDate
+            anchor = Anchor(time: now, phase: anchor.phase(at: now), period: period)
         }
     }
 }
 
 // MARK: - State chip
 
-/// Compact state indicator. Colour plus glyph carry the meaning; the word
-/// confirms it.
+/// Compact state indicator. The glyph carries the colour; the pill and the word
+/// stay grey.
 ///
-/// Kept as a tinted chip rather than a coloured word because a list of ten
-/// torrents in five states needs the states to be scannable as shapes. The glyph
-/// swaps with a symbol-effect replace transition, so pausing a download looks
-/// like the chip changing rather than two chips crossfading.
+/// Kept as a pill rather than a bare word because a list of ten torrents in
+/// five states needs the states to be scannable as shapes. The glyph swaps with
+/// a symbol-effect replace transition, so pausing a download looks like the
+/// pill changing rather than two pills crossfading.
+///
+/// **Ink, not surface.** This was a tinted pill with tinted text — a green
+/// tick on a pale green capsule — which is the colour-on-colour shape the app
+/// no longer uses anywhere. The colour moved into the glyph alone.
 struct StatePill: View {
     let state: TorrentState
     /// Drops the word and keeps the glyph — for the compact layout.
     var glyphOnly = false
+    /// Greys the glyph too. For a library row, whose own state glyph and
+    /// progress bar already say this state in colour: a third coloured thing
+    /// saying it again breaks the two-voices rule. See `quietInRow`.
+    var quiet = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -82,25 +236,36 @@ struct StatePill: View {
         HStack(spacing: Space.xs) {
             Image(systemName: symbol)
                 .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(quiet ? Theme.textTertiary : color)
                 .contentTransition(.symbolEffect(.replace.offUp))
             if !glyphOnly {
                 Text(label)
                     .typeStyle(Typo.caption)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
-        .foregroundStyle(color)
         .padding(.horizontal, glyphOnly ? Space.xs : Space.m)
-        .frame(height: 17)
+        .frame(height: Size.pill)
         .background(
             Capsule(style: .continuous)
-                .fill(color.opacity(0.13))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(color.opacity(0.16), lineWidth: Size.hairline)
+                .fill(Theme.fillMuted)
         )
         .animation(Motion.adaptive(Motion.quick, reduceMotion: reduceMotion), value: label)
         .accessibilityLabel(accessibilityText)
+    }
+
+    /// Whether a row already says this state in colour, so its pill should
+    /// go quiet.
+    ///
+    /// A row tints its own glyph and bar for everything except the stopped
+    /// states. The one stopped state with a colour of its own is "No
+    /// connection" — amber, because it's the stop you can act on — and a row
+    /// has no other amber to carry it, so that pill keeps its glyph.
+    static func quietInRow(_ state: TorrentState) -> Bool {
+        switch state {
+        case .downloading, .checking, .seeding, .completed, .failed: return true
+        case .paused, .resolving: return false
+        }
     }
 
     private var symbol: String {
@@ -176,7 +341,7 @@ struct Chip: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, Space.m)
-        .frame(height: 17)
+        .frame(height: Size.pill)
         .background(Capsule(style: .continuous).fill(Theme.fillMuted))
     }
 }
@@ -204,7 +369,7 @@ struct Spinner: View {
             .opacity(reduceMotion ? 0.6 : 1)
             .onAppear {
                 guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 0.85).repeatForever(autoreverses: false)) {
+                withAnimation(.linear(duration: Motion.revolution).repeatForever(autoreverses: false)) {
                     angle = 360
                 }
             }
@@ -255,8 +420,13 @@ struct StatRow: View {
 
 // MARK: - Callout
 
-/// A tinted block of explanation. The app's one way of saying something
-/// important inline — a failure, a rule that fired, a caveat in settings.
+/// A block of explanation. The app's one way of saying something important
+/// inline — a failure, a rule that fired, a caveat in settings.
+///
+/// The card is neutral and only the glyph carries the tint. It used to be
+/// washed in its own colour as well — a green icon on a pale green card for a
+/// healthy swarm, red on pink for an error — which is colour on colour, and
+/// said the same thing twice at a volume the text below it then had to fight.
 struct Callout<Content: View>: View {
     var symbol: String
     var tint: Color = Theme.textSecondary
@@ -275,14 +445,7 @@ struct Callout<Content: View>: View {
         }
         .padding(Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
-                .fill(tint.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
-                .strokeBorder(tint.opacity(0.16), lineWidth: Size.hairline)
-        )
+        .insetCard(radius: Radius.m)
     }
 }
 
@@ -294,9 +457,11 @@ struct ErrorDetailsDisclosure: View {
 
     var body: some View {
         Callout(symbol: "exclamationmark.triangle.fill", tint: Theme.failure) {
+            // The glyph beside this is already red. A red title as well was
+            // the second voice for one fact.
             Text(failure.title)
                 .typeStyle(Typo.label)
-                .foregroundStyle(Theme.failure)
+                .foregroundStyle(Theme.text)
             Text(failure.explanation)
                 .typeStyle(Typo.caption)
                 .foregroundStyle(Theme.textSecondary)
@@ -464,7 +629,7 @@ struct KeyHint: View {
             .tabularNumerics()
             .foregroundStyle(Theme.textTertiary)
             .padding(.horizontal, Space.m)
-            .frame(height: 18)
+            .frame(height: Size.pill)
             .background(
                 RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)
                     .fill(Theme.fillMuted)

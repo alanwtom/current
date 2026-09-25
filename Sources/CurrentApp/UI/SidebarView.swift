@@ -66,11 +66,13 @@ final class SidebarCounts: ObservableObject {
 /// surface, a neutral selection pill with a small accent bar at its leading
 /// edge, and uppercase overline headers.
 ///
-/// The selection indicator slides. One `matchedGeometryEffect` shared across all
-/// the rows, so moving from Downloading to Seeding shows the pill travelling
-/// rather than fading out and in somewhere else. It is the same trick as the
-/// segmented control, for the same reason: motion between two states tells you
-/// they are related.
+/// The selection indicator stretches between rows. One `StretchHighlight`
+/// behind all of them, so moving from Downloading to Seeding shows the pill
+/// travelling rather than fading out and in somewhere else — and travelling
+/// with its front edge first and its back edge catching up, like a drop of
+/// water, which is the "stretch" in the motion vocabulary. The segmented
+/// control and the command palette do the same, for the same reason: motion
+/// between two states tells you they are related.
 struct SidebarView: View, Equatable {
     @EnvironmentObject private var app: AppEnvironment
     @EnvironmentObject private var counts: SidebarCounts
@@ -91,7 +93,6 @@ struct SidebarView: View, Equatable {
     let onSelect: (SidebarSection) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var indicator
 
     /// `nonisolated` because SwiftUI compares views off the main actor, and
     /// comparing two plain enum values needs nothing from it.
@@ -105,6 +106,15 @@ struct SidebarView: View, Equatable {
                 VStack(alignment: .leading, spacing: Space.xxl) {
                     group("Library", sections: SidebarSection.library)
                     group("Smart", sections: SidebarSection.smart)
+                }
+                .backgroundPreferenceValue(HighlightAnchorKey<SidebarView>.self) { anchor in
+                    GeometryReader { proxy in
+                        if let anchor {
+                            StretchHighlight(key: section, target: proxy[anchor], axis: .vertical) {
+                                selectionPill
+                            }
+                        }
+                    }
                 }
                 .padding(.horizontal, Space.m)
                 .padding(.top, Space.m)
@@ -167,28 +177,31 @@ struct SidebarView: View, Equatable {
             }
             .padding(.horizontal, Space.m)
             .frame(height: Size.sidebarRow)
-            .background {
-                if isSelected {
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
-                            .fill(Theme.fillMuted)
-                        // The accent, spent once: a 2pt bar rather than a
-                        // filled capsule. It marks the row without turning it
-                        // into the loudest thing in the window.
-                        Capsule()
-                            .fill(Theme.accent)
-                            .frame(width: 2.5, height: Size.sidebarRow - 14)
-                            .padding(.leading, 2)
-                    }
-                    .matchedGeometryEffect(id: "sidebar.selection", in: indicator)
-                }
-            }
+            .highlightAnchor(SidebarView.self, isSelected: isSelected)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hoverFill(Radius.m, active: !isSelected)
         .accessibilityLabel(count > 0 ? "\(item.title), \(count)" : item.title)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// What sits behind the selected row. Drawn once, by the highlight, and
+    /// stretched to whichever row is selected.
+    private var selectionPill: some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
+                .fill(Theme.fillMuted)
+            // The accent, spent once: a 2pt bar rather than a filled capsule.
+            // It marks the row without turning it into the loudest thing in the
+            // window. Inset rather than fixed-height, so it stretches with the
+            // pill.
+            Capsule()
+                .fill(Theme.accent)
+                .frame(width: 2.5)
+                .padding(.vertical, 7)
+                .padding(.leading, 2)
+        }
     }
 
     private func glyphColor(isSelected: Bool, flagged: Bool) -> Color {

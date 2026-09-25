@@ -26,6 +26,9 @@ struct ConfirmDialog: View {
     var onCancel: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The trash can, for a removal clicked from the inspector; nil for one
+    /// asked from the keyboard or at launch. See `PresentationOrigin`.
+    @State private var origin = PresentationOrigin.current()
 
     var body: some View {
         ZStack {
@@ -81,7 +84,7 @@ struct ConfirmDialog: View {
             // have its own — a slightly different scale from a slightly
             // different direction — which is how an app ends up feeling
             // assembled from parts.
-            .popTransition(reduceMotion: reduceMotion)
+            .popTransition(reduceMotion: reduceMotion, from: origin)
         }
         // Centred on the window, not on the safe area — see `ModalSurface`.
         .ignoresSafeArea()
