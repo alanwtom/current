@@ -3,8 +3,8 @@
 #
 #   Scripts/make-notices.sh
 #
-# The app bundles libtorrent, OpenSSL and (compiled in) Boost, and Sparkle once
-# it lands. Every one of those licences requires its notice to travel with a
+# The app bundles libtorrent, OpenSSL, (compiled in) Boost, and Sparkle. Every
+# one of those licences requires its notice to travel with a
 # binary distribution — an obligation that attached the moment the bundling work
 # made them ship inside Current.app rather than being loaded from Homebrew.
 #
@@ -58,6 +58,17 @@ done
 # compiled *into* the engine rather than shipped as its own file. It still has
 # to be acknowledged — the code is in the binary either way.
 print "| Boost | headers, compiled into libtorrent | BSL-1.0 |" >> "$tmp"
+
+# Sparkle comes from SwiftPM rather than Homebrew, so its version is the one
+# the package is pinned to and its licence is the one inside the downloaded
+# release. It shipped in the bundle for a while before it was listed here —
+# the list above only knew how to ask Homebrew.
+SPARKLE_LICENSE="$ROOT/.build/artifacts/sparkle/Sparkle/LICENSE"
+[[ -f "$SPARKLE_LICENSE" ]] || die "no Sparkle licence at $SPARKLE_LICENSE — run: swift build"
+SPARKLE_VERSION="$(python3 -c 'import json,sys
+pins = json.load(open(sys.argv[1]))["pins"]
+print(next(p["state"]["version"] for p in pins if p["identity"] == "sparkle"))' "$ROOT/Package.resolved")"
+print "| Sparkle | $SPARKLE_VERSION | MIT, plus the licences it lists for code it includes |" >> "$tmp"
 print "" >> "$tmp"
 
 # Second pass: the full texts.
@@ -115,7 +126,19 @@ done
   print "ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER"
   print "DEALINGS IN THE SOFTWARE."
   print '```'
+  print ""
+  print "---"
+  print ""
+  print "## Sparkle"
+  print ""
+  print "The updater. Ships as Sparkle.framework inside Contents/Frameworks. Its"
+  print "licence file covers Sparkle itself and the code it includes from others."
+  print ""
+  print '```'
+  cat "$SPARKLE_LICENSE"
+  print '```'
 } >> "$tmp"
+say "  Sparkle"
 
 mv "$tmp" "$OUT"
 say "Wrote ${OUT:t} ($(wc -l < "$OUT" | tr -d ' ') lines)"
