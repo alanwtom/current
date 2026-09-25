@@ -177,16 +177,19 @@ final class AppEnvironment: ObservableObject {
         // clicking a link, a row vanishing without a word is the app looking
         // broken; this is the same rule the rest of the automation follows —
         // if it acts on its own, it explains itself.
-        automation.onMagnetTimedOut = { [weak self] name in
+        automation.onMagnetTimedOut = { [weak self] id, name in
             guard let self else { return }
 
-            // Take the flow down with it. The coordinator removes the torrent,
-            // but nothing told the flow — so the card sat there saying
-            // "Resolving magnet…" indefinitely, about a torrent that no longer
-            // existed, and the only way out was quitting the app.
-            if case .resolving = self.magnetFlow.stage {
-                self.magnetFlow.resolveFailed(message: name)
-            }
+            // Take the flow down with it — but only if the card is about *this*
+            // torrent. The coordinator removes the torrent, and nothing used to
+            // tell the flow, so the card sat there saying "Resolving magnet…"
+            // about a torrent that no longer existed. The first fix closed the
+            // card whenever it was resolving anything, which was fine while a
+            // second magnet just downloaded regardless. Now a second magnet
+            // waits, held, for its turn — so a dead one timing out closed the
+            // card for the one you'd just clicked, and that one then sat
+            // paused with nothing ever asking about it.
+            self.magnetFlow.torrentRemoved(id)
 
             // Deliberately short. A toast truncates, and a warning that ends in
             // an ellipsis tells you less than a shorter one that finishes its
@@ -522,7 +525,7 @@ final class AppEnvironment: ObservableObject {
             library.registerAdded(id, name: hint, magnet: uri, saveDirectory: settings.downloadsFolder)
             claimOrPark(id, claimsFlow: claimsFlow)
         } catch {
-            if claimsFlow { magnetFlow.resolveFailed(message: error.localizedDescription) }
+            if claimsFlow { magnetFlow.dismiss() }
             let failure = (error as? EngineFailure) ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
             toasts.show(.warning, title: failure.title, message: failure.explanation)
         }
@@ -1017,7 +1020,20 @@ final class AppEnvironment: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("-simulate") {
             await seedDemoLibraryIfRequested()
         } else {
-            let lost = await library.restoreResumeData()
+            let (lost, pausedForUpgrade) = await library.restoreResumeData()
+            if pausedForUpgrade > 0 {
+                // Once, on the first launch after 1.2. Everything came back
+                // paused on purpose (see `restoreResumeData`), and a library
+                // that is suddenly all paused needs to say why.
+                toasts.show(
+                    .info,
+                    title: pausedForUpgrade == 1
+                        ? "A torrent is back, paused"
+                        : "\(pausedForUpgrade) torrents are back, paused",
+                    message: "Older versions lost them. Resume the ones you want.",
+                    coalesceKey: "restore.upgrade"
+                )
+            }
             if lost > 0 {
                 toasts.show(
                     .warning,

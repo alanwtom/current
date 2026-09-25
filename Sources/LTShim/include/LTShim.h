@@ -150,10 +150,11 @@ int lt_add_torrent_data(lt_session* session, const uint8_t* data, size_t len,
                         const char* save_path, int hold, char out_id[41],
                         char out_error[256], int* out_error_kind);
 /* Restores a torrent from a blob produced by lt_request_resume_data. Not
- * interchangeable with lt_add_torrent_data: the two formats differ. */
+ * interchangeable with lt_add_torrent_data: the two formats differ. With
+ * paused nonzero it comes back paused whatever the blob says. */
 int lt_add_resume_data(lt_session* session, const uint8_t* data, size_t len,
-                       const char* save_path, char out_id[41], char out_error[256],
-                       int* out_error_kind);
+                       const char* save_path, int paused, char out_id[41],
+                       char out_error[256], int* out_error_kind);
 
 int lt_pause(lt_session* session, const char* id);
 /* Also releases a torrent that was added held. */

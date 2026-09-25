@@ -421,12 +421,14 @@ public actor LibtorrentEngine: TorrentEngine {
         case .resumeData(let data):
             // Its own entry point: resume data is not a .torrent file, and
             // feeding it to the .torrent parser is what lost every torrent on
-            // relaunch. A restore is never held — it was confirmed the first
-            // time, and the blob carries whether it was paused.
+            // relaunch. A restore was confirmed the first time, so it never
+            // needs the confirm card; `held` here only means "come back
+            // paused, whatever the blob says" — which the first launch after
+            // upgrading from 1.2 asks for. See `LibraryStore.restoreResumeData`.
             result = Self.withBytes(data) { base, count in
                 saveDirectory.path.withCString { pathC in
                     withUnsafeMutablePointer(to: &errorKind) { kindPtr in
-                        lt_add_resume_data(session, base, count, pathC, &idBuffer, &errorBuffer, kindPtr)
+                        lt_add_resume_data(session, base, count, pathC, hold, &idBuffer, &errorBuffer, kindPtr)
                     }
                 }
             }

@@ -19,7 +19,10 @@ final class AutomationCoordinator {
     /// that is indistinguishable from the app ignoring the link: the row
     /// disappears two minutes after you clicked something, with the explanation
     /// filed away in a tab you had no reason to open.
-    var onMagnetTimedOut: ((String) -> Void)?
+    ///
+    /// Carries the torrent as well as its name, so whoever is told can tell
+    /// *which* magnet died — the card may be asking about a different one.
+    var onMagnetTimedOut: ((TorrentID, String) -> Void)?
 
     /// Told when the library is over its storage budget and the app can't fix
     /// it on its own — either automatic cleanup is off, or it is on and
@@ -239,6 +242,7 @@ final class AutomationCoordinator {
     private func watchResolveTimeouts() {
         for (id, snapshot) in library.snapshots {
             guard case .resolving = snapshot.state else { continue }
+            guard !library.restoredIDs.contains(id) else { continue }
             guard -snapshot.addedAt.timeIntervalSinceNow > Self.resolveTimeout else { continue }
             guard resolveTimeoutsHandled.insert(id).inserted else { continue }
 
@@ -256,7 +260,7 @@ final class AutomationCoordinator {
                     "The magnet link may be dead — you can retry it",
                 ]
             )
-            onMagnetTimedOut?(snapshot.name)
+            onMagnetTimedOut?(id, snapshot.name)
         }
     }
 

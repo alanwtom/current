@@ -47,6 +47,9 @@ public protocol TorrentEngine: Actor {
     /// torrent ran from the moment it was added and was paused only once its
     /// metadata had crossed two threads to the UI, and a second magnet arriving
     /// while the card was up was never paused at all.
+    ///
+    /// For `.resumeData` it means only "come back paused, whatever the saved
+    /// state says" — a restore was confirmed the first time it was added.
     func add(_ source: AddSource, saveDirectory: URL, held: Bool) async throws -> TorrentID
 
     func pause(_ id: TorrentID) async
