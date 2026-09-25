@@ -9,37 +9,32 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-25
+
 ### Added
 
-- Settings → Network can keep every transfer on your VPN, or on one connection you name
-- If that connection drops, transfers stop and stay stopped until you start them again
+- Keep every transfer on your VPN, or on one named connection; if it drops, transfers stop
 - A light in the title bar shows it at a glance: green confined, amber waiting, red not protected
-- "My VPN" keeps working when the tunnel reconnects, even though macOS renames it each time
+- A live speed graph of the last 90 seconds in the Activity tab; hover over it to look back
 
 ### Changed
 
-- Port mapping and local network discovery switch off while confined, since both go around a VPN
+- New motion throughout: progress bars flow while data moves, finished downloads ripple
 - Most settings are now just a label and a switch, so the few real warnings stand out
 
 ### Fixed
 
-- Torrents come back after you quit and reopen — every relaunch used to drop them from the engine
+- Torrents come back after you quit and reopen — every relaunch used to drop them
+- Torrents that earlier versions lost come back paused on 1.3's first launch
 - "Remove and delete files" trashes only the torrent's own files, never things beside them
-- A torrent whose name ends in a full stop can no longer send the whole download folder to the Trash
-- Automatic cleanup frees space again — it used to skip every torrent in the default folder
-- Magnets never start downloading before you choose; a second one waits with a Start button
-- Another download finishing no longer closes the "which files?" card
-- Settings you change quickly are saved in the order you changed them
-- No crash when a torrent is removed at the moment the engine is updating it
-- Torrents with thousands of files open instantly instead of freezing the app
+- Magnets never start downloading before you've chosen which files you want
+- Automatic cleanup frees space again; removing a torrent at the wrong moment no longer crashes
 
 ### Security
 
-- Magnet links can no longer make your Mac send requests to devices on your home network
 - Apps and installers that arrive in a torrent are checked by Gatekeeper before they first open
 - Updates are verified before they are unpacked, and plain-HTTP loads are no longer allowed
-- Your home folder and system folders can't be chosen as the download folder
-- A damaged library file resets settings with a warning, instead of silently dropping your VPN rule
+- Magnet links can no longer point your Mac at local network addresses written into the link
 
 ## [1.2.0] — 2026-09-07
 
@@ -139,7 +134,8 @@ First public release.
 - Keyboard paths for every action, and a command palette.
 - Signed with a Developer ID and notarised by Apple.
 
-[Unreleased]: https://github.com/alanwtom/current/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/alanwtom/current/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/alanwtom/current/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/alanwtom/current/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/alanwtom/current/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/alanwtom/current/compare/v1.0.0...v1.1.0

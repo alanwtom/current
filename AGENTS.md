@@ -136,6 +136,12 @@ plus a second candidate built with `appendingPathExtension` — which Foundation
 returns *unchanged* for a name ending in a full stop, so "delete files" on a
 torrent called `Something.` put the whole download folder in the Trash. That
 shipped in every release up to 1.2.0. `DeletionSafetyTests` holds the strings.
+Two more rules came out of review before 1.3.0 shipped: the scan of a root
+folder builds its paths from the names the folder returns and never compares
+path strings (a save folder behind a symlink scanned as "empty", and empty read
+as "all ours"), and anything that can't be known — an unreadable subfolder, a
+file where the root folder should be, a folder where a file should be — counts
+as someone else's.
 Tests replace `contentTrash.moveToTrash`; nothing in the suite may touch the
 real Trash.
 
@@ -668,6 +674,23 @@ touched the disk" true rather than hoped.
   guard. Restore failures are counted and shown, never swallowed. Resume data
   is saved on add, when metadata arrives, every five minutes and at quit —
   all at once, not one torrent at a time under the quit budget.
+
+  Restoring working at last had three consequences, each of which reached a
+  release candidate before a review caught it:
+  - **The first working restore brings everything back paused, once.** 1.2
+    kept the saved state of every torrent ever added and not removed, so the
+    first 1.3 launch resurrected torrents the user had watched vanish weeks
+    earlier — some with their files deleted — and set them downloading. The
+    `restoreWorks` key in the library's settings table marks that it has
+    happened; until it's set, `restoreResumeData` adds with `held: true`,
+    which for resume data means "paused, whatever the blob says".
+  - **`torrent_finished_alert` is not "download complete".** libtorrent posts
+    it when any check ends complete, including a restored seed's, so every
+    seed announced itself again at each launch. The shim forwards it only
+    when the torrent moved payload this session.
+  - **The magnet timeout skips restored torrents** (`restoredIDs`). It counts
+    from `addedAt`, which for a restore is launch time, so a restored torrent
+    still fetching its details was deleted from the library two minutes in.
 - **Nothing libtorrent throws may leave the shim.** It throws on a handle whose
   torrent was just removed, and removal races everything. The worker thread is
   a bare `std::thread` (an escaping exception is `std::terminate`), and every
