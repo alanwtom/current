@@ -52,77 +52,63 @@ public enum FileTreeBuilder {
 
     /// Builds a tree from flat engine indices. `priorities` must align with
     /// `files` by index; missing entries default to `.normal`.
+    ///
+    /// One pass into a mutable trie, then one sort per folder on the way out.
+    /// This used to insert each file into an immutable tree — rebuilding its
+    /// parent's child dictionary, re-totalling and re-sorting every sibling on
+    /// every insert — which is quadratic in the size of a folder: 1,000 files
+    /// in one folder took over a second, 5,000 took half a minute, all on the
+    /// main thread, and the magnet file picker did it again once a second.
     public static func build(
         from files: [FileInfo],
         priorities: [FilePriority] = []
     ) -> [FileNode] {
-        var rootChildren: [String: FileNode] = [:]
-
-        for (index, info) in files.enumerated() {
-            let priority = index < priorities.count ? priorities[index] : .normal
-            insert(
-                components: info.pathComponents,
-                size: info.size,
-                engineIndex: index,
-                priority: priority,
-                into: &rootChildren,
-                parentID: "root"
-            )
-        }
-
-        let nodes = rootChildren.values.map(normalize)
-        return nodes.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    private static func insert(
-        components: [String],
-        size: Int64,
-        engineIndex: Int,
-        priority: FilePriority,
-        into container: inout [String: FileNode],
-        parentID: String
-    ) {
-        guard let head = components.first else { return }
-        let id = parentID + "/" + head
-        let remaining = Array(components.dropFirst())
-
-        if remaining.isEmpty {
-            container[id] = FileNode(
-                id: id,
-                name: head,
-                kind: .file(engineIndex: engineIndex),
-                size: size,
-                children: [],
-                priority: priority
-            )
-        } else {
-            var existing = container[id] ?? FileNode(
-                id: id, name: head, kind: .folder, size: 0, children: []
-            )
-            var childMap = Dictionary(existing.children.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            insert(
-                components: remaining,
-                size: size,
-                engineIndex: engineIndex,
-                priority: priority,
-                into: &childMap,
-                parentID: id
-            )
-            existing.children = childMap.values.map(normalize).sorted {
-                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        let root = Builder()
+        for (index, info) in files.enumerated() where !info.pathComponents.isEmpty {
+            var node = root
+            for component in info.pathComponents.dropLast() {
+                node = node.child(component)
             }
-            existing.size = totalSize(existing.children)
-            existing.priority = aggregatePriority(existing.children)
-            container[id] = existing
+            let leaf = node.child(info.pathComponents[info.pathComponents.count - 1])
+            leaf.file = (index, info.size, index < priorities.count ? priorities[index] : .normal)
         }
+        return root.emit(parentID: "root")
     }
 
-    private static func normalize(_ node: FileNode) -> FileNode {
-        guard node.isFolder else { return node }
-        var copy = node
-        copy.size = totalSize(node.children)
-        copy.priority = aggregatePriority(node.children)
-        return copy
+    /// A folder or file while the tree is being assembled. A class, so a file
+    /// lands in its folder without copying the path above it.
+    private final class Builder {
+        var children: [String: Builder] = [:]
+        var order: [String] = []
+        var file: (index: Int, size: Int64, priority: FilePriority)?
+
+        func child(_ name: String) -> Builder {
+            if let existing = children[name] { return existing }
+            let made = Builder()
+            children[name] = made
+            order.append(name)
+            return made
+        }
+
+        func emit(parentID: String) -> [FileNode] {
+            let sorted = order.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            return sorted.map { name in
+                let builder = children[name]!
+                let id = parentID + "/" + name
+                if builder.children.isEmpty, let file = builder.file {
+                    return FileNode(
+                        id: id, name: name, kind: .file(engineIndex: file.index),
+                        size: file.size, children: [], priority: file.priority
+                    )
+                }
+                let nested = builder.emit(parentID: id)
+                return FileNode(
+                    id: id, name: name, kind: .folder,
+                    size: totalSize(nested), children: nested,
+                    priority: aggregatePriority(nested)
+                )
+            }
+        }
     }
 
     /// Every byte in the tree, selected or not.

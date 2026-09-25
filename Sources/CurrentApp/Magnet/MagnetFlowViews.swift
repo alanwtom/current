@@ -200,8 +200,19 @@ struct MagnetFlowOverlayView: View {
                         Task { await app.cancelMagnetSelection() }
                     }
                 }
-            case .selecting:
-                if let id = selectingID, let metadata = store.metadataCache[id] {
+            // One branch for both stages, so the summary card keeps its
+            // identity when Download moves the flow on — which is what lets it
+            // *fly* to its row as an ordinary animated change instead of
+            // leaving by a transition. A transition is fixed at the card's last
+            // render, and that render can't know whether Download or Cancel is
+            // coming next; this way only Download lands, and Cancel still pops
+            // the card away.
+            case .selecting(let id), .starting(let id):
+                if case .starting = flow.stage, landingTarget == nil {
+                    // The row isn't on screen to show where it went, so the
+                    // card that says so comes back.
+                    card { StartingIndicator() }
+                } else if let metadata = store.metadataCache[id] {
                     card {
                         SelectionSummaryCard(
                             name: metadata.displayName,
@@ -221,9 +232,8 @@ struct MagnetFlowOverlayView: View {
                             onCancel: { Task { await app.cancelMagnetSelection() } }
                         )
                     }
+                    .modifier(Landing(target: reduceMotion ? nil : landingTarget))
                 }
-            case .starting:
-                card { StartingIndicator() }
             case .completed(let name):
                 card { CompletionBadge(name: name) }
             case .idle:
@@ -239,15 +249,26 @@ struct MagnetFlowOverlayView: View {
         // than on anything inside it: the resolving card ticks a clock every
         // second, and animating on per-tick values is what has taken this app's
         // window down before.
-        .animation(
-            Motion.pop(presenting: flow.stage.isActive, reduceMotion: reduceMotion),
-            value: flow.stage
-        )
+        .animation(stageAnimation, value: flow.stage)
     }
 
-    private var selectingID: TorrentID? {
-        if case .selecting(let id) = flow.stage { return id }
-        return nil
+    /// The bubble for every stage, except the landing. A card flying into a
+    /// row mustn't overshoot it — it would sail past the row and come back —
+    /// so the hand-off to `.starting` rides a critically damped spring of the
+    /// same length instead.
+    private var stageAnimation: Animation {
+        if case .starting = flow.stage {
+            return Motion.spring(Motion.popResponse, reduceMotion: reduceMotion)
+        }
+        return Motion.pop(presenting: flow.stage.isActive, reduceMotion: reduceMotion)
+    }
+
+    /// Where the confirmed torrent's row is, once Download has been pressed and
+    /// the row is on screen. Read from `RowFrames` at render time; nothing
+    /// observes it, so it costs nothing while the list scrolls.
+    private var landingTarget: CGRect? {
+        guard case .starting(let id) = flow.stage else { return nil }
+        return RowFrames.shared.onScreen(id)
     }
 
     @ViewBuilder
@@ -257,5 +278,45 @@ struct MagnetFlowOverlayView: View {
             .raisedSurface(radius: Radius.xl, deep: true)
             .popTransition(reduceMotion: reduceMotion)
             .padding(.horizontal, Space.xxxl)
+    }
+}
+
+/// The selection card flying into its torrent's row when you press Download.
+///
+/// The card already belongs to a row — the magnet was added to the library
+/// the moment it arrived, and has been sitting there resolving while the card
+/// asked about it. Popping the card away and leaving you to find the row was
+/// two unrelated events; shrinking the card into the row says where your
+/// download went. "Origin" in the motion vocabulary, run backwards.
+///
+/// The card squashes to the row's shape as it goes, which would be ugly to
+/// read — so it softens as it squashes, the bubble's arrival blur run in
+/// reverse, and fades on an ease-in so it stays solid for most of the flight
+/// and goes only as it reaches the row. The row then takes over: it turns from
+/// paused to downloading in the same moment, and that change is the landing.
+struct Landing: ViewModifier {
+    /// The row, in window coordinates. Nil leaves the card where it is.
+    var target: CGRect?
+
+    func body(content: Content) -> some View {
+        let landed = target != nil
+        let target = target ?? .zero
+        return content
+            .blur(radius: landed ? Motion.popBlur : 0)
+            .animation(.easeIn(duration: Motion.popResponse)) { faded in
+                faded.opacity(landed ? 0 : 1)
+            }
+            .visualEffect { effect, proxy in
+                let frame = proxy.frame(in: .global)
+                guard landed, frame.width > 0, frame.height > 0 else {
+                    return effect.scaleEffect(x: 1, y: 1).offset(x: 0, y: 0)
+                }
+                return effect
+                    .scaleEffect(x: target.width / frame.width, y: target.height / frame.height)
+                    .offset(x: target.midX - frame.midX, y: target.midY - frame.midY)
+            }
+            // Invisible over the row until the flow goes idle; clicks belong
+            // to the row underneath.
+            .allowsHitTesting(!landed)
     }
 }

@@ -39,9 +39,20 @@ ok()   { print -P "  %F{green}✓%f $1" }
 bad()  { print -P "  %F{red}✗%f $1" }
 die()  { print -P "%F{red}error:%f $1" >&2; cleanup; exit 1 }
 
+DB="$HOME/Library/Application Support/Current/library.sqlite"
+# What the two update settings said before this run, as SQL to put them back.
+# The script has to pre-answer the first-launch question, and it does that in
+# the one library every copy of the app shares — so without this, running it
+# once quietly signed the real install up for automatic updates.
+RESTORE_SETTINGS=""
+
 cleanup() {
     [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
     pkill -f "$APPS/Contents/MacOS/Current" 2>/dev/null || true
+    if [[ -n "$RESTORE_SETTINGS" && -f "$DB" ]]; then
+        sqlite3 "$DB" "$RESTORE_SETTINGS" 2>/dev/null || true
+        RESTORE_SETTINGS=""
+    fi
 }
 trap cleanup EXIT
 
@@ -136,8 +147,9 @@ ok "installed $(installed_version) ($(installed_build)) to /Applications"
 
 # Pre-answer the first-launch question so the run is unattended. This is the
 # setting the card writes; setting it directly is the same as clicking yes.
-DB="$HOME/Library/Application Support/Current/library.sqlite"
 if [[ -f "$DB" ]]; then
+    RESTORE_SETTINGS="delete from settings where key in ('updates.asked','updates.automatic');"
+    RESTORE_SETTINGS+=$(sqlite3 "$DB" "select 'insert into settings(key,value) values(' || quote(key) || ',' || quote(value) || ');' from settings where key in ('updates.asked','updates.automatic');" 2>/dev/null || true)
     sqlite3 "$DB" "insert or replace into settings(key,value) values('updates.asked','1'),('updates.automatic','1');" 2>/dev/null || true
 fi
 

@@ -327,11 +327,12 @@ final class NetworkMonitorTests: XCTestCase {
         let events = await engine.events
         await engine.apply(EngineConfiguration(binding: monitor.outcome))
 
-        for await event in events {
-            guard case .listenChanged(let report) = event else { continue }
-            monitor.apply(report)
-            break
+        let report = await firstEvent(in: events) { event -> ListenReport? in
+            if case .listenChanged(let report) = event { return report }
+            return nil
         }
+        XCTAssertNotNil(report, "the simulator never reported a listen socket")
+        if let report { monitor.apply(report) }
 
         XCTAssertEqual(monitor.isBindingConfirmed, true)
     }

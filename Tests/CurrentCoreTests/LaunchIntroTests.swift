@@ -30,7 +30,11 @@ final class LaunchIntroTests: XCTestCase {
     private var dropRegion: CGRect { CGRect(x: 0.44, y: 0.575, width: 0.12, height: 0.05) }
     private var waveRegion: CGRect { CGRect(x: 0.35, y: 0.36, width: 0.30, height: 0.12) }
 
-    private func render(elapsed: TimeInterval, reduceMotion: Bool = false) throws -> NSBitmapImageRep {
+    private func render(
+        elapsed: TimeInterval,
+        reduceMotion: Bool = false,
+        behind: Color = Color(red: 0.071, green: 0.071, blue: 0.078)
+    ) throws -> NSBitmapImageRep {
         let stages = LaunchIntro.Stages(reduceMotion: reduceMotion)
         let frame = LaunchIntro.Frame(
             stages: stages,
@@ -42,7 +46,7 @@ final class LaunchIntroTests: XCTestCase {
             frame.draw(in: &c, size: size, elapsed: elapsed)
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
-        .background(Color(red: 0.071, green: 0.071, blue: 0.078))
+        .background(behind)
 
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
@@ -253,5 +257,50 @@ final class LaunchIntroTests: XCTestCase {
         let rep = try render(elapsed: stages.plateIn, reduceMotion: true)
         XCTAssertGreaterThan(brightness(rep, in: dropRegion), 0.6, "the drop should be present at rest")
         XCTAssertGreaterThan(brightness(rep, in: waveRegion), 0.6, "the waves should be fully drawn")
+    }
+
+    // MARK: - The drop opens the window
+
+    /// Below the plate, straight under the drop. The plate stops at 0.70 of the
+    /// canvas; its shadow is gone by 0.74.
+    private var belowTheDrop: CGRect { CGRect(x: 0.46, y: 0.75, width: 0.08, height: 0.04) }
+    private var corner: CGRect { CGRect(x: 0, y: 0, width: 0.06, height: 0.06) }
+
+    /// The hand-over is a ripple from the drop, not a dissolve: early in it,
+    /// the window already shows through just under the drop while the corners
+    /// are still covered. Rendered over white, so "shows through" is visible.
+    ///
+    /// A plain dissolve fails this in the other direction — every point is
+    /// equally covered at every moment, so the two regions would match.
+    func testTheWindowOpensOutwardFromTheDrop() throws {
+        let stages = LaunchIntro.Stages(reduceMotion: false)
+        let rep = try render(elapsed: stages.fadeStart + stages.fade * 0.1, behind: .white)
+
+        XCTAssertGreaterThan(
+            brightness(rep, in: belowTheDrop), 0.8,
+            "a tenth of the way into the hand-over, the window should already show just under the drop"
+        )
+        XCTAssertLessThan(
+            brightness(rep, in: corner), 0.2,
+            "a tenth of the way in, the ring should not have reached the corners"
+        )
+    }
+
+    /// And it does finish: by the end the window is uncovered to the corners.
+    func testTheRippleReachesTheCorners() throws {
+        let stages = LaunchIntro.Stages(reduceMotion: false)
+        let rep = try render(elapsed: stages.fadeStart + stages.fade, behind: .white)
+        XCTAssertGreaterThan(brightness(rep, in: corner), 0.9, "the veil should be gone from the corners at the end")
+    }
+
+    /// Reduce Motion keeps the plain dissolve — a ring racing to the corners is
+    /// exactly the movement it exists to take away.
+    func testReduceMotionDissolvesEvenly() throws {
+        let stages = LaunchIntro.Stages(reduceMotion: true)
+        let rep = try render(elapsed: stages.fadeStart + stages.fade * 0.5, reduceMotion: true, behind: .white)
+        XCTAssertEqual(
+            brightness(rep, in: belowTheDrop), brightness(rep, in: corner), accuracy: 0.05,
+            "under Reduce Motion the whole veil should fade together"
+        )
     }
 }

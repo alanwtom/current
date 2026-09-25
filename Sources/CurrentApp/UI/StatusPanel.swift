@@ -79,6 +79,19 @@ final class StatusPanelModel: ObservableObject {
             if isComplete { return Theme.complete }
             return Theme.downloading
         }
+
+        /// The same flow the library rows carry — see `ProgressTrack.Flow`.
+        var flow: ProgressTrack.Flow? {
+            guard !isPaused else { return nil }
+            let seed = Double(UInt(bitPattern: id.hashValue) % 997) / 997
+            if isSeeding, uploadRate > 1 {
+                return .init(reversed: true, period: Motion.flowPeriod(for: uploadRate), seed: seed)
+            }
+            if !isComplete, downloadRate > 1 {
+                return .init(reversed: false, period: Motion.flowPeriod(for: downloadRate), seed: seed)
+            }
+            return nil
+        }
     }
 
     @Published private(set) var rows: [Row] = []
@@ -496,7 +509,8 @@ private struct StatusPanelRow: View {
                     fraction: row.progress,
                     tint: row.tint,
                     reduceMotion: reduceMotion,
-                    track: Theme.trackRaised
+                    track: Theme.trackRaised,
+                    flow: row.flow
                 )
                 .frame(height: 5)
 

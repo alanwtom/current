@@ -136,7 +136,8 @@ public enum ProblemReport {
 
                 It has been revealed in Finder. Drag it into this box to attach
                 it — it says where the crash happened, which is usually the
-                whole answer. It contains no personal data beyond file paths.
+                whole answer. Issues are public: the log includes your Mac's
+                user name in its file paths, so look it over first.
                 -->
                 """
         } else {

@@ -95,10 +95,25 @@
     <false/>
     <key>SUPublicEDKey</key>
     <string>BXyLWZGFiy3Lx1Adna9FwwArw4ED0WJOHnsW/qusVcA=</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
+    <!-- Check the update's EdDSA signature before unpacking it, not after.
+         Without this Sparkle mounts a downloaded disk image first and verifies
+         what it finds inside, so anyone who could serve a file from the
+         download domain could get a disk image of their choosing mounted on
+         every Mac that checked. Every release is already signed, so this
+         costs nothing. -->
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <!-- Everything this app writes is marked as downloaded from the internet,
+         exactly as a browser marks its downloads. So an app, installer or
+         script that arrives in a torrent meets Gatekeeper's check the first
+         time it's opened, instead of running unexamined — and a torrent can
+         mark its files executable (BEP 47), so this is not hypothetical.
+         Documents open as normal. -->
+    <key>LSFileQuarantineEnabled</key>
+    <true/>
+    <!-- No NSAppTransportSecurity exception. It used to allow plain-HTTP
+         loads app-wide; nothing here needs it — libtorrent doesn't go through
+         Apple's networking at all, and the update feed and download are HTTPS
+         — so it only ever loosened the updater. -->
 </dict>
 </plist>

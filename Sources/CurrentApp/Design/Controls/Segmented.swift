@@ -14,14 +14,14 @@ struct SegmentOption<Value: Hashable>: Identifiable {
     }
 }
 
-/// A segmented control where the selected pill *slides* between options.
+/// A segmented control where the selected pill *stretches* between options.
 ///
 /// This is the detail worth the custom control. macOS's segmented picker
 /// cross-fades its selection, so choosing "Dark" after "Light" gives you no
 /// sense that the two are neighbours on a track. Here the pill travels, which
-/// tells you where you came from and where you went — and because it is one
-/// `matchedGeometryEffect`, it interpolates size as well as position, so options
-/// of different widths still work.
+/// tells you where you came from and where you went — front edge first, back
+/// edge catching up (`StretchHighlight`) — and because it is drawn from the
+/// selected segment's frame, options of different widths still work.
 ///
 /// Keyboard: the whole control takes focus as one unit and ←/→ move the
 /// selection, which is what the platform does and what AGENTS.md requires.
@@ -34,13 +34,27 @@ struct SegmentedPicker<Value: Hashable>: View {
     var fill = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var pill
     @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(options) { option in
                 segment(option)
+            }
+        }
+        .backgroundPreferenceValue(HighlightAnchorKey<SegmentedPicker>.self) { anchor in
+            GeometryReader { proxy in
+                if let anchor {
+                    StretchHighlight(key: selection, target: proxy[anchor], axis: .horizontal) {
+                        RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
+                            .fill(Theme.raised)
+                            .shadow(color: Theme.shadow, radius: 3, y: 1)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
+                                    .strokeBorder(Theme.stroke, lineWidth: Size.hairline)
+                            )
+                    }
+                }
             }
         }
         .padding(2)
@@ -97,20 +111,9 @@ struct SegmentedPicker<Value: Hashable>: View {
             .frame(maxWidth: fill ? .infinity : nil)
             .frame(height: Size.controlM - 4)
             .padding(.horizontal, iconOnly ? Space.m : Space.l)
-            .background {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
-                        .fill(Theme.raised)
-                        .shadow(color: Theme.shadow, radius: 3, y: 1)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
-                                .strokeBorder(Theme.stroke, lineWidth: Size.hairline)
-                        )
-                        // The one pill, shared across every segment. Swapping
-                        // which segment owns it is what makes it travel.
-                        .matchedGeometryEffect(id: "pill", in: pill)
-                }
-            }
+            // Where the one shared pill should be. Moving this anchor from
+            // segment to segment is what makes it travel.
+            .highlightAnchor(SegmentedPicker.self, isSelected: isSelected)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -176,13 +179,15 @@ struct RadioGroup<Value: Hashable>: View {
             }
             .padding(Space.l)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A chosen row is grey, and the accent dot says which. It used to
+            // be washed in the accent too, so the dot sat on its own colour.
             .background(
                 RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
-                    .fill(isSelected ? Theme.accentSoft : Color.clear)
+                    .fill(isSelected ? Theme.fillMuted : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.m, style: .continuous)
-                    .strokeBorder(isSelected ? Theme.accent.opacity(0.35) : Theme.stroke, lineWidth: Size.hairline)
+                    .strokeBorder(isSelected ? Theme.strokeStrong : Theme.stroke, lineWidth: Size.hairline)
             )
             .contentShape(Rectangle())
         }

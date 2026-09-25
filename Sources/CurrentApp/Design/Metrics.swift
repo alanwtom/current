@@ -123,8 +123,37 @@ enum Size {
     /// on a dark row reads as a divider between rows rather than as a bar
     /// belonging to one.
     static let track: CGFloat = 4
+    /// The same bar as the inspector's headline, where it is the surface's
+    /// subject rather than one line of a row. Half a step up from `track`,
+    /// which is as far as it can go before a 6pt capsule with a 3pt radius
+    /// stops reading as a bar and starts reading as a pill.
+    static let trackLarge: CGFloat = 6
     /// Hairline width. A real pixel on Retina rather than a blurry point.
     static let hairline: CGFloat = 1
+
+    /// A pill's height — the state chips, the neutral tags, a keycap hint.
+    ///
+    /// One token because these sit next to each other: a `StatePill` and a
+    /// `Chip` share the inspector's header line, and they were hand-typed at 17
+    /// while `KeyHint` was 18, so a row of them was a point out of level for no
+    /// reason anybody could name. 18 rather than 17 because an 11pt line of
+    /// text measures 13.1pt and wants a clear 2pt above and below it.
+    static let pill: CGFloat = 18
+
+    /// The inspector's throughput meter, split evenly either side of its
+    /// baseline — so 40pt per direction.
+    ///
+    /// Fixed, and that is not decoration: this is the one view in the app whose
+    /// *content* changes on every engine tick, so its frame must be the one
+    /// thing that never does. See the layout-churn section of AGENTS.md.
+    ///
+    /// It was 96. The halves share one scale, so the quieter direction's half
+    /// is mostly air on any normal transfer — an upload running at a tenth of
+    /// the download leaves nine tenths of the top empty — and at 48pt a side
+    /// that was forty points of nothing above a solid block. 80 keeps the
+    /// asymmetry legible, which is the point of sharing the scale, without the
+    /// card being mostly gap.
+    static let rateGraph: CGFloat = 80
 }
 
 /// The window's own furniture: the fake title bar, the panels either side.

@@ -200,10 +200,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Claim magnet links quietly; users can reassign later in System Settings.
-        if let bundleID = Bundle.main.bundleIdentifier {
-            LSSetDefaultHandlerForURLScheme("magnet" as CFString, bundleID as CFString)
-        }
+        // Claim magnet links once, on the first launch. This used to run on
+        // every launch, so anyone who had since chosen a different app for
+        // magnet links had that choice quietly taken back each time they
+        // opened this one.
+        let claimedKey = "claimedMagnetLinks"
+        guard !UserDefaults.standard.bool(forKey: claimedKey),
+              let bundleID = Bundle.main.bundleIdentifier
+        else { return }
+        LSSetDefaultHandlerForURLScheme("magnet" as CFString, bundleID as CFString)
+        UserDefaults.standard.set(true, forKey: claimedKey)
     }
 
     @objc

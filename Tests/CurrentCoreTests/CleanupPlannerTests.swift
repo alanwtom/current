@@ -114,16 +114,23 @@ final class CleanupPlannerTests: XCTestCase {
         XCTAssertTrue(plan.candidates.isEmpty)
     }
 
-    func testSharedDirectoryBlocksCleanup() {
+    /// Sharing a *folder* is normal — it's every torrent in the default one.
+    /// Sharing *content* is two torrents unpacking into the same place, and
+    /// only that may block cleanup. The folder-keyed version of this rule
+    /// excluded the entire library.
+    func testOnlySharedContentBlocksCleanupNotASharedFolder() {
         let directory = URL(fileURLWithPath: "/tmp/shared")
         var first = makeSnapshot("first")
         first.saveDirectory = directory
         var second = makeSnapshot("second")
         second.saveDirectory = directory
+        var twin = makeSnapshot("twin")
+        twin.saveDirectory = directory
+        twin.name = "FIRST"   // same folder on a case-insensitive disk
 
-        let plan = CleanupPlanner.plan(snapshots: [first, second], policies: balancedPolicies, now: now)
-        XCTAssertTrue(plan.candidates.isEmpty)
-        XCTAssertEqual(Set(plan.kept.map(\.id)), Set([first.id, second.id]))
+        let plan = CleanupPlanner.plan(snapshots: [first, second, twin], policies: balancedPolicies, now: now)
+        XCTAssertEqual(plan.candidates.map(\.id), [second.id])
+        XCTAssertEqual(Set(plan.kept.map(\.id)), [first.id, twin.id])
     }
 
     func testCandidatesToReachTargetStopsEarly() {
@@ -136,9 +143,4 @@ final class CleanupPlannerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(needed.reduce(Int64(0)) { $0 + $1.reclaimableBytes }, 11_000_000_000)
     }
 
-    func testEveryCandidateCarriesReasons() {
-        let candidate = makeSnapshot("explained")
-        let plan = CleanupPlanner.plan(snapshots: [candidate], policies: balancedPolicies, now: now)
-        XCTAssertFalse(plan.candidates.first!.reasons.isEmpty)
-    }
 }

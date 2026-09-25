@@ -37,9 +37,17 @@ public protocol TorrentEngine: Actor {
     /// Continuous stream of engine state. Emits a coalesced batch roughly once per second.
     var events: AsyncStream<EngineEvent> { get }
 
-    /// Adds content to the session. The returned torrent starts in `.resolving`
-    /// for magnets and `.paused(.user)` for complete .torrent payloads.
-    func add(_ source: AddSource, saveDirectory: URL) async throws -> TorrentID
+    /// Adds content to the session.
+    ///
+    /// `held` is for anything the user hasn't said yes to yet — a magnet or a
+    /// .torrent file on its way to the "which files, and where?" card. A held
+    /// torrent fetches its metadata if it needs to and then sits paused,
+    /// **having written nothing**, until `resume` releases it. Without this the
+    /// card was a question asked about a download already in progress: the
+    /// torrent ran from the moment it was added and was paused only once its
+    /// metadata had crossed two threads to the UI, and a second magnet arriving
+    /// while the card was up was never paused at all.
+    func add(_ source: AddSource, saveDirectory: URL, held: Bool) async throws -> TorrentID
 
     func pause(_ id: TorrentID) async
     func resume(_ id: TorrentID) async
@@ -71,11 +79,15 @@ public protocol TorrentEngine: Actor {
 }
 
 extension TorrentEngine {
-    public func addMagnet(_ magnet: String, saveDirectory: URL) async throws -> TorrentID {
-        try await add(.magnet(magnet), saveDirectory: saveDirectory)
+    public func add(_ source: AddSource, saveDirectory: URL) async throws -> TorrentID {
+        try await add(source, saveDirectory: saveDirectory, held: false)
     }
 
-    public func addTorrentFile(_ data: Data, saveDirectory: URL) async throws -> TorrentID {
-        try await add(.torrentFile(data), saveDirectory: saveDirectory)
+    public func addMagnet(_ magnet: String, saveDirectory: URL, held: Bool = false) async throws -> TorrentID {
+        try await add(.magnet(magnet), saveDirectory: saveDirectory, held: held)
+    }
+
+    public func addTorrentFile(_ data: Data, saveDirectory: URL, held: Bool = false) async throws -> TorrentID {
+        try await add(.torrentFile(data), saveDirectory: saveDirectory, held: held)
     }
 }

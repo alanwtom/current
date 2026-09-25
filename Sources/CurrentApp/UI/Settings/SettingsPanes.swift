@@ -56,10 +56,29 @@ struct AppearancePane: View {
                     )
 
                 HStack(spacing: Space.m) {
+                    // White tick on a solid accent dot, rather than an accent
+                    // tick cut out of a dot sitting on an accent wash. Ink or
+                    // surface — see `Palette`.
                     Image(systemName: isSelected ? "checkmark.circle.fill" : mode.symbol)
                         .font(.system(size: Size.iconSmall, weight: .medium))
-                        .foregroundStyle(isSelected ? Theme.accent : Theme.textTertiary)
+                        .symbolRenderingMode(isSelected ? .palette : .monochrome)
+                        .foregroundStyle(
+                            isSelected ? Theme.textOnAccent : Theme.textTertiary,
+                            isSelected ? Theme.accent : Theme.textTertiary
+                        )
                         .contentTransition(.symbolEffect(.replace.offUp))
+                        // The tick lands with a small bounce — it is the answer
+                        // to a click, and the one moment on this pane that
+                        // should feel like something happened.
+                        .keyframeAnimator(initialValue: 1.0, trigger: isSelected) { [landing = isSelected && !reduceMotion] content, scale in
+                            content.scaleEffect(landing ? scale : 1)
+                        } keyframes: { _ in
+                            KeyframeTrack {
+                                MoveKeyframe(0.5)
+                                CubicKeyframe(1.18, duration: Motion.quick * 0.55)
+                                SpringKeyframe(1, duration: Motion.standard, spring: .init(response: Motion.quick, dampingRatio: 0.6))
+                            }
+                        }
                     Text(mode.title)
                         .typeStyle(Typo.label)
                         .foregroundStyle(isSelected ? Theme.text : Theme.textSecondary)
@@ -67,13 +86,18 @@ struct AppearancePane: View {
             }
             .padding(Space.m)
             .frame(maxWidth: .infinity)
+            // Selected is a grey card with an accent outline. It used to be an
+            // accent wash as well, with the accent tick on top of it.
             .background(
                 RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
-                    .fill(isSelected ? Theme.accentSoft : Theme.fillSubtle)
+                    .fill(isSelected ? Theme.fillMuted : Theme.fillSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
-                    .strokeBorder(isSelected ? Theme.accent.opacity(0.4) : Theme.stroke, lineWidth: Size.hairline)
+                    .strokeBorder(
+                        isSelected ? Theme.accent : Theme.stroke,
+                        lineWidth: isSelected ? 1.5 : Size.hairline
+                    )
             )
             .contentShape(Rectangle())
         }
@@ -219,7 +243,7 @@ struct GeneralPane: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.directoryURL = settings.downloadsFolder
-        if panel.runModal() == .OK, let url = panel.url {
+        if let url = SaveFolderValidator.run(panel) {
             settings.downloadsFolder = url
         }
     }

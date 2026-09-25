@@ -37,19 +37,17 @@ final class BandwidthPolicyTests: XCTestCase {
         XCTAssertEqual(p.effectiveLimits(onBattery: true), slow)
     }
 
-    func testEveryReductionPathIsExplainable() {
-        XCTAssertTrue(
-            policy(forced: true).explanation(onBattery: false)
-                .localizedCaseInsensitiveContains("switched on")
-        )
-        XCTAssertTrue(
-            policy(onBattery: true).explanation(onBattery: true)
-                .localizedCaseInsensitiveContains("battery")
-        )
-        XCTAssertTrue(
-            policy().explanation(onBattery: false)
-                .localizedCaseInsensitiveContains("no speed limit")
-        )
+    /// Every way the speed can be limited explains itself, and each in its own
+    /// words — the same sentence for "you switched it on" and "you're on
+    /// battery" would answer "why is this slow?" with nothing.
+    func testEveryReductionPathIsExplainedDifferently() {
+        let reasons = [
+            policy(forced: true).explanation(onBattery: false),
+            policy(onBattery: true).explanation(onBattery: true),
+            policy().explanation(onBattery: false),
+        ]
+        XCTAssertFalse(reasons.contains(where: \.isEmpty))
+        XCTAssertEqual(Set(reasons).count, reasons.count)
     }
 
     func testZeroMeansUnlimitedAndNegativesAreClamped() {

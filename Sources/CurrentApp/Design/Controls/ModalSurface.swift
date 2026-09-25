@@ -39,6 +39,9 @@ struct ModalSurface<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where the click that opened this landed, read once when it appears so
+    /// it goes back into the same spot it came out of. See `PresentationOrigin`.
+    @State private var origin = PresentationOrigin.current()
 
     var body: some View {
         ZStack {
@@ -58,7 +61,7 @@ struct ModalSurface<Content: View>: View {
                 // clipping last would cut the shadow off at the card's edge.
                 .clipShape(RoundedRectangle(cornerRadius: Radius.xl, style: .continuous))
                 .raisedSurface(radius: Radius.xl, deep: true)
-                .popTransition(reduceMotion: reduceMotion)
+                .popTransition(reduceMotion: reduceMotion, from: origin)
         }
         // Centres on the *window*, not on the safe area.
         //

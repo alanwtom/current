@@ -7,6 +7,19 @@ enum InspectorTab: Hashable {
     case files
     case activity
     case rules
+
+    /// Left-to-right position in the tab strip, so a pane can travel in the
+    /// same direction the pill just did. Fixed rather than looked up in the
+    /// visible options, which are not a constant — Files only exists once a
+    /// magnet's metadata has resolved.
+    var rank: Int {
+        switch self {
+        case .overview: return 0
+        case .files: return 1
+        case .activity: return 2
+        case .rules: return 3
+        }
+    }
 }
 
 /// The details panel.
@@ -28,6 +41,10 @@ struct InspectorPanel: View {
     @State private var tab: InspectorTab = .overview
     @State private var fileNodes: [FileNode] = []
     @State private var fileNodesReady = false
+    /// Which way the last tab change went: +1 rightwards, -1 leftwards. Drives
+    /// the pane's travel so the panel reads as one object being scrolled
+    /// sideways rather than as its contents being swapped out.
+    @State private var travel: CGFloat = 1
 
     private var hasFiles: Bool { store.metadataCache[snapshot.id] != nil }
 
@@ -46,13 +63,29 @@ struct InspectorPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            SegmentedPicker(selection: $tab, options: tabs, iconOnly: true)
+            SegmentedPicker(selection: tabSelection, options: tabs, iconOnly: true)
                 .padding(.horizontal, Chrome.panePadding)
                 .padding(.bottom, Space.l)
             Hairline()
 
-            pane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // **The pane is keyed on the tab, and the `ZStack` around it is
+            // what makes that mean anything.** This file has claimed since it
+            // was written that the panes "cross-fade in the direction you
+            // moved", and until now they did nothing at all: a bare `switch`
+            // has no identity change for SwiftUI to transition, so Overview
+            // became Files in a single frame while the pill above it slid
+            // across — the one part of the panel that moved was the strip, and
+            // the content it described just cut.
+            ZStack {
+                pane
+                    .id(tab)
+                    .transition(paneTransition)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The picker sets `tab` inside `withAnimation` already, but the
+            // fallback below doesn't — a magnet losing its Files tab has to
+            // land as gently as a click does.
+            .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: tab)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.chrome)
@@ -60,7 +93,10 @@ struct InspectorPanel: View {
         // tab only exists once metadata resolves, and a magnet that loses it
         // would otherwise leave the panel showing nothing.
         .onChange(of: hasFiles) { _, has in
-            if !has, tab == .files { tab = .overview }
+            if !has, tab == .files {
+                travel = -1
+                tab = .overview
+            }
         }
         .onChange(of: snapshot.id) { _, _ in
             // A different torrent is a different object. Rebuilding the file
@@ -68,6 +104,34 @@ struct InspectorPanel: View {
             fileNodesReady = false
             fileNodes = []
         }
+    }
+
+    /// Records which way the strip moved *before* handing the change on.
+    ///
+    /// It has to be the setter rather than an `onChange`: the pane is inserted
+    /// during the same update that changes the tab, so a direction written
+    /// afterwards is always one click stale — the first sideways move of a
+    /// session would travel the wrong way, and every later one would repeat
+    /// whichever way the previous one went.
+    private var tabSelection: Binding<InspectorTab> {
+        Binding(
+            get: { tab },
+            set: { next in
+                travel = next.rank >= tab.rank ? 1 : -1
+                tab = next
+            }
+        )
+    }
+
+    /// A cross-fade with a nudge. The distance is deliberately small — the
+    /// panes are full-height columns of cards, and sliding one of those its own
+    /// width would be a page turn in a 320pt panel.
+    private var paneTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: travel * Motion.enterOffset)),
+            removal: .opacity.combined(with: .offset(x: -travel * Motion.enterOffset))
+        )
     }
 
     @ViewBuilder
@@ -302,8 +366,13 @@ private struct OverviewPane: View {
                     .numericTransition()
                     .foregroundStyle(Theme.textSecondary)
             }
-            ProgressTrack(fraction: snapshot.progress, tint: tint, reduceMotion: reduceMotion)
-                .frame(height: 5)
+            ProgressTrack(
+                fraction: snapshot.progress,
+                tint: tint,
+                reduceMotion: reduceMotion,
+                flow: .of(snapshot.state, snapshot: snapshot)
+            )
+            .frame(height: Size.trackLarge)
         }
         .padding(Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -344,14 +413,19 @@ private struct OverviewPane: View {
 // MARK: - Activity pane
 
 private struct ActivityPane: View {
+    @EnvironmentObject private var store: LibraryStore
     let snapshot: TorrentSnapshot
 
     var body: some View {
         PaneScroll {
-            HStack(spacing: Space.l) {
-                RateTile(symbol: "arrow.down", label: "Down", value: snapshot.downloadRate, tint: Theme.downloading)
-                RateTile(symbol: "arrow.up", label: "Up", value: snapshot.uploadRate, tint: Theme.seeding)
-            }
+            // **The graph replaced the two big rate tiles that used to sit
+            // here, rather than joining them.** The tiles said "↓ 2.4 MB/s"
+            // and "↑ 310 KB/s" in large type, which is the same two figures
+            // the graph's own legend carries and the Overview pane states
+            // again — three copies of one fact, and none of them answering the
+            // question this tab is for, which is what the transfer has been
+            // *doing*. A number is a snapshot; the shape is the activity.
+            RateGraph(history: store.rates(for: snapshot.id))
 
             Group_(title: "Swarm") {
                 StatRow(label: "Connected seeds", value: "\(snapshot.swarm.connectedSeeds)")
@@ -366,44 +440,6 @@ private struct ActivityPane: View {
                 }
             }
         }
-    }
-}
-
-/// A big number with its direction.
-///
-/// The heading is tinted; the number itself is not, and neither is the tile —
-/// two filled colour blocks side by side made the Activity tab louder than the
-/// thing it was reporting on.
-private struct RateTile: View {
-    let symbol: String
-    let label: String
-    let value: Double
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            HStack(spacing: Space.xs) {
-                Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .bold))
-                Text(label.uppercased())
-                    .typeStyle(Typo.overline)
-            }
-            .foregroundStyle(tint)
-
-            // `heading`, not `title`. The panel already has a headline — the
-            // big percentage in the progress card — and a second, slightly
-            // smaller large number competing with it is the kind of extra step
-            // that makes a hierarchy read as a list of sizes instead. This is a
-            // stat with a label above it, so it wants to look like one.
-            Text(ByteFormatting.rate(value))
-                .typeStyle(Typo.heading)
-                .tabularNumerics()
-                .numericTransition()
-                .foregroundStyle(Theme.text)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Space.l)
-        .insetCard()
     }
 }
 

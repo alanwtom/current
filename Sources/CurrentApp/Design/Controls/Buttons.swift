@@ -14,8 +14,14 @@ enum ButtonKind {
     case secondary
     /// Chrome and toolbars — no border until you hover it.
     case ghost
-    /// Removal. Reads as dangerous without shouting; the fill only turns red on
-    /// hover, so a destructive button at rest doesn't dominate a dialog.
+    /// Removal. Reads as dangerous without shouting: at rest it is a neutral
+    /// button with red text, and it only fills solid red — white on red — once
+    /// the cursor is on it, so the one dangerous button gets clearer as you
+    /// reach for it rather than dominating the dialog from the start.
+    ///
+    /// It used to go red text on a pink wash under the cursor. That is colour
+    /// on colour, and the app doesn't do that any more — see "Ink or surface"
+    /// in `Palette`.
     case destructive
 }
 
@@ -97,7 +103,7 @@ struct CurrentButton: ButtonStyle {
                 // shadow on a control. It earns it: a solid filled block with
                 // no lift looks pasted on.
                 .shadow(
-                    color: role == .primary && isEnabled ? Theme.shadow : .clear,
+                    color: hasLift ? Theme.shadow : .clear,
                     radius: 6,
                     y: 2
                 )
@@ -113,6 +119,13 @@ struct CurrentButton: ButtonStyle {
         /// ladder, so a button feels like a physical thing being leaned on.
         private var isActive: Bool { isHovering && isEnabled }
 
+        /// A destructive button under the cursor is a solid block too, so it
+        /// gets the same lift the primary button has.
+        private var hasLift: Bool {
+            guard isEnabled else { return false }
+            return role == .primary || (role == .destructive && (isActive || configuration.isPressed))
+        }
+
         private var background: Color {
             switch role {
             case .primary:
@@ -125,8 +138,8 @@ struct CurrentButton: ButtonStyle {
                 if configuration.isPressed { return Theme.fillMuted }
                 return isActive ? Theme.fillSubtle : .clear
             case .destructive:
-                if configuration.isPressed { return Theme.failure.opacity(0.22) }
-                return isActive ? Theme.failure.opacity(0.14) : Theme.fillSubtle
+                if configuration.isPressed && isEnabled { return Theme.destructivePressed }
+                return isActive ? Theme.destructive : Theme.fillSubtle
             }
         }
 
@@ -135,7 +148,7 @@ struct CurrentButton: ButtonStyle {
             case .primary: return .clear
             case .secondary: return Theme.stroke
             case .ghost: return .clear
-            case .destructive: return isActive ? Theme.failure.opacity(0.3) : Theme.stroke
+            case .destructive: return isFilledDestructive ? .clear : Theme.stroke
             }
         }
 
@@ -144,8 +157,12 @@ struct CurrentButton: ButtonStyle {
             case .primary: return Theme.textOnAccent
             case .secondary: return Theme.text
             case .ghost: return isActive ? Theme.text : Theme.textSecondary
-            case .destructive: return Theme.failure
+            case .destructive: return isFilledDestructive ? Theme.textOnAccent : Theme.failure
             }
+        }
+
+        private var isFilledDestructive: Bool {
+            role == .destructive && isEnabled && (isActive || configuration.isPressed)
         }
     }
 }

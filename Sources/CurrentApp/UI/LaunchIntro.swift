@@ -142,15 +142,9 @@ extension LaunchIntro {
                 size: CGSize,
                 elapsed: TimeInterval
             ) {
-            // Everything dissolves together at the end, including the veil.
-            let exit = 1 - easeOut(progress(elapsed, from: stages.fadeStart, over: stages.fade))
-
-            // The veil hides the window until the intro is done, so launch reads as
-            // one moment instead of "app appears, then something animates on top".
-            context.fill(
-                Path(CGRect(origin: .zero, size: size)),
-                with: .color(veil.opacity(exit))
-            )
+            // How far through the hand-over to the window, 0…1.
+            let leaving = easeOut(progress(elapsed, from: stages.fadeStart, over: stages.fade))
+            let exit = 1 - leaving
 
             let appear = easeOut(progress(elapsed, from: 0, over: stages.plateIn))
             // The plate settles in from slightly small, and on the way out drifts
@@ -158,10 +152,51 @@ extension LaunchIntro {
             let scale = stages.reduceMotion
                 ? 1
                 : 0.94 + 0.06 * easeOut(progress(elapsed, from: 0, over: stages.plateSettle))
-                    + 0.04 * (1 - exit)
+                    + 0.04 * leaving
+
+            // The veil hides the window until the intro is done, so launch reads as
+            // one moment instead of "app appears, then something animates on top".
+            //
+            // **The drop opens the window.** Rather than the veil dissolving all
+            // at once, a ring spreads out from the drop — the last thing the mark
+            // drew — and the app is revealed inside it, the drop falling into the
+            // app like a drop into water. It is "drop" in the motion vocabulary,
+            // the same ripple a finished download sends out of its row. The drop
+            // itself still doesn't move: the rejected "falling into place" design
+            // below was about travel, and nothing here travels but the ring.
+            //
+            // Reduce Motion keeps the plain dissolve, since a ring racing to the
+            // corners of the window is exactly the kind of movement it's for.
+            let bounds = CGRect(origin: .zero, size: size)
+            if stages.reduceMotion {
+                context.fill(Path(bounds), with: .color(veil.opacity(exit)))
+            } else {
+                let k = iconSize / Mark.designSize * scale
+                // The drop's centre on screen: the icon's y axis is flipped, so a
+                // point below the icon's middle lands below the canvas's middle.
+                let drop = CGPoint(x: size.width / 2, y: size.height / 2 + (Mark.designSize / 2 - Mark.dropRestY) * k)
+                let reach = hypot(max(drop.x, size.width - drop.x), max(drop.y, size.height - drop.y))
+                let radius = reach * leaving
+                let ring = CGRect(x: drop.x - radius, y: drop.y - radius, width: radius * 2, height: radius * 2)
+
+                var veiled = Path(bounds)
+                if radius > 0.5 { veiled.addEllipse(in: ring) }
+                context.fill(veiled, with: .color(veil), style: FillStyle(eoFill: true))
+                if leaving > 0, leaving < 1 {
+                    context.stroke(
+                        Path(ellipseIn: ring),
+                        with: .color(Mark.markBottom.opacity(0.7 * exit)),
+                        lineWidth: 1.5
+                    )
+                }
+            }
 
             var icon = context
-            icon.opacity = appear * exit
+            // The icon goes over the first half of the ripple, so by the time the
+            // ring is at the window's edges it is the app you are looking at.
+            icon.opacity = stages.reduceMotion
+                ? appear * exit
+                : appear * (1 - easeOut(progress(elapsed, from: stages.fadeStart, over: stages.fade * 0.55)))
             icon.translateBy(x: size.width / 2, y: size.height / 2)
             // Negative y flips into the icon's bottom-left origin, so the row
             // numbers below can be copied straight from make-icon.swift.
@@ -300,8 +335,8 @@ extension LaunchIntro {
     /// The intro's schedule, assembled entirely from `Motion` tokens.
     ///
     /// Full: lines draw (0 → .64), the drop beads off the last one and falls
-    /// (.64 → .92), the whole icon holds for a beat, then dissolves — about
-    /// 1.3s end to end.
+    /// (.64 → .92), the whole icon holds for a beat, then the drop's ripple
+    /// opens the window — about 1.3s end to end.
     ///
     /// Reduce Motion: nothing travels. The finished icon fades up, holds, fades
     /// out — under half a second, and the app's identity still registers.
@@ -328,7 +363,10 @@ extension LaunchIntro {
         /// own. The *curve* it uses is its own; see `Mark.dropCrossing`.
         var dropDraw: TimeInterval { waveDraw }
         var hold: TimeInterval { scaled(Motion.instant) }
-        var fade: TimeInterval { scaled(reduceMotion ? Motion.quick : Motion.standard) }
+        /// The hand-over to the window: the ripple, or under Reduce Motion a
+        /// plain dissolve. The ripple gets `expressive` rather than the
+        /// dissolve's old `standard`, because it has the whole window to cross.
+        var fade: TimeInterval { scaled(reduceMotion ? Motion.quick : Motion.expressive) }
 
         var dropStart: TimeInterval {
             reduceMotion ? 0 : Double(Mark.waves.count) * waveStagger

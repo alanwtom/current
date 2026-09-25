@@ -17,7 +17,7 @@ Apple Silicon paths (`/opt/homebrew/{include,lib}`), so an Intel Mac needs
 ```bash
 brew install libtorrent-rasterbar
 swift build                 # debug
-swift test                  # 50 tests, all in CurrentCore + CurrentSim
+swift test                  # ~310 tests, ~30 s; RealEngineTests drive real libtorrent offline
 Scripts/make-app.sh         # bundles .build/Current.app (add --release for release)
 open .build/Current.app
 ```
@@ -119,7 +119,37 @@ afterward.
 `removeItem`, never "delete originals" on an automated path. Eligibility is a
 strict gate (complete + seed goals met + not pinned + not active + healthy swarm)
 and rare swarms are excluded from automatic cleanup entirely. Ranking happens only
-*after* the gate passes.
+*after* the gate passes. "Shared with another torrent" means two torrents that
+unpack into the same place (`ContentLocation.contentKey`), **not** two torrents
+in the same folder — keyed on the folder, the gate excluded every torrent in
+the default download folder and cleanup could never remove anything. A cleanup
+that moves nothing to the Trash doesn't remove the torrent either, or a storage
+budget would eat the library without freeing a byte.
+
+**Deleting takes the torrent's files, never its name.** Both deletes — "Remove
+and delete files" and cleanup — go through `ContentTrash`, which trashes what
+`ContentLocation.trashPlan` names: the files in the torrent's own metadata,
+each proved to sit inside the save folder, and the root folder whole only when
+everything in it belongs to the torrent. No metadata means it wrote nothing,
+so nothing is touched. The version this replaced trashed `saveDirectory/name`,
+plus a second candidate built with `appendingPathExtension` — which Foundation
+returns *unchanged* for a name ending in a full stop, so "delete files" on a
+torrent called `Something.` put the whole download folder in the Trash. That
+shipped in every release up to 1.2.0. `DeletionSafetyTests` holds the strings.
+Tests replace `contentTrash.moveToTrash`; nothing in the suite may touch the
+real Trash.
+
+**Nothing downloads before someone says yes.** Anything headed for the
+confirm card is added **held** (`add(_:saveDirectory:held:)`): a magnet runs in
+libtorrent's upload mode, not auto-managed — it trades metadata but never
+requests a piece — and the shim pauses it the moment its metadata arrives; a
+held .torrent file is simply added paused. `lt_resume` clears upload mode, so
+every resume is a decision to download. This replaced the app pausing torrents
+*after* their metadata reached the UI, by which time they'd been downloading
+since they were added — and a second magnet arriving while the card was busy
+was never paused at all. The card belongs to one torrent (`awaitedID`); a
+download that can't have it waits, held, with a "Start" toast. Magnets are
+always held. .torrent files are held only when they get the card.
 
 **Keyboard parity.** Every mouse interaction needs a keyboard path, and keyboard
 actions never wait on decorative animation. The command palette used to be the
@@ -202,8 +232,8 @@ where a claim like that belongs, and it is still there.
 | amber | something you can still act on — a rare swarm, a budget about to run out |
 | red | it broke, or this control destroys something |
 
-Two rules keep that from becoming a rainbow, and both came from getting it wrong
-in opposite directions:
+Three rules keep that from becoming a rainbow. The first two came from getting
+it wrong in opposite directions; the third is one Alan set outright:
 
 1. **Never colour a number.** Rates, sizes, counts and ETAs are data and are
    always drawn from the grey ramp. The first pass painted every download rate
@@ -212,7 +242,18 @@ in opposite directions:
 2. **At most two coloured elements per row, saying the same thing.** A library
    row states itself with a tinted glyph and a tinted progress bar. It used to
    also carry a filled tinted circle, a coloured rate and a coloured glow —
-   four voices for one fact.
+   four voices for one fact. For the same reason a state pill *inside a row*
+   goes fully grey (`StatePill(quiet:)`) unless the row has nothing else
+   carrying that colour — "No connection" is the one that keeps its amber.
+3. **Ink or surface, never both.** A colour goes in the glyph *or* in the fill
+   behind it. A green tick on grey is fine; white on solid red is fine; a green
+   tick on a pale green wash is not. That last shape was everywhere — state
+   pills, callouts, the VPN shield, the selected radio row and theme card, the
+   drop target, a destructive button under the cursor — and every one of them
+   now puts its colour in one place. There is no `tint.opacity(…)` background
+   left in the app and no `accentSoft` token to make one with; don't add either
+   back. A destructive button under the cursor fills with `Theme.destructive`,
+   a deeper red than `failure`, because white on the text red is unreadable.
 
 The correction to that briefly went too far the other way: everything neutral,
 states distinguished only by a word. A torrent monitor whose whole job is
@@ -239,7 +280,7 @@ a menu and it stays native.
 
 | Path | Holds |
 |---|---|
-| `Sources/CurrentCore/` | Pure domain: models, `SeedPolicy`, `CleanupPlanner`, `FileTree`, `DecisionLog`, `SwarmHealth`, formatting, parsing |
+| `Sources/CurrentCore/` | Pure domain: models, `SeedPolicy`, `CleanupPlanner`, `FileTree`, `DecisionLog`, `SwarmHealth`, `RateHistory`, formatting, parsing |
 | `Sources/LTShim/` | C++ shim exposing a minimal C API over libtorrent 2.x |
 | `Sources/CurrentEngine/` | `LibtorrentEngine` — the only thing that imports `LTShim` |
 | `Sources/CurrentSim/` | `SimulationEngine` — same protocol, deterministic |
@@ -313,17 +354,82 @@ it. They are separate values now.
 Durations live in `Motion` (`Design/Motion.swift`) — `instant` .12 / `quick` .18
 / `standard` .28 / `expressive` .38. **Never type a duration inline.** Springs
 are critically damped (`Motion.spring`) unless a physical gesture justifies
-bounce (`Motion.gestureSpring` — the switch knob, a toast arriving, the slider
-handle). Nothing exceeds ~300 ms. Reduce Motion must degrade gracefully — use the
-`reduceMotion:` overloads, which keep the feedback and drop the movement.
+bounce (`Motion.gestureSpring` — the switch knob's trailing edge, a checkbox
+filling, a selected theme's tick landing, a toast arriving, the slider handle).
+Nothing *moving between two states* exceeds ~300 ms; loops (the spinner, the
+flowing bar, the drop target's march) are not transitions and aren't capped.
+Reduce Motion must degrade gracefully — use the `reduceMotion:` overloads, which
+keep the feedback and drop the movement.
+
+**Motion has a vocabulary, the way colour does.** Five movements, one meaning
+each — the long version is at the bottom of `Motion.swift`:
+
+| Movement | Means | Where |
+|---|---|---|
+| flow | data is moving right now | a light running along a progress bar (`ProgressTrack.Flow`); the drop target's marching border; the VPN shield breathing while it waits |
+| drop | it arrived, it's done | one `Ripple`: a finished download's row, a dropped file, the launch opening the window |
+| shake | that didn't work | `.shake(trigger:)`: a failed row's glyph, a refused magnet link, the VPN shield when traffic isn't protected |
+| stretch | you moved between choices | `StretchHighlight`: sidebar, segmented picker, palette; the switch knob |
+| origin | it came from what you clicked | `PopTransition(origin:)`; the magnet card flying into its row |
+
+A new animation should be one of these or have a stated reason it isn't.
+Movement that means nothing in particular is decoration, and the colour rules
+already say what this app thinks of that. Every one of these is offset, scale,
+opacity or drawing inside a `Canvas`/shape — none of them changes a size, which
+is what keeps them clear of the layout-churn hazard below.
+
+Four implementation notes, each of which is the second way that was tried:
+
+- **The flowing bar is a `TimelineView` + `Canvas`, not `repeatForever`.** The
+  light's position is a pure function of the clock, so a speed change never
+  restarts anything, and a `repeatForever` started in `onAppear` inside a lazy
+  list is a known way for the list's own insertions to pick up the loop. It
+  flows only while the rate is above zero — a stalled download is then the one
+  bar standing still, which is the whole point — at one of three speeds
+  (`Motion.flowPeriod(for:)`), because a speed derived straight from the rate
+  would restart every tick.
+- **Stretch can't be a `matchedGeometryEffect`.** That animates one frame with
+  one animation. `StretchSpan` puts each edge in its own `Animatable` view, so
+  the leading and trailing edges get separate `withAnimation` calls and separate
+  springs. `StretchHighlight` only stretches when the *selection* changes; a
+  seam drag or a resize snaps it, or it would lag behind what it marks.
+- **A row's finish is detected, not replayed.** `LibraryRow` keeps the phase it
+  last settled in, and only downloading → seeding/completed while on screen
+  fires the ripple and the drawn-on tick. A torrent restored complete, or a row
+  scrolled back into view, does nothing. The glyph changes *identity* only for
+  a finish, so every other state change keeps the ordinary symbol replace.
+- **The switch is a `Button` with a `ButtonStyle`.** The stretch hangs on the
+  press, and `configuration.isPressed` is the one press signal that doesn't
+  fight the click (see the `.pressable()` note below). It also made the switch
+  reachable by keyboard, which the tap gesture it used to be was not.
 
 **Every modal surface bubbles in, and they all share one entrance.** Dialogs,
 settings, the palette, the add-magnet card, the file picker and the magnet-flow
 cards all use `PopTransition` (`.popTransition()`) driven by
 `Motion.pop(presenting:)`: from 92% with a little blur, springing a few percent
-past full size before it settles, and out again fast and flat. This is the third
-place allowed to overshoot and the only one that isn't a physical gesture —
-a summoned surface should pop.
+past full size before it settles, and out again fast and flat. This is the one
+overshoot that isn't a physical gesture — a summoned surface should pop.
+
+**It grows out of whatever you clicked.** `PresentationOrigin.current()` reads
+the click AppKit is dispatching when the surface is created; each surface keeps
+that point in `@State` and hands it to `.popTransition(from:)`, which anchors the
+scale there (from 86% instead of 92%, so the direction is visible). A key press,
+a click in a menu or another window, or anything stale gives nil, and the
+surface pops from its centre as before — so ⌘K still opens the palette in the
+middle. Nothing has to report its own position; that's why it reads the event
+rather than asking each button.
+
+The magnet flow's selection card leaves the other way: on Download it flies
+into its torrent's row (`Landing`), which has been in the library since the
+link arrived. **It is an animated state change, not a removal transition** —
+the card keeps its identity from `.selecting` into `.starting` and is moved
+there. A transition is fixed at a view's last render, and the card's last
+render can't know whether Download or Cancel comes next; as a transition,
+Cancel flew the card into the very row it was deleting. Rows report where they are into `RowFrames` — a plain
+registry, not published state, because they report on every scroll. When the
+row isn't on screen the card pops away and the "Starting download…" card
+appears as before; when it is, that card is skipped, because the row is already
+saying it.
 
 Two ways to get this wrong, both silent:
 
@@ -449,25 +555,93 @@ LSD — a test that creates an engine and skips `apply` has no networking), and
 the OS port fallback is switched **off** while confined, because a bind that
 fails has to fail rather than quietly land somewhere else.
 
+**Known gap: name lookups are not confined.** Tracker and web-seed hostnames
+are resolved by the system resolver, which is not bound to the device. The
+connections themselves are, but with a split tunnel or a VPN that doesn't push
+its own DNS, the ISP's resolver sees which trackers are being contacted.
+Closing it needs a SOCKS proxy with `proxy_hostnames`; don't claim otherwise in
+the UI or on the site.
+
 `.unavailable` is a real instruction meaning "bind to nothing", and is not the
 same value as `.unrestricted`. Keeping them as separate cases rather than an
 optional device name is deliberate: they want opposite behaviour and an
 optional lets a caller confuse them. There is no setting to carry on without
 the connection you asked for, and there should not be one.
 
+## The throughput meter
+
+The inspector's Activity tab draws the last 90 seconds of one torrent's
+traffic as bars either side of a zero line — downloads below, uploads above.
+`RateHistory` in `CurrentCore` is the window and the arithmetic; `RateGraph`
+draws it; `LibraryStore` feeds it one sample per engine tick.
+
+- **Bars, not a curve with an area under it.** That was the first version and
+  on real data it drew a solid gradient slab with a flat line on top: a steady
+  transfer has no shape, so nothing about it read as time passing. Ninety
+  discrete bars have rhythm at any density, and the zero line is legible
+  because it shows *through* the gaps instead of being buried under the
+  densest end of two gradients.
+- **The zero line is not centred.** `RateHistory.baselinePosition` splits the
+  frame in proportion to the two peaks. A centred line wastes most of the card
+  — an upload at a tenth of the download leaves nine tenths of the upper half
+  as dead black — and it costs nothing to move: because each side's height is
+  proportional to its own peak, a point of height is worth the same number of
+  bytes in both, so the comparison a shared scale exists for survives. The
+  line's height then *is* the give-and-take ratio.
+- **One scale for both directions.** `RateHistory.scale` is the sum of the two
+  peaks with 11% headroom and an 8 KB/s floor. Scaling the halves
+  independently is the obvious mistake and it destroys the only question a
+  mirrored chart answers.
+- **Autoscaling is honest only because the scale is drawn.** The dotted guide
+  sits level with the tallest bar and the header states what it was worth.
+  Take either away and a torrent crawling at 30 KB/s looks exactly like one
+  flying at 30 MB/s.
+- **Three floors, each earned.** A bar is at least 2pt (`stub`) so a trickle
+  reads as a trickle rather than as nothing; it starts 2pt clear of the line
+  (`baselineGap`) or the two directions fuse into one stick with a green tip;
+  and a moving direction gets at least 8% of the frame (`minimumShare`) so
+  that stub has somewhere to go past about a 12:1 ratio. That last one is the
+  only place the proportions are fudged.
+- **Older bars fade** to 40% at the left edge, which is what makes the meter
+  read as flowing rather than as a histogram. The scrub reads any of them
+  exactly, so nothing is hidden.
+- **The sample is recorded *after* `blockedByNetwork()`**, so a torrent cut off
+  from its confined connection flatlines. Recording the engine's own figures
+  would draw traffic over sockets the app had just shut.
+- **Nothing is tweened between ticks.** The frame is fixed
+  (`Size.rateGraph`) and the two live numbers sit in fixed-width slots, because
+  this is the only view in the app whose content changes on *every* tick — see
+  the layout-churn section.
+- Hovering scrubs the readings back through the window. It has no keyboard
+  path and doesn't need one: everything it reveals is already written out on
+  the panel, so it adds detail rather than being the only way to reach it.
+
+**The simulator produces wobbling rates now, and it has to.** Simulated speeds
+were a constant per torrent, to the byte — invisible while every surface showed
+one number at a time, and a dead straight line the moment something plotted
+them. `speedFactor(for:step:)` is two sine waves at unrelated periods, phased
+per torrent and driven by the tick count rather than by `random`, so `step()`
+stays reproducible. `SimulationFidelityTests` guards it.
+
 ## Where a download goes
 
 The save folder is chosen on the confirm card, not at add time, and that
 ordering is forced: a magnet is an unresolved hash when it arrives, so there is
 no name and no size to decide against yet. The torrent is added to the default
-folder, resolves, pauses for selection, and only then does
-`applyMagnetSelection` move it — `engine.setSaveDirectory` before `resume`,
-while nothing has touched the disk.
+folder *held* (see the architecture rules), resolves, stops, and only then
+does `applyMagnetSelection` move it — `engine.setSaveDirectory` before
+`resume`, while nothing has touched the disk. Held is what makes "nothing has
+touched the disk" true rather than hoped.
 
 - **That needs `lt_set_save_path` in the shim** (`move_storage` with
   `dont_replace`). It is safe here precisely because the torrent hasn't written
   anything; on a torrent with data it would really move files, and the app has
   no path that does.
+- **Some folders can't be chosen at all** (`SaveLocation.refusal`, enforced in
+  the open panel by `SaveFolderValidator`): the home folder, `~/Library`, the
+  top of a disk, system folders. libtorrent writes into files that already
+  exist, so with home as the save folder a torrent called `.zshrc` replaces
+  the shell's startup file.
 - **Both the engine and the record have to learn the new folder.** The engine's
   `saveDirectories` map is what snapshots report, so Finder reveals the right
   place; `LibraryStore.updateSaveDirectory` is what survives a relaunch, since
@@ -481,6 +655,44 @@ while nothing has touched the disk.
   first and sends the rest to the default, rather than queueing ten questions.
 - The inspector's **Location** group already existed and now earns its keep:
   before this it said the same thing on every torrent in the library.
+
+## The engine boundary — four things that were each silently broken
+
+- **Resume data is not a .torrent file.** It is restored through
+  `lt_add_resume_data` (`read_resume_data`) and saved with `save_info_dict`.
+  Until this was fixed, restores went through the .torrent parser, which
+  rejects resume data, and a `try?` swallowed it: **no torrent the engine was
+  running ever came back after a relaunch**, in every release up to 1.2.0.
+  Nothing noticed because the simulator's resume data is its own JSON.
+  `RealEngineTests.testResumeDataRestoresTheTorrentInAFreshSession` is the
+  guard. Restore failures are counted and shown, never swallowed. Resume data
+  is saved on add, when metadata arrives, every five minutes and at quit —
+  all at once, not one torrent at a time under the quit budget.
+- **Nothing libtorrent throws may leave the shim.** It throws on a handle whose
+  torrent was just removed, and removal races everything. The worker thread is
+  a bare `std::thread` (an escaping exception is `std::terminate`), and every
+  `extern "C"` function runs its body in `guarded`.
+- **Events are lossless and in order.** One unbounded inbound stream with one
+  consumer. It was a `Task` per event (unordered) into a stream that kept the
+  newest 32, so restoring more than 32 torrents lost metadata events at launch.
+  Removal ids come from `torrent_removed_alert::info_hashes` — the handle is
+  already invalid and read as all zeros.
+- **Stats are one call per tick**, `get_torrent_status`, not `status()` per
+  handle; handles are found with `find_torrent`, not by scanning the session.
+
+A magnet's trackers, web seeds and `x.pe` peers are text a web page wrote, and
+libtorrent contacts them the moment it's added. `strip_local_targets` drops
+any that point at a literal loopback, private or link-local address, or at
+`localhost`/`.local` — otherwise a link is a way to make this Mac send
+requests to the user's own router. Hostnames that *resolve* to the LAN are not
+caught. Downloads are quarantined (`LSFileQuarantineEnabled`), so an app in a
+torrent meets Gatekeeper before it runs.
+
+`RealEngineTests` build torrents from local files, join two sessions over
+`lo0` with `connectPeer` (test-only), and prove each of the above against the
+real library — including that the fixes fail the old code. Engines in tests
+take `statePath: ""` so they never read or overwrite the real client's DHT
+table.
 
 ## Magnet links come from outside the app
 

@@ -42,21 +42,106 @@ final class AppDatabase: Sendable {
         CREATE INDEX IF NOT EXISTS decisions_date ON decisions(date DESC);
         """
 
+    /// True when the file on disk couldn't be read and a fresh one was
+    /// started in its place. The old file is kept beside it, renamed.
+    ///
+    /// This used to be invisible. `sqlite3_open` succeeds on a damaged file,
+    /// the schema step failed into a log line, and every read afterwards came
+    /// back empty — so every setting silently fell back to its default. For
+    /// the VPN binding that default is "any connection": someone who had
+    /// confined transfers to their tunnel was transferring over their real
+    /// address with nothing on screen to say so.
+    let recoveredFromUnreadableFile: Bool
+
     init(url: URL) {
         // sqlite3_open creates the file when missing; never truncate an
         // existing library — it holds settings, records and resume data.
-        let path = url.path
+        switch Self.open(url) {
+        case .ready(let db):
+            handle = db
+            recoveredFromUnreadableFile = false
+        case .unusable(let db):
+            // Something other than damage — busy, permissions, a full disk.
+            // Carry on with whatever opened, exactly as before; moving a file
+            // aside is only for a file SQLite has said is not a database.
+            handle = db
+            recoveredFromUnreadableFile = false
+        case .damaged:
+            // Keep it — it is the user's data, and a later version might read
+            // it — and start a fresh one where it was.
+            let stamp = Int(Date().timeIntervalSince1970)
+            for suffix in ["", "-wal", "-shm"] {
+                let from = URL(fileURLWithPath: url.path + suffix)
+                let to = URL(fileURLWithPath: url.path + ".unreadable-\(stamp)" + suffix)
+                try? FileManager.default.moveItem(at: from, to: to)
+            }
+            if case .ready(let db) = Self.open(url) { handle = db }
+            recoveredFromUnreadableFile = true
+            NSLog("Current: library database was unreadable; started a fresh one")
+        }
+    }
+
+    private enum Opened {
+        case ready(OpaquePointer)
+        /// SQLite said, definitively, that this is not a usable database.
+        case damaged
+        case unusable(OpaquePointer?)
+    }
+
+    /// The two answers that mean the file itself is bad. Anything else —
+    /// `BUSY` above all, since a dev build and the installed app can have the
+    /// same library open — is not a reason to touch the file.
+    private static func isDamage(_ code: Int32) -> Bool {
+        let primary = code & 0xFF
+        return primary == SQLITE_NOTADB || primary == SQLITE_CORRUPT
+    }
+
+    private static func open(_ url: URL) -> Opened {
         var db: OpaquePointer?
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
+        guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
             sqlite3_close(db)
-            return
+            return .unusable(nil)
         }
-        handle = db
+        // Another process holding the file is normal; wait for it rather than
+        // failing the first statement.
+        sqlite3_busy_timeout(db, 2_000)
+        // WAL with NORMAL sync is the combination SQLite recommends: durable
+        // against a crash of this app, and one fsync per checkpoint rather
+        // than one per write. At launch a restored library writes a record
+        // per torrent, and FULL made each of those a disk flush on the main
+        // thread.
         sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
-        if sqlite3_exec(db, Self.schema, nil, nil, nil) != SQLITE_OK {
-            let message = String(cString: sqlite3_errmsg(db))
-            NSLog("Current database schema error: \(message)")
+        sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
+
+        let schema = sqlite3_exec(db, Self.schema, nil, nil, nil)
+        if schema != SQLITE_OK {
+            NSLog("Current database schema error: \(String(cString: sqlite3_errmsg(db)))")
+            if isDamage(schema) {
+                sqlite3_close(db)
+                return .damaged
+            }
+            return .unusable(db)
         }
+        switch quickCheck(db) {
+        case .some(true), .none: return .ready(db)
+        case .some(false):
+            sqlite3_close(db)
+            return .damaged
+        }
+    }
+
+    /// SQLite's own consistency check, which catches damage the schema step
+    /// doesn't touch. `nil` means it couldn't say — never treated as damage.
+    private static func quickCheck(_ db: OpaquePointer) -> Bool? {
+        var statement: OpaquePointer?
+        let prepared = sqlite3_prepare_v2(db, "PRAGMA quick_check;", -1, &statement, nil)
+        guard prepared == SQLITE_OK else { return isDamage(prepared) ? false : nil }
+        defer { sqlite3_finalize(statement) }
+        let step = sqlite3_step(statement)
+        guard step == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) else {
+            return isDamage(step) ? false : nil
+        }
+        return String(cString: text) == "ok"
     }
 
     deinit {

@@ -25,6 +25,9 @@ struct LibraryList: View {
 
     @FocusState private var isListFocused: Bool
     @State private var isDropTargeted = false
+    /// Where the last drop landed, and a counter to fire its ripple.
+    @State private var dropPoint: CGPoint = .zero
+    @State private var drops = 0
 
     private var membership: [TorrentID] { torrents.map(\.id) }
 
@@ -84,12 +87,24 @@ struct LibraryList: View {
             .overlay {
                 if isDropTargeted { dropHighlight }
             }
+            // The drop lands with a ripple from the point you let go. Sized
+            // past any pane so it spreads off the edges, and clipped by the
+            // pane's own corners; an overlay this size costs the list nothing.
+            .overlay(alignment: .topLeading) {
+                Ripple(trigger: drops, tint: Theme.accent, from: 12, to: 900)
+                    .position(dropPoint)
+            }
             // The empty state says "drop a torrent here", so the list has to
             // mean it. This is the only drop target in the app now — there used
             // to be a second one on the notch panel, which was the only one that
             // worked while the empty state was telling you otherwise.
-            .onDrop(of: [.fileURL, .url, .text, .plainText], isTargeted: dropTarget) { providers in
-                handleDrop(providers)
+            .onDrop(of: [.fileURL, .url, .text, .plainText], isTargeted: dropTarget) { providers, location in
+                let accepted = handleDrop(providers)
+                if accepted {
+                    dropPoint = location
+                    drops += 1
+                }
+                return accepted
             }
             .focusable()
             // macOS draws a system focus ring around anything focusable, and on
@@ -119,10 +134,20 @@ struct LibraryList: View {
                     ForEach(torrents) { snapshot in
                         row(snapshot)
                             .id(snapshot.id)
+                            // Where each row is on screen, for the magnet card
+                            // to land in. Written to a plain registry, not to
+                            // state: nothing redraws when a row scrolls.
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                                RowFrames.shared.rows[snapshot.id] = frame
+                            }
+                            .onDisappear { RowFrames.shared.rows[snapshot.id] = nil }
                     }
                 }
                 .padding(.horizontal, Space.m)
                 .padding(.vertical, Space.m)
+            }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                RowFrames.shared.visible = frame
             }
             .scrollIndicators(.automatic)
             .animation(Motion.spring(reduceMotion: reduceMotion), value: membership)
@@ -207,25 +232,57 @@ struct LibraryList: View {
         )
     }
 
-    /// An accent border inside the pane rather than a tinted wash over it. The
-    /// wash hides the list you are dropping onto; the border says "here" and
-    /// leaves the content readable.
+    /// The list dims, an accent border marches around it, and a grey chip in
+    /// the middle says what letting go will do.
+    ///
+    /// It used to be an accent wash with an accent glyph and accent text on
+    /// top — three layers of one colour. The wash is now a neutral dim, which
+    /// also does the job the wash was for: it makes the list read as "behind"
+    /// the thing you're holding, without hiding it.
     private var dropHighlight: some View {
-        RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
-            .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-            .padding(Space.m)
-            .background(Theme.accentSoft.opacity(0.5).padding(Space.m))
-            .overlay {
-                VStack(spacing: Space.m) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 26, weight: .light))
-                    Text("Drop to add")
-                        .typeStyle(Typo.label)
-                }
-                .foregroundStyle(Theme.accent)
+        ZStack {
+            Theme.canvas.opacity(0.64)
+            MarchingBorder(reduceMotion: reduceMotion)
+                .padding(Space.m)
+            HStack(spacing: Space.m) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                Text("Drop to add")
+                    .typeStyle(Typo.label)
+                    .foregroundStyle(Theme.text)
             }
-            .transition(.opacity)
-            .allowsHitTesting(false)
+            .padding(.horizontal, Space.xl)
+            .frame(height: Size.controlL)
+            .raisedSurface(radius: Size.controlL / 2)
+        }
+        .transition(.opacity)
+        .allowsHitTesting(false)
+    }
+
+    /// The dashed accent border around a drop target, marching while a file
+    /// hovers — "flow" in the motion vocabulary: something is on its way in.
+    /// A dash phase is drawing, not layout, so the march is free.
+    private struct MarchingBorder: View {
+        let reduceMotion: Bool
+        @State private var phase: CGFloat = 0
+
+        var body: some View {
+            RoundedRectangle(cornerRadius: Radius.l, style: .continuous)
+                .strokeBorder(
+                    Theme.accent,
+                    style: StrokeStyle(lineWidth: 2, dash: [6, 4], dashPhase: phase)
+                )
+                .onAppear {
+                    guard !reduceMotion else { return }
+                    // One dash-and-gap (10pt) every 0.3s. A loop, not a
+                    // transition, so the `expressive` cap doesn't apply — the
+                    // same reasoning as `Motion.revolution`.
+                    withAnimation(.linear(duration: Motion.expressive * 1.6).repeatForever(autoreverses: false)) {
+                        phase = -20
+                    }
+                }
+        }
     }
 
     /// Loads each dropped item and hands whatever it parses to the app.
@@ -444,4 +501,32 @@ extension Notification.Name {
     static let togglePauseRequested = Notification.Name("current.togglePause")
     static let revealRequested = Notification.Name("current.reveal")
     static let selectAllRequested = Notification.Name("current.selectAll")
+}
+
+// MARK: - Row frames
+
+/// Where the library's rows are on screen, in window coordinates.
+///
+/// For one reader: the magnet flow's "which files?" card, which on Download
+/// flies into the row of the torrent it was asking about (see
+/// `MagnetFlowOverlayView`). A plain registry rather than published state,
+/// deliberately. Rows report on every scroll, and turning that into a
+/// published change would redraw whatever observed it once per scrolled frame
+/// — the kind of churn AGENTS.md is about. The card reads it once, when it
+/// leaves.
+@MainActor
+final class RowFrames {
+    static let shared = RowFrames()
+
+    var rows: [TorrentID: CGRect] = [:]
+    /// The list's own visible area. A row the lazy stack is keeping just off
+    /// screen still has a frame, and a card flying to it would fly under the
+    /// title bar.
+    var visible: CGRect = .zero
+
+    /// The row's frame if it's actually on screen.
+    func onScreen(_ id: TorrentID) -> CGRect? {
+        guard let frame = rows[id], visible.contains(CGPoint(x: frame.midX, y: frame.midY)) else { return nil }
+        return frame
+    }
 }

@@ -209,26 +209,64 @@ private struct BindingMarker: View {
     @ObservedObject var network: NetworkMonitor
     let openSettings: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Bumped when protection is confirmed and when it's lost, to fire the
+    /// light pass and the shake. Counters rather than the state itself, so
+    /// each arrival fires once and nothing replays when the view is rebuilt.
+    @State private var confirmations = 0
+    @State private var losses = 0
+
     var body: some View {
-        if let state {
-            Button(action: openSettings) {
-                Image(systemName: state.symbol)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(state.tint)
-                    .frame(width: Size.controlS, height: Size.controlS)
-                    .background(
-                        Capsule(style: .continuous).fill(state.tint.opacity(0.13))
-                    )
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(state.tint.opacity(0.22), lineWidth: Size.hairline)
-                    )
+        Group {
+            if let state {
+                Button(action: openSettings) {
+                    Image(systemName: state.symbol)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(state.tint)
+                        .contentTransition(.symbolEffect(.replace))
+                        // Waiting is the one state that is still happening, so
+                        // it is the one that moves: the shield breathes until
+                        // the engine says which way it went.
+                        .symbolEffect(.pulse, options: .repeating, isActive: state.kind == .waiting && !reduceMotion)
+                        .frame(width: Size.controlS, height: Size.controlS)
+                        // Grey pill, coloured shield. The pill used to be
+                        // washed in the shield's own colour — green on green —
+                        // which is the one combination the app doesn't use.
+                        .background(Capsule(style: .continuous).fill(Theme.fillMuted))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(Theme.stroke, lineWidth: Size.hairline)
+                        )
+                        .overlay {
+                            LightPass(trigger: confirmations, color: Theme.glint)
+                                .clipShape(Capsule(style: .continuous))
+                        }
+                        .keyframeAnimator(initialValue: 1.0, trigger: confirmations) { [still = reduceMotion] content, scale in
+                            content.scaleEffect(still ? 1 : scale)
+                        } keyframes: { _ in
+                            KeyframeTrack {
+                                CubicKeyframe(1.12, duration: Motion.quick * 0.6)
+                                SpringKeyframe(1, duration: Motion.standard, spring: .init(response: Motion.quick, dampingRatio: 0.7))
+                            }
+                        }
+                        .shake(trigger: losses, reduceMotion: reduceMotion)
+                }
+                .buttonStyle(.plain)
+                .pressable()
+                .help(state.explanation)
+                .accessibilityLabel(state.explanation)
+                .transition(.opacity)
             }
-            .buttonStyle(.plain)
-            .pressable()
-            .help(state.explanation)
-            .accessibilityLabel(state.explanation)
-            .transition(.opacity)
+        }
+        .animation(Motion.adaptive(Motion.quick, reduceMotion: reduceMotion), value: state?.symbol)
+        // Keyed on the kind of state, which changes when the engine reports a
+        // bind — never on anything per tick.
+        .onChange(of: state?.kind) { _, kind in
+            switch kind {
+            case .confirmed: confirmations += 1
+            case .notConfined: losses += 1
+            default: break
+            }
         }
     }
 
@@ -243,6 +281,7 @@ private struct BindingMarker: View {
             // connection you insisted on isn't there, which is something you
             // can go and fix.
             return State(
+                kind: .unavailable,
                 symbol: "network.slash",
                 tint: Theme.warning,
                 explanation: "Transfers are stopped. \(reason) Open Network settings."
@@ -251,6 +290,7 @@ private struct BindingMarker: View {
             switch network.isBindingConfirmed {
             case .some(true):
                 return State(
+                    kind: .confirmed,
                     symbol: "checkmark.shield.fill",
                     tint: Theme.complete,
                     explanation: "Transfers are confined to \(device). Open Network settings."
@@ -261,12 +301,14 @@ private struct BindingMarker: View {
                 // tunnel this app is in no position to make. What it actually
                 // knows is narrower: the protection isn't in place.
                 return State(
+                    kind: .notConfined,
                     symbol: "shield.slash.fill",
                     tint: Theme.failure,
                     explanation: "Transfers are not going over \(device). Open Network settings."
                 )
             case .none:
                 return State(
+                    kind: .waiting,
                     symbol: "shield.lefthalf.filled",
                     tint: Theme.warning,
                     explanation: "Waiting for \(device) to confirm. Open Network settings."
@@ -276,6 +318,8 @@ private struct BindingMarker: View {
     }
 
     private struct State {
+        enum Kind { case unavailable, waiting, confirmed, notConfined }
+        let kind: Kind
         let symbol: String
         let tint: Color
         let explanation: String

@@ -19,6 +19,39 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(extras?.size, 302_000_000)
     }
 
+    /// Big torrents are ordinary — a season pack, a photo archive, a source
+    /// tree. The old builder was quadratic per folder and took half a minute
+    /// on the main thread for 5,000 files in one folder; at 10,000 this would
+    /// run for minutes, so the bound below is generous and still decisive.
+    func testTenThousandFilesInOneFolderBuildsQuickly() {
+        let files = (0..<10_000).map { FileInfo(pathComponents: ["Pack", "file \($0).bin"], size: 1) }
+        let clock = ContinuousClock()
+        let started = clock.now
+        let tree = FileTreeBuilder.build(from: files)
+        XCTAssertLessThan(clock.now - started, .seconds(3))
+
+        XCTAssertEqual(tree.count, 1)
+        XCTAssertEqual(tree[0].children.count, 10_000)
+        XCTAssertEqual(tree[0].size, 10_000)
+        // Natural order, not character order: "file 2" before "file 10".
+        XCTAssertEqual(tree[0].children.prefix(3).map(\.name), ["file 0.bin", "file 1.bin", "file 2.bin"])
+    }
+
+    func testFoldersTotalTheirContentsAndTakeTheHighestPriority() {
+        let files = [
+            FileInfo(pathComponents: ["Root", "b", "deep", "x.mkv"], size: 5),
+            FileInfo(pathComponents: ["Root", "a.txt"], size: 2),
+            FileInfo(pathComponents: ["Root", "b", "y.srt"], size: 3),
+        ]
+        let tree = FileTreeBuilder.build(from: files, priorities: [.skip, .skip, FilePriority(rawValue: 7)])
+        let root = tree[0]
+        XCTAssertEqual(root.size, 10)
+        XCTAssertEqual(root.children.map(\.name), ["a.txt", "b"])
+        XCTAssertEqual(root.children[1].size, 8)
+        XCTAssertEqual(root.children[1].priority, FilePriority(rawValue: 7))
+        XCTAssertEqual(FileTreeBuilder.flattenPriorities(tree), [.skip, .skip, FilePriority(rawValue: 7)])
+    }
+
     func testFolderSelectionAggregatesChildren() {
         var nodes = FileTreeBuilder.build(from: files)
 

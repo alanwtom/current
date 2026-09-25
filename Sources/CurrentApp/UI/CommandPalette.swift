@@ -44,8 +44,14 @@ struct CommandPalette: View {
 
     @State private var query = ""
     @State private var highlightedIndex = 0
+    /// Whether the highlight last moved by keyboard. Arrow keys stretch it from
+    /// row to row; the pointer moves it instantly, because a highlight easing
+    /// after a moving cursor only ever lags behind it.
+    @State private var highlightFollowsKeys = false
+    /// Where the click that opened the palette landed, read once — see
+    /// `PresentationOrigin`. Nil for ⌘K, which pops it from the middle.
+    @State private var origin = PresentationOrigin.current()
     @FocusState private var isFocused: Bool
-    @Namespace private var highlight
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.windowSize) private var windowSize
 
@@ -139,6 +145,21 @@ struct CommandPalette: View {
                                         .id(index)
                                 }
                             }
+                            .backgroundPreferenceValue(HighlightAnchorKey<CommandPalette>.self) { anchor in
+                                GeometryReader { geometry in
+                                    if let anchor {
+                                        StretchHighlight(
+                                            key: highlightedIndex,
+                                            target: geometry[anchor],
+                                            axis: .vertical,
+                                            animated: highlightFollowsKeys
+                                        ) {
+                                            RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
+                                                .fill(Theme.fillMuted)
+                                        }
+                                    }
+                                }
+                            }
                             .padding(Space.m)
                         }
                         // Sized to the rows it actually has, capped so a long
@@ -162,7 +183,7 @@ struct CommandPalette: View {
             }
             .modalSize(width: 520)
             .raisedSurface(radius: Radius.xl, deep: true)
-            .popTransition(reduceMotion: reduceMotion)
+            .popTransition(reduceMotion: reduceMotion, from: origin)
             .padding(.top, fit.top)
         }
         // Measured from the top of the window rather than from the safe area,
@@ -246,24 +267,21 @@ struct CommandPalette: View {
             }
             .padding(.horizontal, Space.l)
             .frame(height: Self.rowHeight)
-            .background {
-                if isHighlighted {
-                    RoundedRectangle(cornerRadius: Radius.s, style: .continuous)
-                        .fill(Theme.fillMuted)
-                        .matchedGeometryEffect(id: "palette.highlight", in: highlight)
-                }
-            }
+            .highlightAnchor(CommandPalette.self, isSelected: isHighlighted)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            if hovering { highlightedIndex = index }
+            guard hovering else { return }
+            highlightFollowsKeys = false
+            highlightedIndex = index
         }
         .accessibilityAddTraits(isHighlighted ? [.isSelected, .isButton] : .isButton)
     }
 
     private func move(_ delta: Int) {
         guard !filtered.isEmpty else { return }
+        highlightFollowsKeys = true
         withAnimation(.easeOut(duration: Motion.instant)) {
             highlightedIndex = max(0, min(filtered.count - 1, highlightedIndex + delta))
         }

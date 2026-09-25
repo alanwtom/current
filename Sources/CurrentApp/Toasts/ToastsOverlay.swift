@@ -54,6 +54,10 @@ private struct ToastCard: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
+    /// The toast's own copy of its countdown, for the fuse: when it last
+    /// started counting, and how much had run before the cursor stopped it.
+    @State private var countingSince = Date()
+    @State private var spentBeforeHover: TimeInterval = 0
 
     var body: some View {
         HStack(alignment: .top, spacing: Space.l) {
@@ -97,9 +101,39 @@ private struct ToastCard: View {
         .padding(Space.l)
         .frame(width: 320, alignment: .leading)
         .raisedSurface(radius: Radius.l)
+        .overlay(alignment: .bottom) { fuse }
         .animation(Motion.adaptive(Motion.instant, reduceMotion: reduceMotion), value: isHovering)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            // The same pause `ToastCenter` applies to the real timer.
+            if hovering {
+                spentBeforeHover += Date().timeIntervalSince(countingSince)
+            } else {
+                countingSince = Date()
+            }
+            isHovering = hovering
+        }
         .accessibilityElement(children: .combine)
+    }
+
+    /// A grey line along the bottom edge that drains over the toast's life.
+    ///
+    /// Hovering has always held a toast open, but nothing said so, and a toast
+    /// that might vanish while you read it is one you hurry. The line stops
+    /// and brightens under the cursor, which is the toast saying it will wait.
+    /// It shrinks by scale rather than width, and is inset by the corner
+    /// radius so it runs along the straight part of the edge only.
+    private var fuse: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: isHovering)) { timeline in
+            let spent = spentBeforeHover + (isHovering ? 0 : timeline.date.timeIntervalSince(countingSince))
+            let left = max(0, 1 - spent / ToastCenter.displayDuration)
+            Capsule(style: .continuous)
+                .fill(isHovering ? Theme.textSecondary : Theme.textQuaternary)
+                .frame(height: 2)
+                .scaleEffect(x: left, anchor: .leading)
+        }
+        .padding(.horizontal, Radius.l)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private var tint: Color {

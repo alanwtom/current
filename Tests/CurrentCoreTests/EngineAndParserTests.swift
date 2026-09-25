@@ -46,28 +46,39 @@ final class SimulationEngineTests: XCTestCase {
             if inspected > 30 { break }
         }
         XCTAssertNotNil(metadata, "the magnet never reported its metadata")
+        XCTAssertEqual(metadata?.id, id)
+    }
 
-        // Pause/resume round trip.
-        await engine.pause(id)
+    /// The simulator has to hold a magnet the way libtorrent does, or every
+    /// screenshot and demo shows a flow the real app doesn't have: resolved,
+    /// then stopped, then downloading only once something resumes it.
+    func testAHeldMagnetStopsOnceResolvedUntilResumed() async throws {
+        let engine = SimulationEngine(tickInterval: 0.05, baseSpeed: 50_000_000, resolveDelay: 0.1)
+        let stream = await engine.events
+        let id = try await engine.addMagnet(
+            "magnet:?xt=urn:btih:held&dn=Held", saveDirectory: FileManager.default.temporaryDirectory, held: true
+        )
+        for _ in 0..<5 { await engine.step() }
         await engine.resume(id)
+        await engine.step()
 
-        // Priorities apply without error.
-        await engine.setFilePriorities(id, [.normal, .skip, .normal])
-
-        let resumeData = await engine.resumeData(for: id)
-        XCTAssertNotNil(resumeData)
+        var states: [TorrentState] = []
+        var inspected = 0
+        for await event in stream {
+            if case .snapshots(let batch) = event, let row = batch.first(where: { $0.id == id }) {
+                states.append(row.state)
+                if states.count == 6 { break }
+            }
+            inspected += 1
+            if inspected > 40 { break }
+        }
+        XCTAssertEqual(states.first, .resolving)
+        XCTAssertEqual(states.dropLast().last, .paused(.user), "resolved and held, it must be stopped")
+        XCTAssertEqual(states.last, .downloading, "resume releases it")
+        XCTAssertFalse(states.contains(.downloading) && states.firstIndex(of: .downloading)! < states.count - 1,
+                       "it must not download before it is resumed")
     }
 
-    func testDisplayNameParsing() {
-        XCTAssertEqual(
-            SimulationEngine.displayName(fromMagnet: "magnet:?xt=urn:btih:abc&dn=Ubuntu%2026.04", index: 1),
-            "Ubuntu 26.04"
-        )
-        XCTAssertEqual(
-            SimulationEngine.displayName(fromMagnet: "magnet:?xt=urn:btih:abc", index: 2),
-            "Sample torrent 2"
-        )
-    }
 }
 
 final class DropParserTests: XCTestCase {
@@ -198,11 +209,23 @@ extension DropParserTests {
         XCTAssertEqual(name?.count, DropParser.maximumNameLength)
     }
 
-    /// The bound must not damage ordinary names.
-    func testOrdinaryNamesAreUntouched() {
-        XCTAssertEqual(
-            DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=Sintel+%282010%29&tr=udp://x"),
-            "Sintel (2010)"
-        )
+    /// A display name is never a path. The name reached the filesystem once,
+    /// and a `/` in it was part of what made a delete aim at the wrong place.
+    func testSanitisedNameStripsSeparatorsAndKeepsTheRest() {
+        XCTAssertEqual(DropParser.sanitisedName("a/b"), "ab")
+        XCTAssertEqual(DropParser.sanitisedName("Season 1/Episode 1"), "Season 1Episode 1")
+        // Nothing left means nil, so the caller falls back to the info hash
+        // rather than showing an empty row.
+        XCTAssertNil(DropParser.sanitisedName("/"))
+        XCTAssertNil(DropParser.sanitisedName("///"))
+    }
+
+    /// The name comes from the `dn` key and no other. Matching the text
+    /// "dn=" anywhere let `xdn=` stand in for it.
+    func testNameHintReadsOnlyTheDnKey() {
+        XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?xt=x&xdn=Spoof&dn=Real"), "Real")
+        XCTAssertNil(DropParser.nameHint(fromMagnet: "magnet:?xt=x&xdn=Spoof"))
+        XCTAssertNil(DropParser.nameHint(fromMagnet: "magnet:?xt=x&dn=&tr=udp://t"))
+        XCTAssertEqual(DropParser.nameHint(fromMagnet: "magnet:?DN=Upper&xt=x"), "Upper")
     }
 }

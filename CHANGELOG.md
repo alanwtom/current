@@ -21,6 +21,26 @@ notes, so this file is the single place release notes are written.
 - Port mapping and local network discovery switch off while confined, since both go around a VPN
 - Most settings are now just a label and a switch, so the few real warnings stand out
 
+### Fixed
+
+- Torrents come back after you quit and reopen — every relaunch used to drop them from the engine
+- "Remove and delete files" trashes only the torrent's own files, never things beside them
+- A torrent whose name ends in a full stop can no longer send the whole download folder to the Trash
+- Automatic cleanup frees space again — it used to skip every torrent in the default folder
+- Magnets never start downloading before you choose; a second one waits with a Start button
+- Another download finishing no longer closes the "which files?" card
+- Settings you change quickly are saved in the order you changed them
+- No crash when a torrent is removed at the moment the engine is updating it
+- Torrents with thousands of files open instantly instead of freezing the app
+
+### Security
+
+- Magnet links can no longer make your Mac send requests to devices on your home network
+- Apps and installers that arrive in a torrent are checked by Gatekeeper before they first open
+- Updates are verified before they are unpacked, and plain-HTTP loads are no longer allowed
+- Your home folder and system folders can't be chosen as the download folder
+- A damaged library file resets settings with a warning, instead of silently dropping your VPN rule
+
 ## [1.2.0] — 2026-09-07
 
 ### Added
