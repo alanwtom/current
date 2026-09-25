@@ -40,9 +40,23 @@ every status row.
 
 If you upgrade libtorrent, re-read that cmake file. Do not guess.
 
-`Scripts/make-app.sh` and `.github/workflows/ci.yml` both hardcode
-`.build/arm64-apple-macosx/<config>/Current`. If you change the build triple,
-change it in both places.
+**Never hardcode where the build puts its products.** Ask:
+`swift build -c <config> --show-bin-path`. `Scripts/make-app.sh` and
+`.github/workflows/ci.yml` both do. They used to hardcode
+`.build/arm64-apple-macosx/<config>/Current`, and once the toolchain defaulted
+to swiftbuild (Swift 6.4; products in `.build/out/Products/<Config>`) the old
+folder stayed
+behind — so `make-app.sh` kept finding a `Current` there and bundled a binary
+weeks out of date, with no error. `.build/debug` and `.build/release` are
+symlinks to the right place under either build system, so they're fine for
+running by hand.
+
+swiftbuild also bakes an absolute rpath to this machine's
+`.build/out/Products/<Config>/PackageFrameworks` into the executable, and
+Homebrew's libtorrent carries one to its own Cellar folder. `make-app.sh`
+strips every absolute rpath from what it bundles, and its closing check now
+fails the bundle if one is left, the same way it fails on an absolute library
+path.
 
 **Run against the simulator, not the network:**
 
