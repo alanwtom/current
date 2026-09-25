@@ -26,7 +26,7 @@ struct ContentTrash {
         let plan = ContentLocation.trashPlan(
             saveDirectory: saveDirectory,
             files: files,
-            rootListing: root.flatMap { listing(of: $0, relativeTo: saveDirectory) },
+            rootListing: root.flatMap(listing(of:)),
             partFile: ".\(id.raw).parts"
         )
 
@@ -38,7 +38,13 @@ struct ContentTrash {
                 // `attributesOfItem` rather than `fileExists`: it doesn't
                 // follow a symlink, so a link is judged — and trashed — as the
                 // link, never as whatever it points at.
-                guard (try? manager.attributesOfItem(atPath: url.path)) != nil else { continue }
+                guard let type = (try? manager.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
+                else { continue }
+                // The root is always a folder and nothing else of the
+                // torrent's ever is. A folder where one of its files should be
+                // — or a file where its folder should be — belongs to someone
+                // else: another torrent that unpacked there first, or the user.
+                guard (type == .typeDirectory) == (url == root) else { continue }
                 if (try? moveToTrash(url)) != nil, url != partFile { moved += 1 }
             case .folderIfEmpty(let url):
                 guard let contents = try? manager.contentsOfDirectory(atPath: url.path),
@@ -50,36 +56,48 @@ struct ContentTrash {
         return moved
     }
 
-    /// Every file and link under `root`, relative to `base`. Doesn't descend
-    /// into symlinked folders — a link is one entry, like a file.
-    private func listing(of root: URL, relativeTo base: URL) -> [String]? {
+    /// Every file and link under `root`, as paths relative to the save folder
+    /// (`"Root/sub/a.mkv"`) — or nil when that can't be said for certain:
+    /// `root` isn't a real folder, or some part of it couldn't be read. Nil
+    /// makes the plan take the torrent's files one by one rather than the
+    /// folder whole, which is always safe.
+    ///
+    /// Each path is built from the names the folder itself hands back, never
+    /// by comparing path strings with the save folder's. The version this
+    /// replaced asked the directory enumerator for URLs and matched them
+    /// against the save folder's spelling — but the enumerator returns paths
+    /// with symlinks resolved, so a save folder reached through a link
+    /// (~/Downloads moved to an external drive) matched nothing. Every entry
+    /// was skipped, the empty result read as "nothing here but ours", and the
+    /// whole folder went to the Trash with other people's files in it. The
+    /// enumerator also skipped unreadable folders without saying so, which
+    /// failed open the same way.
+    ///
+    /// Doesn't descend into symlinked folders — a link is one entry, like a
+    /// file. The root takes the torrent's own spelling, so a case-insensitive
+    /// match on it still compares inner paths as they are on disk.
+    private func listing(of root: URL) -> [String]? {
         let manager = FileManager.default
-        var isDirectory: ObjCBool = false
-        guard manager.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue,
-              let enumerator = manager.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: []
-              )
-        else { return nil }
-
-        let prefix = base.standardizedFileURL.path + "/"
-        let rootName = root.lastPathComponent
-        let rootPath = root.standardizedFileURL.path
-        var entries: [String] = []
-        for case let url as URL in enumerator {
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if values?.isDirectory == true && values?.isSymbolicLink != true { continue }
-            let path = url.standardizedFileURL.path
-            // Rebuilt from the root's own spelling, so a case-insensitive match
-            // on the root folder still compares inner paths as they are on disk.
-            guard path.hasPrefix(rootPath + "/") else {
-                guard path.hasPrefix(prefix) else { continue }
-                entries.append(String(path.dropFirst(prefix.count)))
-                continue
-            }
-            entries.append(rootName + "/" + path.dropFirst(rootPath.count + 1))
+        func type(at path: String) -> FileAttributeType? {
+            (try? manager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
         }
+        var entries: [String] = []
+        func walk(_ folder: String, as relative: String) -> Bool {
+            guard let names = try? manager.contentsOfDirectory(atPath: folder) else { return false }
+            for name in names {
+                let path = folder + "/" + name
+                guard let kind = type(at: path) else { return false }
+                if kind == .typeDirectory {
+                    guard walk(path, as: relative + "/" + name) else { return false }
+                } else {
+                    entries.append(relative + "/" + name)
+                }
+            }
+            return true
+        }
+        guard type(at: root.path) == .typeDirectory,
+              walk(root.path, as: root.lastPathComponent)
+        else { return nil }
         return entries
     }
 }
