@@ -272,7 +272,7 @@ private struct BindingMarker: View {
 
     /// Nil when nothing is confined: there is no status to report, so the title
     /// bar says nothing rather than carrying a permanent "off" light.
-    private var state: State? {
+    private var state: Appearance? {
         switch network.outcome {
         case .unrestricted:
             return nil
@@ -280,7 +280,7 @@ private struct BindingMarker: View {
             // Amber rather than red — nothing broke and nothing was lost. The
             // connection you insisted on isn't there, which is something you
             // can go and fix.
-            return State(
+            return Appearance(
                 kind: .unavailable,
                 symbol: "network.slash",
                 tint: Theme.warning,
@@ -289,7 +289,7 @@ private struct BindingMarker: View {
         case .bound(let device, _):
             switch network.isBindingConfirmed {
             case .some(true):
-                return State(
+                return Appearance(
                     kind: .confirmed,
                     symbol: "checkmark.shield.fill",
                     tint: Theme.complete,
@@ -300,14 +300,14 @@ private struct BindingMarker: View {
                 // read as "your VPN is faulty", which is a claim about the
                 // tunnel this app is in no position to make. What it actually
                 // knows is narrower: the protection isn't in place.
-                return State(
+                return Appearance(
                     kind: .notConfined,
                     symbol: "shield.slash.fill",
                     tint: Theme.failure,
                     explanation: "Transfers are not going over \(device). Open Network settings."
                 )
             case .none:
-                return State(
+                return Appearance(
                     kind: .waiting,
                     symbol: "shield.lefthalf.filled",
                     tint: Theme.warning,
@@ -317,7 +317,10 @@ private struct BindingMarker: View {
         }
     }
 
-    private struct State {
+    /// Not `State`: inside this view that name shadows SwiftUI's `@State`, and
+    /// Xcode 26's compiler — the one CI builds with — then rejects both
+    /// counters above. Swift 6.4 works out which is meant, so it built here.
+    private struct Appearance {
         enum Kind { case unavailable, waiting, confirmed, notConfined }
         let kind: Kind
         let symbol: String
