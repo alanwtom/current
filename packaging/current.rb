@@ -23,8 +23,8 @@ cask "current" do
   # Sparkle updates the app in place, so Homebrew should not treat a
   # self-updated copy as out of date and reinstall over the top of it.
   auto_updates true
-  depends_on macos: :tahoe
   depends_on arch: :arm64
+  depends_on macos: :tahoe
 
   app "Current.app"
 
