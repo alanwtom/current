@@ -68,7 +68,7 @@ public protocol TorrentEngine: Actor {
     /// the moment the app asks where a download should go — so in practice this
     /// picks the location rather than moving anything. It is safe on a torrent
     /// with data, which would genuinely be moved, but the app has no such path.
-    func setSaveDirectory(_ id: TorrentID, _ directory: URL) async
+    func setSaveDirectory(_ id: TorrentID, _ directory: URL) async throws
 
     func forceRecheck(_ id: TorrentID) async
 

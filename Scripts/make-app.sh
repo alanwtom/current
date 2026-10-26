@@ -65,7 +65,9 @@ if [[ -z "$SHORT_VERSION" ]]; then
     # so a fallback version can never be mistaken for a release.
     SHORT_VERSION="0.0.0-dev"
 fi
-BUILD_VERSION="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+BUILD_VERSION="${CURRENT_BUILD_VERSION:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)}"
+[[ "$BUILD_VERSION" == <-> ]] || { echo "error: CURRENT_BUILD_VERSION must be a positive integer" >&2; exit 1; }
+(( BUILD_VERSION > 0 )) || { echo "error: build number must exceed zero" >&2; exit 1; }
 
 plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_VERSION" "$APP/Contents/Info.plist"
@@ -319,9 +321,11 @@ fi
 # signature the file had, so signing earlier would ship a broken one. Ad-hoc
 # for now — a released build needs a Developer ID identity and notarisation.
 for lib in "$FRAMEWORKS"/*.dylib(N); do
-    codesign --force -s - "$lib" >/dev/null 2>&1 || true
+    codesign --force -s - "$lib" >/dev/null 2>&1
 done
-codesign --force -s - "$APP" >/dev/null 2>&1 || true
+codesign --force -s - "$APP" >/dev/null 2>&1
+
+codesign --verify --deep --strict "$APP"
 
 echo "Built $APP"
 echo "Bundled: $(print -l "$FRAMEWORKS"/*.dylib(N) | wc -l | tr -d ' ') libraries, no external dependencies"

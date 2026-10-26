@@ -1,5 +1,4 @@
 import Foundation
-import CurrentCore
 
 /// Turns drops, pastes, and URL events into things the engine can add.
 public enum DropParser {
@@ -39,9 +38,13 @@ public enum DropParser {
             .map(Parsed.torrentFile)
     }
 
+    private static let magnetPattern = try? NSRegularExpression(
+        pattern: "magnet:[^\\s\\x22\\x27<>]+", options: .caseInsensitive
+    )
+
     /// Extracts every magnet link from arbitrary text.
     public static func magnets(in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: "magnet:[^\\s\\x22\\x27<>]+") else { return [] }
+        guard let regex = magnetPattern else { return [] }
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap {
             Range($0.range, in: text).map { String(text[$0]) }
@@ -50,7 +53,7 @@ public enum DropParser {
 
     public static func parse(pasteboard strings: [String], urls: [URL] = []) -> [Parsed] {
         var results: [Parsed] = []
-        for string in strings where string.hasPrefix("magnet:") {
+        for string in strings where string.range(of: "magnet:", options: [.anchored, .caseInsensitive]) != nil {
             results.append(.magnet(string))
         }
         if results.isEmpty {
@@ -58,7 +61,7 @@ public enum DropParser {
                 results.append(contentsOf: magnets(in: text).map(Parsed.magnet))
             }
         }
-        for url in urls where url.absoluteString.hasPrefix("magnet:") {
+        for url in urls where url.scheme?.lowercased() == "magnet" {
             results.append(.magnet(url.absoluteString))
         }
         results.append(contentsOf: parse(fileURLs: urls))

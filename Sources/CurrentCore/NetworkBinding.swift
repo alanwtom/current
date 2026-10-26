@@ -155,6 +155,8 @@ public struct NetworkSnapshot: Equatable, Sendable {
 public enum NetworkBinding: Equatable, Hashable, Sendable {
     /// Every interface. The app's default, and what it did before this existed.
     case anyInterface
+    /// Saved settings could not be trusted. A new choice is required.
+    case needsReview
     /// Whatever tunnel is currently carrying traffic.
     case activeVPN
     /// One specific interface, by name.
@@ -170,6 +172,7 @@ public enum NetworkBinding: Equatable, Hashable, Sendable {
 
     public var storedValue: String {
         switch self {
+        case .needsReview: return "review"
         case .anyInterface: return ""
         case .activeVPN: return "vpn"
         case .named(let name): return "if:\(name)"
@@ -177,7 +180,9 @@ public enum NetworkBinding: Equatable, Hashable, Sendable {
     }
 
     public init(storedValue: String) {
-        if storedValue == "vpn" {
+        if storedValue == "review" {
+            self = .needsReview
+        } else if storedValue == "vpn" {
             self = .activeVPN
         } else if storedValue.hasPrefix("if:") {
             let name = String(storedValue.dropFirst(3))
@@ -234,6 +239,8 @@ extension NetworkBinding {
     /// Turns the stored intent into a decision about the network as it is now.
     public func resolve(in snapshot: NetworkSnapshot) -> BindingOutcome {
         switch self {
+        case .needsReview:
+            return .unavailable(reason: "Choose a connection in Network settings before transfers can start.")
         case .anyInterface:
             return .unrestricted
 

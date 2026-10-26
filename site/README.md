@@ -6,6 +6,17 @@ design tokens, so the site and the product look like the same object.
 
 Live at **https://current.alantom.dev**.
 
+## Release audit, 23 October 2026
+
+The local download and feed match the verified live 1.3.0 build 104.
+The page checksum matches that disk image. New safety fixes are not in this
+published build. Copy changes are local and have not been deployed.
+
+The next app release requires a newer build number, a signed feed, and the
+checks in `docs/RELEASE.md`. Do not deploy a new app with the old feed.
+Privacy copy must distinguish local library storage from peer, tracker, DHT,
+DNS, and update requests. Cleanup examples must respect the rare-swarm gate.
+
 ## Deploying
 
 **Do not connect this project to the GitHub repo in Vercel.** It was, briefly,

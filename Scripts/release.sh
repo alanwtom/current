@@ -52,7 +52,9 @@ if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; the
         --key <path to AuthKey_XXXX.p8> --key-id <key id> --issuer <issuer uuid>"
 fi
 
-SIGNER=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+SIGNER="$IDENTITY"
+security find-identity -v -p codesigning | grep -F "$SIGNER" >/dev/null \
+    || fail "the requested signing identity was not found: $SIGNER"
 print "  signing as: $SIGNER"
 print "  notarising with keychain profile: $PROFILE"
 
@@ -88,6 +90,21 @@ TAG="$(git -C "$ROOT" describe --exact-match --tags HEAD 2>/dev/null || true)"
   Tag the commit you intend to release first:  git tag -a v1.1.0 -m 'Current 1.1.0'"
 VERSION="${TAG#v}"
 print "  releasing: $TAG"
+[[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || fail "release tags must use vMAJOR.MINOR.PATCH"
+NOTES="$ROOT/.build/release-notes.md"
+mkdir -p "$ROOT/.build"
+python3 "$ROOT/Scripts/changelog-section.py" "$VERSION" > "$NOTES" \
+    || fail "add a CHANGELOG.md section for $VERSION before releasing"
+BUILD_VERSION="${CURRENT_BUILD_VERSION:-$(git -C "$ROOT" rev-list --count HEAD)}"
+LIVE_FEED="$ROOT/.build/live-appcast.xml"
+curl --fail --silent --show-error --location --max-time 30 \
+    "https://current.alantom.dev/appcast.xml" -o "$LIVE_FEED" \
+    || fail "could not check the live release; no release was built"
+python3 "$ROOT/Scripts/check-release-version.py" "$VERSION" "$BUILD_VERSION" "$LIVE_FEED" \
+    || fail "release version or build would not update existing installs"
+PUBLIC_KEY=$(plutil -extract SUPublicEDKey raw "$ROOT/Scripts/Info.plist")
+SIGNING_KEY=$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_keys" -p)
+[[ "$PUBLIC_KEY" == "$SIGNING_KEY" ]] || fail "Sparkle signing key does not match SUPublicEDKey"
 
 # ---------------------------------------------------------------------------
 step "Building the release bundle"
@@ -255,7 +272,10 @@ python3 "$ROOT/Scripts/changelog-section.py" "$VERSION" > "$NOTES" || {
 
 grep -q "sparkle:edSignature" "$APPCAST_DIR/appcast.xml" \
     || fail "the appcast carries no signature — updates would be refused by every client"
-print "  appcast signed"
+grep -q '^<!-- sparkle-signatures:' "$APPCAST_DIR/appcast.xml" \
+    || fail "the feed metadata is unsigned"
+"$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" --verify "$APPCAST_DIR/appcast.xml"
+print "  appcast signature verified"
 
 # ---------------------------------------------------------------------------
 step "Staging the site"
@@ -266,6 +286,8 @@ step "Staging the site"
 # ---------------------------------------------------------------------------
 cp "$DMG" "$ROOT/site/Current.dmg"
 cp "$APPCAST_DIR/appcast.xml" "$ROOT/site/appcast.xml"
+python3 "$ROOT/Scripts/stamp-download-page.py" "$ROOT/site/index.html" "$DMG" "$VERSION" \
+    || fail "could not stamp the download page; do not deploy the staged site"
 print "  site/Current.dmg and site/appcast.xml updated"
 
 # ---------------------------------------------------------------------------
@@ -284,7 +306,7 @@ print "    gh release create $TAG \\"
 print "        --title \"Current $VERSION\" --notes-file $NOTES \\"
 print "        $DMG"
 print ""
-print "  Update the SHA-256 on the download page to the one above."
+print "  The download page now has this version, size, and SHA-256."
 print ""
 print "  Then bump the Homebrew cask to $VERSION and that same SHA-256 — both"
 print "  packaging/current.rb here and Casks/current.rb in alanwtom/homebrew-tap,"

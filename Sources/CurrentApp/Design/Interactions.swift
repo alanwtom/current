@@ -353,18 +353,21 @@ private struct Shake: ViewModifier {
     let reduceMotion: Bool
 
     func body(content: Content) -> some View {
-        let still = reduceMotion
-        return content.keyframeAnimator(initialValue: CGFloat.zero, trigger: trigger) { view, x in
-            view.offset(x: still ? 0 : x)
-        } keyframes: { _ in
-            let step = Motion.shakeDuration / 5
-            let d = Motion.shakeDistance
-            KeyframeTrack {
-                CubicKeyframe(-d, duration: step)
-                CubicKeyframe(d, duration: step)
-                CubicKeyframe(-d * 0.66, duration: step)
-                CubicKeyframe(d * 0.4, duration: step)
-                CubicKeyframe(0, duration: step)
+        if reduceMotion {
+            content
+        } else {
+            content.keyframeAnimator(initialValue: CGFloat.zero, trigger: trigger) { view, x in
+                view.offset(x: x)
+            } keyframes: { _ in
+                let step = Motion.shakeDuration / 5
+                let d = Motion.shakeDistance
+                KeyframeTrack {
+                    CubicKeyframe(-d, duration: step)
+                    CubicKeyframe(d, duration: step)
+                    CubicKeyframe(-d * 0.66, duration: step)
+                    CubicKeyframe(d * 0.4, duration: step)
+                    CubicKeyframe(0, duration: step)
+                }
             }
         }
     }
@@ -589,6 +592,9 @@ struct StretchHighlight<Key: Hashable, Content: View>: View {
             .onChange(of: Placement(key: key, target: target)) { _, next in
                 place(next)
             }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced { snap(to: target) }
+            }
     }
 
     private struct Placement: Equatable {
@@ -626,11 +632,7 @@ struct StretchHighlight<Key: Hashable, Content: View>: View {
         placedKey = placement.key
         let (newLo, newHi) = edges(placement.target)
         if reduceMotion {
-            withAnimation(Motion.adaptive(Motion.quick, reduceMotion: true)) {
-                lo = newLo
-                hi = newHi
-            }
-            return
+            return snap(to: placement.target)
         }
         let lead = Motion.spring(Motion.stretchLead)
         let trail = Motion.spring(Motion.stretchTrail)

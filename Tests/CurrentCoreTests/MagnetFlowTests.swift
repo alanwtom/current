@@ -22,6 +22,61 @@ final class MagnetFlowTests: XCTestCase {
         return flow
     }
 
+    func testCancelledAddCannotClaimANewerQuestion() {
+        let flow = resolving()
+        let oldRequest = flow.requestID
+        flow.dismiss()
+        XCTAssertTrue(flow.beginResolving(nameHint: "New"))
+        XCTAssertFalse(flow.ownsRequest(oldRequest))
+        XCTAssertTrue(flow.ownsRequest(flow.requestID))
+        XCTAssertFalse(flow.ownsRequest(nil))
+    }
+
+    func testCancelInvalidatesAPendingConfirmationBeforeRemoval() throws {
+        let flow = resolving()
+        XCTAssertTrue(flow.metadataArrived(id: clicked))
+        let request = try XCTUnwrap(flow.beginConfirmation())
+
+        XCTAssertEqual(flow.cancelSelection(), clicked)
+        XCTAssertEqual(flow.stage, .idle)
+        XCTAssertFalse(flow.ownsRequest(request), "a pending engine call must not resume this torrent")
+        XCTAssertNil(flow.beginConfirmation())
+
+        XCTAssertTrue(flow.beginResolving(nameHint: "Next"))
+        let nextRequest = flow.requestID
+        flow.finishConfirmation(request)
+        XCTAssertTrue(flow.ownsRequest(nextRequest), "old completion must leave the new question alone")
+    }
+
+    func testOnlyOneConfirmationCanRunAndFailureAllowsRetry() throws {
+        let flow = resolving()
+        XCTAssertTrue(flow.metadataArrived(id: clicked))
+        let request = try XCTUnwrap(flow.beginConfirmation())
+        XCTAssertNil(flow.beginConfirmation(), "double-clicking Download must not start a second move")
+        flow.finishConfirmation(request)
+        XCTAssertEqual(flow.beginConfirmation(), request, "a failed folder choice must allow another try")
+    }
+
+    func testCancelWhileAddIsPendingPreventsItClaimingALaterQuestion() {
+        let flow = MagnetFlowCenter()
+        XCTAssertTrue(flow.beginResolving(nameHint: "Slow"))
+        let request = flow.requestID
+        XCTAssertNil(flow.cancelSelection(), "the add has not returned an id yet")
+        XCTAssertFalse(flow.ownsRequest(request))
+        XCTAssertTrue(flow.beginResolving(nameHint: "New"))
+        XCTAssertFalse(flow.ownsRequest(request))
+    }
+
+    func testNewCompletionInvalidatesOlderCompletionTimer() {
+        let flow = MagnetFlowCenter()
+        flow.downloadCompleted(name: "First")
+        let oldRequest = flow.requestID
+        flow.downloadCompleted(name: "Second")
+        XCTAssertFalse(flow.ownsRequest(oldRequest))
+        XCTAssertTrue(flow.ownsRequest(flow.requestID))
+        XCTAssertEqual(flow.stage, .completed(name: "Second"))
+    }
+
     func testOnlyTheAwaitedTorrentsMetadataMovesTheCardOn() {
         let flow = resolving()
         // A restored torrent, or a second magnet, resolving first.

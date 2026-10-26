@@ -53,7 +53,7 @@ let package = Package(
         //
         // Sparkle's own UI is never used — see UpdateController. It draws stock
         // Mac windows, which is the one thing this app is built not to do.
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [
         .target(

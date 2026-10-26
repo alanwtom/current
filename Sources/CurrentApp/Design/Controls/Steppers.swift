@@ -91,6 +91,7 @@ struct CurrentSlider: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDragging = false
     @State private var isHovering = false
+    @FocusState private var isFocused: Bool
 
     private static let knob: CGFloat = 14
     private static let track: CGFloat = 4
@@ -114,7 +115,7 @@ struct CurrentSlider: View {
                     .fill(Color.white)
                     .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
                     .frame(width: Self.knob, height: Self.knob)
-                    .scaleEffect(isDragging && !reduceMotion ? 1.15 : (isHovering ? 1.06 : 1))
+                    .scaleEffect(reduceMotion ? 1 : (isDragging ? 1.15 : (isHovering ? 1.06 : 1)))
                     .offset(x: knobX)
             }
             .frame(height: Self.knob)
@@ -139,17 +140,29 @@ struct CurrentSlider: View {
             .animation(Motion.adaptive(Motion.instant, reduceMotion: reduceMotion), value: isHovering)
         }
         .frame(height: Size.controlM)
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .focusRing(isFocused)
+        .onKeyPress(.leftArrow) { adjust(-1); return .handled }
+        .onKeyPress(.downArrow) { adjust(-1); return .handled }
+        .onKeyPress(.rightArrow) { adjust(1); return .handled }
+        .onKeyPress(.upArrow) { adjust(1); return .handled }
         .onHover { isHovering = $0 }
         .accessibilityElement()
         .accessibilityValue("\(Int(value))")
         .accessibilityAdjustableAction { direction in
-            let increment = step ?? (range.upperBound - range.lowerBound) / 20
             switch direction {
-            case .increment: set(value: value + increment)
-            case .decrement: set(value: value - increment)
+            case .increment: adjust(1)
+            case .decrement: adjust(-1)
             default: break
             }
         }
+    }
+
+    private func adjust(_ direction: Double) {
+        let increment = step ?? (range.upperBound - range.lowerBound) / 20
+        set(value: value + increment * direction)
     }
 
     private var normalized: Double {

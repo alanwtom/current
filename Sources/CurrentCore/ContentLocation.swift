@@ -86,12 +86,7 @@ public enum ContentLocation {
     ///   - files: the torrent's file list; empty when it has no metadata.
     ///   - rootListing: every file and link found under the root folder, as
     ///     paths relative to the save folder (`"Root/sub/a.mkv"`), or nil when
-    ///     that isn't known — no folder there, something other than a folder
-    ///     there, or a part of it that couldn't be read. Directories are not
-    ///     listed. Nil never takes the folder whole: not knowing what's in it
-    ///     is not the same as knowing it's all the torrent's. It used to be
-    ///     read that way, and a file sitting where the torrent's folder would
-    ///     go was trashed as if it were the folder.
+    ///     there is no root folder on disk. Directories are not listed.
     ///   - partFile: libtorrent's `.<hash>.parts` beside the content, which
     ///     holds the edges of pieces from skipped files. It is the torrent's.
     public static func trashPlan(
@@ -116,10 +111,10 @@ public enum ContentLocation {
         }
 
         let ownedRelative = Set(files.map { $0.pathComponents.joined(separator: "/") })
-        let onlyOurs = rootListing?.allSatisfy { entry in
+        let onlyOurs = rootListing.map { entries in entries.allSatisfy { entry in
             ownedRelative.contains(entry)
                 || incidentalNames.contains((entry as NSString).lastPathComponent)
-        } ?? false
+        }} ?? false
         if onlyOurs {
             // Everything in there is the torrent's, so the folder goes whole —
             // one item in the Trash, and Put Back restores it in one go.

@@ -1,239 +1,188 @@
 #!/bin/zsh
-# Proves the updater actually delivers an update, end to end.
+# Isolated, signed Sparkle integration test. App/library files stay in .build/.
+# Sparkle uses the separate org.current.torrent.update-test defaults domain.
 #
-#   Scripts/test-update.sh
+#   Scripts/test-update.sh prepare
+#   Scripts/test-update.sh launch valid
+#   Quit the named test app through its UI after "update-ready" in run-valid.log.
+#   Scripts/test-update.sh verify valid
+#   Scripts/test-update.sh launch tampered-feed
+#   Quit the test app through its UI after "updater-error" in its run log.
+#   Scripts/test-update.sh verify tampered-feed
+#   Scripts/test-update.sh launch tampered-archive
+#   Quit the test app through its UI after "updater-error" in its run log.
+#   Scripts/test-update.sh verify tampered-archive
+#   Scripts/test-update.sh cleanup
 #
-# The one thing about a release that cannot be checked by reading it: whether an
-# installed copy notices a newer version, verifies it, and becomes that version.
-# Everything else about the update path can look right and still not work, and
-# the failure only shows up on someone else's machine, months later, when a
-# security fix silently fails to reach them.
-#
-# What is real here and what is not:
-#
-#   real   the code signature, on both builds
-#   real   the EdDSA signature on the update, and its verification
-#   real   Sparkle's download, extraction and install
-#   real   the install lives in /Applications, like a user's
-#   fake   the feed is on localhost, NOT current.alantom.dev
-#
-# That last one is not a shortcut, it is the point: publishing a pretend 1.1.1
-# to the live appcast would hand it to every real install. The feed URL is the
-# only thing changed, and it is patched into the bundle *before* signing, so the
-# signature stays valid.
-#
-# Leaves /Applications/Current.app as whatever the test produced. Anything that
-# was there is moved aside and put back.
+# The app, library, defaults, DHT state, and URL registration are separate from
+# the real Current installation. No /Applications install is replaced. UI quit
+# is deliberate: Sparkle installs a background update from the quit handler.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/.build/update-test"
-PORT=8123
+APPS="$WORK/install/Current Update Test.app"
+SUPPORT="$WORK/support"
+PORT="${CURRENT_UPDATE_TEST_PORT:-8123}"
 FEED="http://localhost:$PORT/appcast.xml"
-APPS="/Applications/Current.app"
-BACKUP="/Applications/Current.app.before-update-test"
-
 SPARKLE_BIN="$ROOT/.build/artifacts/sparkle/Sparkle/bin"
+TEST_ID="org.current.torrent.update-test"
 step() { print -P "\n%F{cyan}==>%f $1" }
-ok()   { print -P "  %F{green}✓%f $1" }
-bad()  { print -P "  %F{red}✗%f $1" }
-die()  { print -P "%F{red}error:%f $1" >&2; cleanup; exit 1 }
+die() { print -u2 -- "error: $1"; exit 1 }
+installed_version() { plutil -extract CFBundleShortVersionString raw "$APPS/Contents/Info.plist"; }
 
-DB="$HOME/Library/Application Support/Current/library.sqlite"
-# What the two update settings said before this run, as SQL to put them back.
-# The script has to pre-answer the first-launch question, and it does that in
-# the one library every copy of the app shares — so without this, running it
-# once quietly signed the real install up for automatic updates.
-RESTORE_SETTINGS=""
-
-cleanup() {
-    [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
-    pkill -f "$APPS/Contents/MacOS/Current" 2>/dev/null || true
-    if [[ -n "$RESTORE_SETTINGS" && -f "$DB" ]]; then
-        sqlite3 "$DB" "$RESTORE_SETTINGS" 2>/dev/null || true
-        RESTORE_SETTINGS=""
-    fi
-}
-trap cleanup EXIT
-
-# Quits the app the way a person does.
-#
-# `pkill` sends SIGTERM, which a GUI app does not treat as a quit — Sparkle
-# installs a downloaded update from the app's termination handler, and that
-# handler does not run reliably on a signal. This made the test flaky in the
-# most misleading way possible: the update path was fine and the *test* was
-# killing the app before it could finish.
-quit_app() {
-    osascript -e 'tell application "Current" to quit' >/dev/null 2>&1 || true
-    for _ in {1..20}; do
-        pgrep -f "$APPS/Contents/MacOS/Current" >/dev/null || return 0
-        sleep 1
-    done
-    pkill -f "$APPS/Contents/MacOS/Current" 2>/dev/null || true
+stop_server() {
+    [[ -f "$WORK/server.pid" ]] || return 0
+    local server_pid="$(cat "$WORK/server.pid")"
+    [[ "$(ps -p "$server_pid" -o args= 2>/dev/null || true)" == *"http.server $PORT --bind 127.0.0.1 --directory $WORK/serve"* ]] \
+        && kill "$server_pid" 2>/dev/null || true
+    rm -f "$WORK/server.pid"
 }
 
-SIGNER=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
-[[ -n "$SIGNER" ]] || die "no Developer ID identity in the keychain"
-
-# ---------------------------------------------------------------------------
-step "Building the pair"
-# ---------------------------------------------------------------------------
-rm -rf "$WORK"; mkdir -p "$WORK/serve"
-"$ROOT/Scripts/make-app.sh" --release >/dev/null
-
-# Builds a copy at a given version, pointed at the local feed, properly signed.
-build_at() {
-    local version="$1" build="$2" dest="$3"
-    ditto "$ROOT/.build/Current.app" "$dest"
-    plutil -replace CFBundleShortVersionString -string "$version" "$dest/Contents/Info.plist"
-    plutil -replace CFBundleVersion -string "$build" "$dest/Contents/Info.plist"
-    plutil -replace SUFeedURL -string "$FEED" "$dest/Contents/Info.plist"
-    plutil -replace SUEnableAutomaticChecks -bool true "$dest/Contents/Info.plist"
-
-    # Inside out, exactly as release.sh does it — an update installed onto a
-    # badly-signed app fails in ways that look like Sparkle's fault.
-    local fw="$dest/Contents/Frameworks/Sparkle.framework"
+sign_app() {
+    local dest="$1" fw="$1/Contents/Frameworks/Sparkle.framework"
     for nested in "$fw/Versions/B/XPCServices/Downloader.xpc" \
                   "$fw/Versions/B/XPCServices/Installer.xpc" \
                   "$fw/Versions/B/Updater.app" "$fw/Versions/B/Autoupdate"; do
-        [[ -e "$nested" ]] && codesign --force --options runtime --timestamp \
-            --sign "$SIGNER" "$nested" 2>/dev/null
+        [[ ! -e "$nested" ]] || codesign --force --options runtime --timestamp --sign "$SIGNER" "$nested"
     done
-    codesign --force --options runtime --timestamp --sign "$SIGNER" "$fw/Versions/B" 2>/dev/null
-    codesign --force --options runtime --timestamp --sign "$SIGNER" "$fw" 2>/dev/null
+    codesign --force --options runtime --timestamp --sign "$SIGNER" "$fw/Versions/B"
+    codesign --force --options runtime --timestamp --sign "$SIGNER" "$fw"
     for lib in "$dest"/Contents/Frameworks/*.dylib(N); do
-        codesign --force --options runtime --timestamp --sign "$SIGNER" "$lib" 2>/dev/null
+        codesign --force --options runtime --timestamp --sign "$SIGNER" "$lib"
     done
-    codesign --force --options runtime --timestamp --sign "$SIGNER" "$dest" 2>/dev/null
+    codesign --force --options runtime --timestamp --sign "$SIGNER" "$dest"
+    codesign --verify --deep --strict "$dest"
 }
 
-build_at "1.1.0" "58" "$WORK/old/Current.app"
-build_at "1.1.1" "59" "$WORK/new/Current.app"
-ok "built 1.1.0 (58) and 1.1.1 (59), both pointed at $FEED"
+build_at() {
+    local version="$1" build="$2" dest="$3"
+    ditto "$ROOT/.build/Current.app" "$dest"
+    local plist="$dest/Contents/Info.plist"
+    plutil -replace CFBundleIdentifier -string "$TEST_ID" "$plist"
+    plutil -replace CFBundleName -string "Current Update Test" "$plist"
+    plutil -replace CFBundleDisplayName -string "Current Update Test" "$plist"
+    plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+    plutil -replace CFBundleVersion -string "$build" "$plist"
+    plutil -replace SUFeedURL -string "$FEED" "$plist"
+    plutil -replace SUEnableAutomaticChecks -bool true "$plist"
+    plutil -insert CurrentUpdateTestSupportPath -string "$SUPPORT" "$plist"
+    plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true}' "$plist"
+    plutil -remove CFBundleURLTypes "$plist" 2>/dev/null || true
+    plutil -remove CFBundleDocumentTypes "$plist" 2>/dev/null || true
+    sign_app "$dest"
+}
 
-codesign --verify --deep --strict "$WORK/old/Current.app" || die "the 1.1.0 build is not properly signed"
-codesign --verify --deep --strict "$WORK/new/Current.app" || die "the 1.1.1 build is not properly signed"
-ok "both signatures verify"
+prepare() {
+    step "Preparing an isolated signed update"
+    stop_server
+    [[ ! -e "$WORK/install" ]] || die "clean up the previous isolated test before preparing"
+    rm -rf "$WORK/old" "$WORK/new" "$WORK/serve" "$SUPPORT"
+    mkdir -p "$WORK/old" "$WORK/new" "$WORK/serve" "$SUPPORT" "$WORK/install"
+    if [[ "${CURRENT_UPDATE_TEST_SKIP_BUILD:-0}" != 1 ]]; then
+        "$ROOT/Scripts/make-app.sh" --release
+    fi
+    [[ -d "$ROOT/.build/Current.app" ]] || die "build Current.app first"
+    SIGNER="${CURRENT_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)}"
+    [[ -n "$SIGNER" ]] || die "no Developer ID identity"
+    build_at "1.1.0" "100001" "$WORK/old/Current Update Test.app"
+    build_at "1.1.1" "100002" "$WORK/new/Current Update Test.app"
+    hdiutil create -volname "Current Update Test" -srcfolder "$WORK/new" -ov -format UDZO "$WORK/serve/Current-1.1.1.dmg" >/dev/null
+    codesign --force --timestamp --sign "$SIGNER" "$WORK/serve/Current-1.1.1.dmg"
+    "$SPARKLE_BIN/generate_appcast" --download-url-prefix "http://localhost:$PORT/" \
+        -o "$WORK/serve/appcast.xml" "$WORK/serve"
+    "$SPARKLE_BIN/sign_update" --verify "$WORK/serve/appcast.xml"
+    cp "$WORK/serve/appcast.xml" "$WORK/valid-appcast.xml"
+    cp "$WORK/serve/Current-1.1.1.dmg" "$WORK/valid-update.dmg"
+    sqlite3 "$SUPPORT/library.sqlite" "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO settings VALUES('updates.asked','1'),('updates.automatic','1'),('network.binding','review');"
+    python3 - "$WORK" "$PORT" <<'PY'
+from pathlib import Path
+import subprocess,sys
+work,port=Path(sys.argv[1]),sys.argv[2]
+with (work/'server.log').open('ab') as output:
+    server=subprocess.Popen([sys.executable,'-m','http.server',port,'--bind','127.0.0.1','--directory',str(work/'serve')],stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+(work/'server.pid').write_text(str(server.pid))
+PY
+    for _ in {1..10}; do
+        curl --max-time 2 -fsS "$FEED" >/dev/null 2>&1 && break
+        sleep 1
+    done
+    curl --max-time 2 -fsS "$FEED" >/dev/null || die "test feed did not start"
+    print "Prepared. Run: Scripts/test-update.sh launch valid"
+}
 
-# ---------------------------------------------------------------------------
-step "Publishing 1.1.1 to a local feed"
-# ---------------------------------------------------------------------------
-hdiutil create -volname "Current" -srcfolder "$WORK/new" -ov -format UDZO \
-    "$WORK/serve/Current-1.1.1.dmg" >/dev/null
-codesign --force --timestamp --sign "$SIGNER" "$WORK/serve/Current-1.1.1.dmg"
+launch_case() {
+    local test_case="$1"
+    [[ -f "$WORK/valid-appcast.xml" ]] || die "run prepare first"
+    [[ "$test_case" == valid || "$test_case" == tampered-feed || "$test_case" == tampered-archive ]] || die "unknown test case"
+    if pgrep -f "$APPS/Contents/MacOS/Current" >/dev/null; then
+        die "quit Current Update Test through its UI before launching another case"
+    fi
+    rm -rf "$APPS"
+    ditto "$WORK/old/Current Update Test.app" "$APPS"
+    cp "$WORK/valid-appcast.xml" "$WORK/serve/appcast.xml"
+    cp "$WORK/valid-update.dmg" "$WORK/serve/Current-1.1.1.dmg"
+    if [[ "$test_case" == tampered-feed ]]; then
+        python3 - "$WORK/serve/appcast.xml" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text(); assert '<title>1.1.1</title>' in text
+p.write_text(text.replace('<title>1.1.1</title>','<title>Modified update title</title>',1))
+PY
+        if "$SPARKLE_BIN/sign_update" --verify "$WORK/serve/appcast.xml" >/dev/null 2>&1; then
+            die "modified feed unexpectedly verifies"
+        fi
+    elif [[ "$test_case" == tampered-archive ]]; then
+        python3 - "$WORK/serve/Current-1.1.1.dmg" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); data=bytearray(p.read_bytes()); data[len(data)//2]^=1; p.write_bytes(data)
+PY
+    fi
+    # Sparkle may cache its last check. Each case gets separate test defaults.
+    defaults delete "$TEST_ID" 2>/dev/null || true
+    python3 - "$APPS/Contents/MacOS/Current" "$WORK/run-$test_case.log" "$WORK/app.pid" <<'PY'
+from pathlib import Path
+import os,subprocess,sys
+exe,log,pidfile=sys.argv[1:]
+env=os.environ.copy(); env['CURRENT_UPDATE_CHECK_ON_LAUNCH']='1'; env['CURRENT_NO_NOTIFICATIONS']='1'
+with open(log,'w') as output:
+    app=subprocess.Popen([exe],stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+Path(pidfile).write_text(str(app.pid))
+PY
+    print "Launched $test_case at $APPS"
+    print "Read $WORK/run-$test_case.log, then quit this test app through its UI."
+}
 
-"$SPARKLE_BIN/generate_appcast" \
-    --download-url-prefix "http://localhost:$PORT/" \
-    -o "$WORK/serve/appcast.xml" "$WORK/serve" >/dev/null
+verify_case() {
+    local test_case="$1" version="$(installed_version)" log="$WORK/run-$1.log"
+    [[ -f "$log" ]] || die "launch this case first"
+    if [[ "$test_case" == valid ]]; then
+        for _ in {1..20}; do
+            version="$(installed_version)"
+            [[ "$version" == 1.1.1 ]] && break
+            sleep 2
+        done
+        [[ "$version" == 1.1.1 ]] || die "valid update not installed (still $version)"
+        codesign --verify --deep --strict "$APPS"
+    else
+        ! pgrep -f "$APPS/Contents/MacOS/Current" >/dev/null \
+            || die "quit the isolated test app before verifying rejection"
+        grep -q 'Current updater test: updater-error' "$log" || die "no verified updater rejection in $log"
+        [[ "$version" == 1.1.0 ]] || die "a modified update installed ($version)"
+    fi
+    print "PASS: $test_case ($version)"
+}
 
-grep -q "sparkle:edSignature" "$WORK/serve/appcast.xml" \
-    || die "the test appcast is unsigned — this would prove nothing"
-ok "1.1.1 signed into a local appcast"
-
-(cd "$WORK/serve" && python3 -m http.server "$PORT" >/dev/null 2>&1) &
-SERVER_PID=$!
-sleep 2
-curl -sf "$FEED" >/dev/null || die "the local feed is not serving"
-ok "feed live on port $PORT"
-
-# ---------------------------------------------------------------------------
-step "Installing 1.1.0 like a user would"
-# ---------------------------------------------------------------------------
-[[ -d "$APPS" ]] && mv "$APPS" "$BACKUP"
-ditto "$WORK/old/Current.app" "$APPS"
-installed_version() { plutil -extract CFBundleShortVersionString raw "$APPS/Contents/Info.plist" 2>/dev/null }
-installed_build()   { plutil -extract CFBundleVersion raw "$APPS/Contents/Info.plist" 2>/dev/null }
-ok "installed $(installed_version) ($(installed_build)) to /Applications"
-
-# Pre-answer the first-launch question so the run is unattended. This is the
-# setting the card writes; setting it directly is the same as clicking yes.
-if [[ -f "$DB" ]]; then
-    RESTORE_SETTINGS="delete from settings where key in ('updates.asked','updates.automatic');"
-    RESTORE_SETTINGS+=$(sqlite3 "$DB" "select 'insert into settings(key,value) values(' || quote(key) || ',' || quote(value) || ');' from settings where key in ('updates.asked','updates.automatic');" 2>/dev/null || true)
-    sqlite3 "$DB" "insert or replace into settings(key,value) values('updates.asked','1'),('updates.automatic','1');" 2>/dev/null || true
-fi
-
-# ---------------------------------------------------------------------------
-step "Letting it update itself"
-# ---------------------------------------------------------------------------
-# CURRENT_UPDATE_CHECK_ON_LAUNCH asks for one check straight away. Without it
-# this waits on Sparkle's own scheduler, which spaces checks out by a day —
-# correct for a real install, useless for proving the path works.
-CURRENT_UPDATE_CHECK_ON_LAUNCH=1 "$APPS/Contents/MacOS/Current" > "$WORK/run.log" 2>&1 &
-
-# Long enough to check, download ten megabytes over loopback and extract.
-print "  waiting for the check and download"
-sleep 45
-
-# Sparkle installs on quit when the update came down in the background — which
-# is the path a real user takes by ignoring the toast rather than pressing it.
-quit_app
-print "  quit cleanly; the installer runs now"
-
-for i in {1..40}; do
-    sleep 3
-    [[ "$(installed_version)" == "1.1.1" ]] && break
-done
-
-FINAL_VERSION="$(installed_version)"
-FINAL_BUILD="$(installed_build)"
-
-# ---------------------------------------------------------------------------
-step "Result"
-# ---------------------------------------------------------------------------
-if [[ "$FINAL_VERSION" == "1.1.1" && "$FINAL_BUILD" == "59" ]]; then
-    ok "the installed app is now $FINAL_VERSION ($FINAL_BUILD) — it updated itself"
-    RESULT=0
-else
-    bad "still $FINAL_VERSION ($FINAL_BUILD) — the update did not install"
-    RESULT=1
-fi
-
-codesign --verify --deep --strict "$APPS" 2>/dev/null \
-    && ok "the updated app is still properly signed" \
-    || bad "the updated app's signature is broken"
-
-# ---------------------------------------------------------------------------
-step "The half that matters: a tampered update must be refused"
-#
-# The first half only proves updates install. If a *modified* one installs too,
-# the EdDSA signature is decoration and anyone who can answer for the feed's
-# host — a hostile network, a compromised CDN, a stolen domain — can hand every
-# install whatever they like.
-#
-# The appcast keeps the signature of the real 1.1.1. The file served under that
-# name is swapped for a different, perfectly valid disk image. So the download
-# succeeds, mounts, and contains a real app: the *only* thing wrong is that its
-# bytes are not the ones that were signed.
-# ---------------------------------------------------------------------------
-rm -rf "$APPS"
-ditto "$WORK/old/Current.app" "$APPS"
-ok "back to $(installed_version) ($(installed_build))"
-
-# A valid image, different bytes. Rebuilding is enough — the timestamps inside
-# differ, so the hash does.
-hdiutil create -volname "Current" -srcfolder "$WORK/new" -ov -format UDZO \
-    "$WORK/tampered.dmg" >/dev/null
-codesign --force --timestamp --sign "$SIGNER" "$WORK/tampered.dmg"
-cp "$WORK/tampered.dmg" "$WORK/serve/Current-1.1.1.dmg"
-
-ok "served file swapped; the appcast still advertises the original's signature"
-
-CURRENT_UPDATE_CHECK_ON_LAUNCH=1 "$APPS/Contents/MacOS/Current" > "$WORK/run2.log" 2>&1 &
-sleep 45
-quit_app
-sleep 30
-
-TAMPER_VERSION="$(installed_version)"
-if [[ "$TAMPER_VERSION" == "1.1.0" ]]; then
-    ok "refused it — still $TAMPER_VERSION, exactly as it should be"
-else
-    bad "INSTALLED A FILE THAT DID NOT MATCH ITS SIGNATURE (now $TAMPER_VERSION)"
-    RESULT=1
-fi
-
-# Put back whatever was there before.
-rm -rf "$APPS"
-[[ -d "$BACKUP" ]] && mv "$BACKUP" "$APPS"
-print "\n  /Applications restored to how it was."
-exit $RESULT
+case "${1:-}" in
+    prepare) prepare ;;
+    launch) launch_case "${2:?choose valid, tampered-feed, or tampered-archive}" ;;
+    verify) verify_case "${2:?choose a test case}" ;;
+    cleanup)
+        ! pgrep -f "$APPS/Contents/MacOS/Current" >/dev/null \
+            || die "quit the isolated test app through its UI first"
+        stop_server
+        rm -rf "$WORK/install"
+        print "Local test server stopped. Test evidence kept at $WORK"
+        ;;
+    *) die "usage: $0 prepare | launch CASE | verify CASE | cleanup" ;;
+esac

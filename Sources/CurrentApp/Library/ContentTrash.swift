@@ -9,6 +9,12 @@ import CurrentCore
 /// the two used to build their paths separately, and when one was fixed the
 /// other kept the bug.
 struct ContentTrash {
+    struct Result: Equatable {
+        var movedItems: Int
+        var expectedItems: Int
+        var isComplete: Bool { expectedItems > 0 && movedItems == expectedItems }
+    }
+
     /// The move itself. Replaced in tests, which have no business putting
     /// files in the real Trash.
     var moveToTrash: (URL) throws -> Void = { url in
@@ -20,84 +26,115 @@ struct ContentTrash {
     /// trusted — and callers must not report space as reclaimed. libtorrent's
     /// part file goes too, but isn't counted: it alone reclaims nothing.
     @discardableResult
-    func trashContent(id: TorrentID, saveDirectory: URL, files: [FileInfo]) -> Int {
-        let manager = FileManager.default
-        let root = ContentLocation.rootFolder(saveDirectory: saveDirectory, files: files)
-        let plan = ContentLocation.trashPlan(
-            saveDirectory: saveDirectory,
-            files: files,
-            rootListing: root.flatMap(listing(of:)),
-            partFile: ".\(id.raw).parts"
+    func trashContent(id: TorrentID, saveDirectory: URL, files: [FileInfo]) -> Result {
+        // Resolve aliases above the chosen folder (including macOS /var).
+        // Keep the final component unresolved so a replaced save folder is refused.
+        let requested = saveDirectory.standardizedFileURL
+        let base = requested.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(requested.lastPathComponent, isDirectory: true)
+        guard let owned = ContentLocation.ownedFiles(saveDirectory: base, files: files),
+              !owned.isEmpty, safeAncestors(of: base, through: base),
+              owned.allSatisfy({ !isDirectory($0) })
+        else { return Result(movedItems: 0, expectedItems: 0) }
+        let root = ContentLocation.rootFolder(saveDirectory: base, files: files)
+        let partFile = base.appendingPathComponent(".\(id.raw).parts")
+        let proposed = ContentLocation.trashPlan(
+            saveDirectory: base, files: files,
+            rootListing: root.flatMap { listing(of: $0, relativeTo: base) },
+            partFile: partFile.lastPathComponent
         )
-
-        let partFile = saveDirectory.standardizedFileURL.appendingPathComponent(".\(id.raw).parts")
-        var moved = 0
-        for step in plan {
-            switch step {
-            case .item(let url):
-                // `attributesOfItem` rather than `fileExists`: it doesn't
-                // follow a symlink, so a link is judged — and trashed — as the
-                // link, never as whatever it points at.
-                guard let type = (try? manager.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
-                else { continue }
-                // The root is always a folder and nothing else of the
-                // torrent's ever is. A folder where one of its files should be
-                // — or a file where its folder should be — belongs to someone
-                // else: another torrent that unpacked there first, or the user.
-                guard (type == .typeDirectory) == (url == root) else { continue }
-                if (try? moveToTrash(url)) != nil, url != partFile { moved += 1 }
-            case .folderIfEmpty(let url):
-                guard let contents = try? manager.contentsOfDirectory(atPath: url.path),
-                      contents.allSatisfy(ContentLocation.incidentalNames.contains)
-                else { continue }
-                if (try? moveToTrash(url)) != nil { moved += 1 }
-            }
+        guard let plan = safePlan(proposed, base: base) else {
+            return Result(movedItems: 0, expectedItems: 0)
         }
-        return moved
+        var result = Result(movedItems: 0, expectedItems: 0)
+        for step in plan {
+            apply(step, base: base, partFile: partFile, result: &result)
+        }
+        return result
     }
 
-    /// Every file and link under `root`, as paths relative to the save folder
-    /// (`"Root/sub/a.mkv"`) — or nil when that can't be said for certain:
-    /// `root` isn't a real folder, or some part of it couldn't be read. Nil
-    /// makes the plan take the torrent's files one by one rather than the
-    /// folder whole, which is always safe.
-    ///
-    /// Each path is built from the names the folder itself hands back, never
-    /// by comparing path strings with the save folder's. The version this
-    /// replaced asked the directory enumerator for URLs and matched them
-    /// against the save folder's spelling — but the enumerator returns paths
-    /// with symlinks resolved, so a save folder reached through a link
-    /// (~/Downloads moved to an external drive) matched nothing. Every entry
-    /// was skipped, the empty result read as "nothing here but ours", and the
-    /// whole folder went to the Trash with other people's files in it. The
-    /// enumerator also skipped unreadable folders without saying so, which
-    /// failed open the same way.
-    ///
-    /// Doesn't descend into symlinked folders — a link is one entry, like a
-    /// file. The root takes the torrent's own spelling, so a case-insensitive
-    /// match on it still compares inner paths as they are on disk.
-    private func listing(of root: URL) -> [String]? {
-        let manager = FileManager.default
-        func type(at path: String) -> FileAttributeType? {
-            (try? manager.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
+    private func apply(_ step: ContentLocation.TrashStep, base: URL, partFile: URL, result: inout Result) {
+        switch step {
+        case .item(let url):
+            if url != partFile { result.expectedItems += 1 }
+            guard safeAncestors(of: base, through: url.deletingLastPathComponent()),
+                  (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil else { return }
+            if (try? moveToTrash(url)) != nil, url != partFile { result.movedItems += 1 }
+        case .folderIfEmpty(let url):
+            guard safeAncestors(of: base, through: url),
+                  let contents = try? FileManager.default.contentsOfDirectory(atPath: url.path),
+                  contents.allSatisfy(ContentLocation.incidentalNames.contains) else { return }
+            // Empty parent folders are housekeeping, not downloaded content.
+            try? moveToTrash(url)
+        }
+    }
+
+    /// Every file and link under `root`, relative to `base`. Doesn't descend
+    /// into symlinked folders — a link is one entry, like a file.
+    private func listing(of root: URL, relativeTo base: URL) -> [String]? {
+        guard safeAncestors(of: base.standardizedFileURL, through: root.deletingLastPathComponent()),
+              !isSymbolicLink(root), isDirectory(root) else { return nil }
+        return walk(root, prefix: root.lastPathComponent)
+    }
+
+    private func walk(_ directory: URL, prefix: String) -> [String]? {
+        guard let children = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+            return nil
         }
         var entries: [String] = []
-        func walk(_ folder: String, as relative: String) -> Bool {
-            guard let names = try? manager.contentsOfDirectory(atPath: folder) else { return false }
-            for name in names {
-                let path = folder + "/" + name
-                guard let kind = type(at: path) else { return false }
-                if kind == .typeDirectory {
-                    guard walk(path, as: relative + "/" + name) else { return false }
-                } else {
-                    entries.append(relative + "/" + name)
-                }
+        for child in children {
+            guard safeAncestors(of: directory, through: directory), let attributes = try? FileManager.default.attributesOfItem(atPath: child.path) else {
+                return nil
             }
-            return true
+            let relative = prefix + "/" + child.lastPathComponent
+            if attributes[.type] as? FileAttributeType == .typeDirectory {
+                guard let nested = walk(child, prefix: relative) else { return nil }
+                entries.append(contentsOf: nested)
+                if nested.isEmpty { entries.append(relative + "/") }
+            } else {
+                entries.append(relative)
+            }
         }
-        guard type(at: root.path) == .typeDirectory,
-              walk(root.path, as: root.lastPathComponent)
-        else { return nil }
         return entries
+    }
+
+    private func safePlan(_ plan: [ContentLocation.TrashStep], base: URL) -> [ContentLocation.TrashStep]? {
+        guard safeAncestors(of: base, through: base) else { return nil }
+        for step in plan {
+            let url: URL
+            switch step {
+            case .item(let item): url = item
+            case .folderIfEmpty(let folder): url = folder
+            }
+            guard url.standardizedFileURL.path.hasPrefix(base.path + "/") else { return nil }
+        }
+        return plan
+    }
+
+    /// Every component above the final item must be a real directory. A final
+    /// item may be a symlink because moving the link itself is safe.
+    private func safeAncestors(of base: URL, through target: URL) -> Bool {
+        let basePath = base.standardizedFileURL.path
+        let targetPath = target.standardizedFileURL.path
+        guard targetPath == basePath || targetPath.hasPrefix(basePath + "/") else { return false }
+        // The chosen save folder is the boundary. macOS itself uses links
+        // above it (/var and /tmp); only links at or below it can redirect a
+        // torrent's metadata path outside that boundary.
+        var current = URL(fileURLWithPath: basePath)
+        guard isDirectory(current), !isSymbolicLink(current) else { return false }
+        let suffix = targetPath == basePath ? [] : targetPath.dropFirst(basePath.count + 1).split(separator: "/").map(String.init)
+        for component in suffix {
+            current.appendPathComponent(component)
+            guard isDirectory(current), !isSymbolicLink(current) else { return false }
+        }
+        return true
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeDirectory
+    }
+
+    private func isSymbolicLink(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeSymbolicLink
     }
 }

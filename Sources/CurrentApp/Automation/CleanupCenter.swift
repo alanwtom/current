@@ -3,8 +3,8 @@ import CurrentCore
 
 /// Owns the cleanup plan and executes reversible cleanups.
 ///
-/// Cleanup is always: stop → remove from engine → move content to Trash →
-/// record the event. Nothing is ever permanently erased automatically.
+/// Cleanup is always: check → stop → check again → move content to Trash →
+/// remove from engine → record the event. Nothing is permanently erased.
 @MainActor
 final class CleanupCenter: ObservableObject {
 
@@ -53,17 +53,22 @@ final class CleanupCenter: ObservableObject {
         var cleaned = 0
 
         for candidate in candidates {
-            let snapshot = candidate.snapshot
+            refreshPlan()
+            guard let current = plan.candidates.first(where: { $0.id == candidate.id }) else { continue }
+            let snapshot = current.snapshot
+            await library.engine.pause(snapshot.id)
+            // The actor hop can admit a pin, a policy change, or a removal.
+            refreshPlan()
+            guard plan.candidates.contains(where: { $0.id == snapshot.id }) else { continue }
             // Nothing moved means nothing reclaimed, and then the torrent
             // stays. Removing it anyway is how a storage budget would work its
             // way through the whole library without freeing a byte: each pass
             // still over budget, each pass taking the next one.
-            guard library.trashContent(snapshot.id) > 0 else { continue }
+            guard library.trashContent(snapshot.id).isComplete else { continue }
 
-            await library.engine.remove(snapshot.id, deleteFiles: false)
             await library.remove([snapshot.id], deleteFiles: false)
 
-            reclaimed += candidate.reclaimableBytes
+            reclaimed += current.reclaimableBytes
             cleaned += 1
 
             try? database.recordDecision(
@@ -75,7 +80,7 @@ final class CleanupCenter: ObservableObject {
                     reasons: [
                         trigger,
                         "Moved to Trash — recoverable",
-                        "Reclaimed \(ByteFormatting.bytes(candidate.reclaimableBytes))",
+                        "Reclaimed \(ByteFormatting.bytes(current.reclaimableBytes))",
                     ]
                 )
             )

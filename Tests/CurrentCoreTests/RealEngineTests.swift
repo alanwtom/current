@@ -78,6 +78,20 @@ final class RealEngineTests: XCTestCase {
         )
     }
 
+    func testMagnetSchemeIsCaseInsensitiveAtTheRealEngineBoundary() async throws {
+        let engine = await makeEngine()
+        let directory = try makeScratchDirectory(self, "magnet-case")
+        let hash = "0123456789abcdef0123456789abcdef01234567"
+        for scheme in ["magnet", "MAGNET", "MaGnEt"] {
+            let id = try await engine.addMagnet(
+                "\(scheme):?xt=urn:btih:\(hash)&dn=KeepCase",
+                saveDirectory: directory,
+                held: true
+            )
+            XCTAssertEqual(id, TorrentID(hash))
+        }
+    }
+
     // MARK: - A torrent whose data is already there
 
     func testATorrentWhoseDataIsOnDiskChecksToSeeding() async throws {
@@ -118,6 +132,45 @@ final class RealEngineTests: XCTestCase {
         XCTAssertNotEqual(checked?.state, .seeding)
     }
 
+    func testSaveDirectoryChangesOnlyAfterFilesMove() async throws {
+        let fixture = try makeFixture()
+        let engine = await makeEngine()
+        let watcher = EngineWatcher(engine)
+        let id = try await engine.add(.torrentFile(fixture.torrent), saveDirectory: fixture.directory)
+        _ = await watcher.waitFor(id) { $0.state == .seeding }
+        await engine.pause(id)
+        let destination = try makeScratchDirectory(self, "moved")
+
+        try await engine.setSaveDirectory(id, destination)
+
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent(fixture.name)), fixture.content)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent(fixture.name).path))
+        let moved = await watcher.waitFor(id) { $0.saveDirectory.standardizedFileURL == destination.standardizedFileURL }
+        XCTAssertNotNil(moved)
+    }
+
+    func testFailedStorageMoveKeepsOriginalDirectory() async throws {
+        let fixture = try makeFixture()
+        let engine = await makeEngine()
+        let watcher = EngineWatcher(engine)
+        let id = try await engine.add(.torrentFile(fixture.torrent), saveDirectory: fixture.directory)
+        _ = await watcher.waitFor(id) { $0.state == .seeding }
+        await engine.pause(id)
+        let destination = try makeScratchDirectory(self, "blocked-move")
+        // The folder exists, but the disk worker cannot write to it.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: destination.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.path) }
+        do {
+            try await engine.setSaveDirectory(id, destination)
+            XCTFail("A move into a read-only folder must fail")
+        } catch let failure as EngineFailure {
+            XCTAssertEqual(failure.kind, .savePathUnavailable)
+        }
+        let unchanged = await watcher.waitFor(id) { $0.saveDirectory.standardizedFileURL == fixture.directory.standardizedFileURL }
+        XCTAssertNotNil(unchanged)
+        XCTAssertEqual(try Data(contentsOf: fixture.directory.appendingPathComponent(fixture.name)), fixture.content)
+    }
+
     // MARK: - Relaunch
 
     /// **The regression.** Resume data used to be fed to libtorrent's .torrent
@@ -145,9 +198,6 @@ final class RealEngineTests: XCTestCase {
         // without a peer to ask.
         let metadata = watcher.metadata(for: restored)
         XCTAssertEqual(metadata?.displayName, fixture.name)
-        // libtorrent says "finished" when a restored seed's check ends, and the
-        // app turned that into "Download complete" for every seed in the
-        // library at every launch. Nothing downloaded, so nothing finished.
         XCTAssertEqual(watcher.completed, [], "a restored seed announced itself as a new download")
     }
 
@@ -173,6 +223,39 @@ final class RealEngineTests: XCTestCase {
         XCTAssertEqual(first, second)
         let magnet = try await engine.addMagnet("magnet:?xt=urn:btih:\(fixture.infoHash)", saveDirectory: fixture.directory, held: true)
         XCTAssertEqual(first, magnet)
+    }
+
+    func testDuplicateAddKeepsTheOriginalSaveDirectory() async throws {
+        let fixture = try makeFixture()
+        let otherDirectory = try makeScratchDirectory(self, "duplicate")
+        let engine = await makeEngine()
+        let watcher = EngineWatcher(engine)
+        let id = try await engine.add(.torrentFile(fixture.torrent), saveDirectory: fixture.directory)
+        _ = await watcher.waitFor(id) { $0.state == .seeding }
+
+        let duplicate = try await engine.add(
+            .torrentFile(fixture.torrent), saveDirectory: otherDirectory, held: true
+        )
+        XCTAssertEqual(duplicate, id)
+        // Wait for a new stats batch after the duplicate add.
+        await engine.pause(id)
+        let paused = await watcher.waitFor(id) { $0.state == .paused(.user) }
+        XCTAssertEqual(paused?.saveDirectory, fixture.directory)
+    }
+
+    func testMetadataKeepsEachFilePathAndSizeTogether() async throws {
+        let fixture = try makeFixture(name: "first\nsecond.bin", writeContent: false)
+        let engine = await makeEngine()
+        let watcher = EngineWatcher(engine)
+        let id = try await engine.add(
+            .torrentFile(fixture.torrent), saveDirectory: fixture.directory, held: true
+        )
+        let arrived = await watcher.waitForMetadata(id)
+        let metadata = try XCTUnwrap(arrived)
+        XCTAssertEqual(metadata.files.count, 1)
+        // libtorrent may clean a name. The path must still match that whole name.
+        XCTAssertEqual(metadata.files.first?.pathComponents, [metadata.displayName])
+        XCTAssertEqual(metadata.files.first?.size, Int64(fixture.content.count))
     }
 
     // MARK: - Held
@@ -228,8 +311,28 @@ final class RealEngineTests: XCTestCase {
         let written = try Data(contentsOf: leecherDirectory.appendingPathComponent(fixture.name))
         XCTAssertEqual(written, fixture.content)
         let announced = await eventually { watcher.completed == [id] }
-        XCTAssertTrue(announced, "a torrent that really downloaded must still say it finished")
-        _ = seeder
+        XCTAssertTrue(announced, "a new download must announce completion once")
+        // Lifetime counters must survive a fresh session, including uploads.
+        let downloaded = try XCTUnwrap(done?.downloadedBytes)
+        let leecherBlob = await leecher.resumeData(for: id)
+        let leecherResume = try XCTUnwrap(leecherBlob)
+        let seederBlob = await seeder.resumeData(for: id)
+        let seederResume = try XCTUnwrap(seederBlob)
+        await leecher.shutdown()
+        await seeder.shutdown()
+
+        let restoredLeecher = await makeEngine()
+        let restoredWatcher = EngineWatcher(restoredLeecher)
+        _ = try await restoredLeecher.add(.resumeData(leecherResume), saveDirectory: leecherDirectory)
+        let restored = await restoredWatcher.waitFor(id) { $0.progress >= 1 }
+        XCTAssertEqual(restored?.downloadedBytes, downloaded)
+        XCTAssertGreaterThan(downloaded, 0)
+
+        let restoredSeeder = await makeEngine()
+        let seedWatcher = EngineWatcher(restoredSeeder)
+        _ = try await restoredSeeder.add(.resumeData(seederResume), saveDirectory: fixture.directory)
+        let seed = await seedWatcher.waitFor(id) { $0.progress >= 1 }
+        XCTAssertGreaterThan(seed?.uploadedBytes ?? 0, 0)
     }
 
     /// With the confined connection gone, nothing gets out — not even to a
@@ -250,6 +353,22 @@ final class RealEngineTests: XCTestCase {
         // over metadata in well under a second when the leecher is allowed out.
         let leaked = await watcher.waitForMetadata(id, timeout: .seconds(4))
         XCTAssertNil(leaked, "a blocked session must not reach any peer")
+        _ = seeder
+    }
+
+    func testASessionBeforeConfigurationReachesNoPeer() async throws {
+        let fixture = try makeFixture()
+        let (seeder, port) = try await makeSeeder(fixture)
+        let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
+        let watcher = EngineWatcher(engine)
+        let directory = try makeScratchDirectory(self, "unconfigured")
+        let id = try await engine.addMagnet(
+            "magnet:?xt=urn:btih:\(fixture.infoHash)", saveDirectory: directory
+        )
+        await engine.connectPeer(id, host: "127.0.0.1", port: port)
+        let reached = await watcher.waitForMetadata(id, timeout: .seconds(4))
+        XCTAssertNil(reached, "networking must stay closed until configuration arrives")
         _ = seeder
     }
 
@@ -380,10 +499,10 @@ final class EngineWatcher {
                     for snapshot in batch { self.latest[snapshot.id] = snapshot }
                 case .metadataReceived(let id, let metadata):
                     self.metadataByID[id] = metadata
-                case .listenChanged(let report):
-                    self.listens.append(report)
                 case .completed(let id):
                     self.completed.append(id)
+                case .listenChanged(let report):
+                    self.listens.append(report)
                 default:
                     break
                 }

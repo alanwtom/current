@@ -237,7 +237,7 @@ final class NetworkBindingTests: XCTestCase {
     // MARK: - Persistence
 
     func testEveryChoiceSurvivesARoundTrip() {
-        let choices: [NetworkBinding] = [.anyInterface, .activeVPN, .named("utun6"), .named("en0")]
+        let choices: [NetworkBinding] = [.anyInterface, .needsReview, .activeVPN, .named("utun6"), .named("en0")]
         for choice in choices {
             XCTAssertEqual(
                 NetworkBinding(storedValue: choice.storedValue),
@@ -245,6 +245,12 @@ final class NetworkBindingTests: XCTestCase {
                 "\(choice) did not survive being stored"
             )
         }
+    }
+
+    func testRecoveryBlocksEvenWhenAVPNIsAvailable() {
+        let snapshot = NetworkSnapshot(interfaces: [wifi(), tunnel()], primaryName: "utun6")
+        XCTAssertTrue(NetworkBinding.needsReview.resolve(in: snapshot).blocksTransfers)
+        XCTAssertTrue(NetworkBinding.needsReview.isRestricted)
     }
 
     func testUnknownStoredValueFallsBackToNoRestriction() {

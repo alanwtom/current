@@ -12,7 +12,7 @@ upgrading a dependency. Do not edit it by hand.
 | libtorrent-rasterbar | 2.1.1_1 | BSD-3-Clause |
 | OpenSSL | 3.6.4 | Apache-2.0 |
 | Boost | headers, compiled into libtorrent | BSL-1.0 |
-| Sparkle | 2.10.0 | MIT, plus the licences it lists for code it includes |
+| Sparkle | 2.10.1 | MIT, plus the licences it lists for code it includes |
 
 
 

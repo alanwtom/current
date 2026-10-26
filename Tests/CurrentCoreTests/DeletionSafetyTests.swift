@@ -39,10 +39,10 @@ final class DeletionSafetyTests: XCTestCase {
     }
 
     /// A torrent in the library. `files: nil` is a torrent with no metadata.
-    private func add(_ id: String, name: String, files: [[String]]?, in directory: URL? = nil) {
+    private func add(_ id: String, name: String, files: [[String]]?) {
         store.applySnapshots([TorrentSnapshot(
             id: TorrentID(id), name: name, state: .seeding, progress: 1,
-            totalBytes: 1, downloadedBytes: 1, saveDirectory: directory ?? save, hasMetadata: files != nil
+            totalBytes: 1, downloadedBytes: 1, saveDirectory: save, hasMetadata: files != nil
         )])
         if let files {
             store.applyMetadata(TorrentMetadata(
@@ -184,69 +184,113 @@ final class DeletionSafetyTests: XCTestCase {
         XCTAssertEqual(Set(trash.urls.map(\.lastPathComponent)), ["film.mkv", ".a.parts"])
     }
 
-    // MARK: - What's on disk isn't always what the path says
-
-    /// A download folder reached through a symlink — ~/Downloads moved to an
-    /// external drive is the common one. The folder scan reports paths spelled
-    /// the resolved way, and the first version compared them as strings with
-    /// the unresolved save folder: nothing matched, every entry was skipped,
-    /// and an empty scan read as "nothing in here but ours". The whole folder
-    /// went to the Trash, the other torrent's episode with it.
-    func testASaveFolderReachedThroughASymlinkStillSparesOtherFiles() async throws {
-        let linked = save.appendingPathComponent("linked")
-        let real = try makeScratchDirectory(self, "real")
-        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: real)
-        let season = real.appendingPathComponent("Season 1")
-        try FileManager.default.createDirectory(at: season, withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: season.appendingPathComponent("e1.mkv"))
-        try Data("x".utf8).write(to: season.appendingPathComponent("e2.mkv"))
-        add("a", name: "Season 1", files: [["Season 1", "e1.mkv"]], in: linked)
+    func testSymlinkedParentCannotDeleteOutsideContent() async throws {
+        let outside = try makeScratchDirectory(self, "outside-parent")
+        let precious = outside.appendingPathComponent("precious.txt")
+        try Data("keep".utf8).write(to: precious)
+        try FileManager.default.createSymbolicLink(
+            at: save.appendingPathComponent("Root"), withDestinationURL: outside
+        )
+        add("a", name: "Root", files: [["Root", "precious.txt"]])
 
         await deleteWithFiles("a")
 
-        XCTAssertFalse(trash.urls.contains { $0.lastPathComponent == "Season 1" }, "took the whole folder")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: season.appendingPathComponent("e2.mkv").path))
+        XCTAssertTrue(trash.urls.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: precious.path))
     }
 
-    /// A single-file torrent's path is taken by a folder — another torrent's,
-    /// or the user's. A file of the torrent's is never a folder, so it isn't.
-    func testAFolderWhereTheTorrentsFileShouldBeIsLeftAlone() async throws {
-        try write("Show/episode.mkv")
-        add("a", name: "Show", files: [["Show"]])
+    func testAFilePathCannotOwnAnExistingDirectory() async throws {
+        try write("film.mkv/keep.txt")
+        add("a", name: "film.mkv", files: [["film.mkv"]])
 
         await deleteWithFiles("a")
 
-        XCTAssertTrue(exists("Show/episode.mkv"))
-        XCTAssertEqual(trash.urls, [])
+        XCTAssertTrue(trash.urls.isEmpty)
+        XCTAssertTrue(exists("film.mkv/keep.txt"))
     }
 
-    /// And the other way round: a multi-file torrent's root folder name is
-    /// taken by a plain file, which is someone else's.
-    func testAFileWhereTheTorrentsFolderShouldBeIsLeftAlone() async throws {
-        try write("Notes", "my notes")
-        add("a", name: "Notes", files: [["Notes", "a.txt"], ["Notes", "b.txt"]])
+    func testEmptyUnrelatedFolderIsPreserved() async throws {
+        try write("Pack/file.bin")
+        try FileManager.default.createDirectory(
+            at: save.appendingPathComponent("Pack/My empty folder"), withIntermediateDirectories: true
+        )
+        add("a", name: "Pack", files: [["Pack", "file.bin"]])
 
         await deleteWithFiles("a")
 
-        XCTAssertTrue(exists("Notes"))
-        XCTAssertEqual(trash.urls, [])
+        XCTAssertTrue(exists("Pack/My empty folder"))
+        XCTAssertEqual(trash.urls.map(\.lastPathComponent), ["file.bin"])
     }
 
-    /// Part of the folder can't be read, so there is no knowing what's in it.
-    /// Not knowing is not the same as "only ours": take the torrent's files one
-    /// by one and leave the rest.
-    func testAFolderThatCantBeFullyReadIsNotTakenWhole() async throws {
-        try write("Pack/a")
-        try write("Pack/locked/theirs.txt")
-        let locked = save.appendingPathComponent("Pack/locked")
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
-        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
-        add("a", name: "Pack", files: [["Pack", "a"]])
+    func testEmptyParentFoldersDoNotCountAsContent() throws {
+        try write("Pack/a/file.bin")
+        try write("Pack/keep.txt")
+        add("a", name: "Pack", files: [["Pack", "a", "file.bin"]])
 
-        await deleteWithFiles("a")
+        let result = store.trashContent(TorrentID("a"))
 
-        XCTAssertFalse(trash.urls.contains { $0.lastPathComponent == "Pack" }, "took the whole folder")
-        XCTAssertTrue(trash.urls.contains { $0.lastPathComponent == "a" })
+        XCTAssertEqual(result.movedItems, 1)
+        XCTAssertEqual(result.expectedItems, 1)
+        XCTAssertTrue(result.isComplete)
+    }
+
+    func testPartialDeletionIsNotComplete() throws {
+        try write("Pack/a.bin")
+        try write("Pack/keep.txt")
+        add("a", name: "Pack", files: [["Pack", "a.bin"], ["Pack", "missing.bin"]])
+
+        let result = store.trashContent(TorrentID("a"))
+
+        XCTAssertEqual(result.movedItems, 1)
+        XCTAssertEqual(result.expectedItems, 2)
+        XCTAssertFalse(result.isComplete)
+    }
+
+    func testDifferentNamesCannotDeleteSharedMetadataFile() async throws {
+        try write("shared.bin")
+        add("one", name: "First title", files: [["shared.bin"]])
+        add("two", name: "Other title", files: [["shared.bin"]])
+
+        await deleteWithFiles("one")
+
+        XCTAssertTrue(trash.urls.isEmpty)
+        XCTAssertTrue(exists("shared.bin"))
+        XCTAssertNotNil(store.snapshots[TorrentID("two")])
+    }
+
+    func testAliasAboveSaveFolderIsAllowed() throws {
+        let parent = try makeScratchDirectory(self, "alias-parent")
+        let alias = parent.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: save.deletingLastPathComponent())
+        try write("file.bin")
+        var service = ContentTrash()
+        service.moveToTrash = trash.move
+
+        let result = service.trashContent(
+            id: TorrentID("a"), saveDirectory: alias.appendingPathComponent(save.lastPathComponent),
+            files: [FileInfo(pathComponents: ["file.bin"], size: 1)]
+        )
+
+        XCTAssertTrue(result.isComplete)
+        XCTAssertEqual(trash.urls.map(\.lastPathComponent), ["file.bin"])
+    }
+
+    func testSaveFolderReplacedByLinkIsRefused() throws {
+        let parent = try makeScratchDirectory(self, "linked-save")
+        let alias = parent.appendingPathComponent("save")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: save)
+        try write("keep.bin")
+        var service = ContentTrash()
+        service.moveToTrash = trash.move
+
+        let result = service.trashContent(
+            id: TorrentID("a"), saveDirectory: alias,
+            files: [FileInfo(pathComponents: ["keep.bin"], size: 1)]
+        )
+
+        XCTAssertFalse(result.isComplete)
+        XCTAssertTrue(trash.urls.isEmpty)
+        XCTAssertTrue(exists("keep.bin"))
     }
 
     // MARK: - The plan itself

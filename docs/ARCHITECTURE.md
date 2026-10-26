@@ -67,7 +67,8 @@ No AppKit, no SwiftUI. Everything here is deterministic and unit-tested:
   every stop/keep decision), pauses downloads on battery and resumes them,
   watches for magnets that never resolve.
 - **CleanupCenter** recomputes the plan on demand and performs reversible
-  cleanup: remove from engine → move content to Trash → record event → toast.
+  cleanup: recheck eligibility → pause → recheck → move owned content to Trash
+  → remove from engine only after full success → record event → toast.
 
 ### The presentation layer
 
@@ -96,13 +97,15 @@ layout-churn section of `AGENTS.md`.
 `MagnetFlowCenter` is a five-state machine
 (`resolving → selecting → starting → completed → idle`). It presents in exactly
 one place: `MagnetFlowOverlayView`, a card at the top of the library. On
-metadata arrival the torrent is paused, all priorities default to selected;
+metadata arrival a held torrent is paused by the engine, all priorities default to selected;
 confirming applies priorities and resumes; cancelling removes quietly.
 
 Confirming is also where the download's folder is settled: the torrent was
 added to the default folder before anyone knew what it was, so
-`applyMagnetSelection` calls `setSaveDirectory` before `resume`, while nothing
-has been written yet.
+`applyMagnetSelection` awaits `setSaveDirectory` before `resume`. The engine
+confirms the disk move before the saved folder changes. A failed move keeps
+the original folder and leaves the torrent held. A request ID prevents an old
+add or folder change from taking over a newer confirmation card.
 
 There used to be a second presentation — a borderless panel pinned to the
 camera housing, with the in-window card as its fallback on Macs with no notch —
@@ -124,12 +127,36 @@ lists, so nothing about it resizes while it's on screen.
 - Engine batches arrive at ~1 Hz and are coalesced; per-row views depend only
   on their own snapshot.
 - All motion uses springs (interruptible by construction) or short ease-outs;
-  keyboard-initiated surfaces (command palette) do not animate at all.
+  keyboard input does not wait for a surface entrance to finish.
 - Numbers that change continuously render with monospaced digits everywhere.
 
 ## Testing strategy
 
 CurrentCore is fully covered (policies, planner, file trees, formatting,
 parser). SimulationEngine covers the add→resolve→download lifecycle without
-network access. The libtorrent path is exercised manually via
-`Scripts/make-app.sh` builds.
+network access. Offline `RealEngineTests` use real libtorrent sessions over loopback. Public
+network tests are opt-in. Bundled app and clean-Mac tests remain separate.
+
+## Settings recovery and simulation
+
+Settings reads report errors. If saved settings cannot be read, transfers stay
+blocked until the user chooses a connection. This block survives a relaunch.
+A fresh installation still uses the normal default.
+
+`-simulate` uses an in-memory database and does not load or save real torrent
+records or resume data. It runs without the updater or peer traffic.
+
+## Window update boundary
+
+`AppShell` passes the app to a layout host. `ShellPresentation` publishes only
+the section, selected torrent ID, and selected pause state. Transfer-rate and
+progress ticks do not change this state. The list and inspector observe the
+library within their own child views. Ready-to-clean results observe cleanup
+changes and apply the current search.
+
+Bulk file priorities use one traversal and one update. Confirmation sends the
+engine priorities once and waits before resuming the held download.
+
+Continuous paint uses a 30 Hz timeline. Native control springs keep their normal
+frame rate. Reduce Motion stops continuous paint and snaps selection geometry;
+it keeps state feedback visible.

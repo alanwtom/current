@@ -40,6 +40,8 @@ public actor LibtorrentEngine: TorrentEngine {
         case removed(TorrentID)
         case resumeData(TorrentID, Data?)
         case listen(ListenReport)
+        case storageMoved(TorrentID, URL)
+        case storageMoveFailed(TorrentID, EngineFailure)
     }
 
     private nonisolated let inbound: AsyncStream<Inbound>.Continuation
@@ -140,14 +142,11 @@ public actor LibtorrentEngine: TorrentEngine {
         case .removed(let id): forgot(id)
         case .resumeData(let id, let data): resumeDataArrived(id, data)
         case .listen(let report): listenChanged(report)
+        case .storageMoved(let id, let directory): storageMoved(id, directory)
+        case .storageMoveFailed(let id, let failure): failStorageMove(id, failure)
         }
     }
 
-    /// Where the DHT routing table lives between launches.
-    ///
-    /// Beside the library database rather than in a cache directory: a cold DHT
-    /// is the difference between a magnet resolving in seconds and appearing to
-    /// do nothing, so this is worth keeping rather than something the system
     /// Points OpenSSL at the certificate bundle shipped inside the app.
     ///
     /// The copy of OpenSSL travelling in `Contents/Frameworks` was built by
@@ -173,6 +172,11 @@ public actor LibtorrentEngine: TorrentEngine {
         setenv("SSL_CERT_FILE", bundled.path, 1)
     }
 
+    /// Where the DHT routing table lives between launches.
+    ///
+    /// Beside the library database rather than in a cache directory: a cold DHT
+    /// is the difference between a magnet resolving in seconds and appearing to
+    /// do nothing, so this is worth keeping rather than something the system
     /// may evict. A nil-safe empty string disables persistence in the shim,
     /// which is what happens if the directory can't be created.
     private static func dhtStatePath() -> String {
@@ -206,8 +210,59 @@ public actor LibtorrentEngine: TorrentEngine {
         for waiter in resumePending.values {
             waiter.resume(returning: nil)
         }
+        for waiter in storagePending.values {
+            waiter.resume(throwing: EngineFailure(kind: .engineShutdown, technicalMessage: "Engine stopped"))
+        }
         inbound.finish()
         continuation.finish()
+    }
+
+    nonisolated private func ingestStats(_ payload: UnsafeRawPointer) {
+        let batch = payload.assumingMemoryBound(to: lt_stats_batch.self).pointee
+        guard batch.count > 0 else { return }
+        let rows = UnsafeBufferPointer(start: batch.rows, count: Int(batch.count))
+        let raw: [RawStats] = rows.map { row in
+            RawStats(
+                id: String(cString: row.id),
+                stateCode: Int(row.state),
+                progress: row.progress,
+                totalWanted: Int64(bitPattern: row.total_wanted),
+                totalDownloaded: Int64(bitPattern: row.total_downloaded),
+                totalUploaded: Int64(bitPattern: row.total_uploaded),
+                downloadRate: row.download_rate,
+                uploadRate: row.upload_rate,
+                connectedSeeds: row.connected_seeds,
+                connectedPeers: row.connected_peers,
+                knownSeeds: row.known_seeds,
+                swarmSeeds: row.swarm_seeds,
+                swarmPeers: row.swarm_peers,
+                seedSeconds: row.seed_seconds,
+                activeSeconds: row.active_seconds,
+                hasMetadata: row.has_metadata != 0
+            )
+        }
+        inbound.yield(.stats(raw))
+    }
+
+    nonisolated private func ingestStorage(kind: lt_event_kind, payload: UnsafeRawPointer) -> Bool {
+        switch kind {
+        case LT_EVENT_STORAGE_MOVED:
+            let info = payload.assumingMemoryBound(to: lt_storage_info.self).pointee
+            inbound.yield(.storageMoved(
+                TorrentID(String(cString: info.id)), URL(fileURLWithPath: String(cString: info.path))
+            ))
+            return true
+
+        case LT_EVENT_STORAGE_MOVE_FAILED:
+            let info = payload.assumingMemoryBound(to: lt_error_info.self).pointee
+            inbound.yield(.storageMoveFailed(
+                TorrentID(String(cString: info.id)),
+                EngineFailure(kind: .savePathUnavailable, technicalMessage: String(cString: info.message))
+            ))
+
+            return true
+        default: return false
+        }
     }
 
     // MARK: - Inbound translation (called from the libtorrent alert thread)
@@ -216,39 +271,18 @@ public actor LibtorrentEngine: TorrentEngine {
         kind: lt_event_kind, payload: UnsafeRawPointer?, count: Int32
     ) {
         guard let payload else { return }
+        if ingestStorage(kind: kind, payload: payload) { return }
 
         switch kind {
         case LT_EVENT_STATS:
-            let batch = payload.assumingMemoryBound(to: lt_stats_batch.self).pointee
-            guard batch.count > 0 else { return }
-            let rows = UnsafeBufferPointer(start: batch.rows, count: Int(batch.count))
-            let raw: [RawStats] = rows.map { row in
-                RawStats(
-                    id: String(cString: row.id),
-                    stateCode: Int(row.state),
-                    progress: row.progress,
-                    totalWanted: Int64(bitPattern: row.total_wanted),
-                    totalDownloaded: Int64(bitPattern: row.total_downloaded),
-                    totalUploaded: Int64(bitPattern: row.total_uploaded),
-                    downloadRate: row.download_rate,
-                    uploadRate: row.upload_rate,
-                    connectedSeeds: row.connected_seeds,
-                    connectedPeers: row.connected_peers,
-                    knownSeeds: row.known_seeds,
-                    swarmSeeds: row.swarm_seeds,
-                    swarmPeers: row.swarm_peers,
-                    seedSeconds: row.seed_seconds,
-                    activeSeconds: row.active_seconds,
-                    hasMetadata: row.has_metadata != 0
-                )
-            }
-            inbound.yield(.stats(raw))
+            ingestStats(payload)
 
         case LT_EVENT_METADATA:
             let info = payload.assumingMemoryBound(to: lt_metadata_info.self).pointee
             let id = TorrentID(String(cString: info.id))
             let name = String(cString: info.name)
-            let paths = String(cString: info.file_paths).components(separatedBy: "\n")
+            let paths = UnsafeBufferPointer(start: info.file_paths, count: Int(info.file_count))
+                .map { String(cString: $0!) }
             let sizes = UnsafeBufferPointer(
                 start: info.file_sizes, count: Int(info.file_count)
             ).map(Int64.init)
@@ -375,6 +409,7 @@ public actor LibtorrentEngine: TorrentEngine {
     }
 
     private func forgot(_ id: TorrentID) {
+        failStorageMove(id, EngineFailure(kind: .engineShutdown, technicalMessage: "Torrent removed"))
         displayNames[id] = nil
         saveDirectories[id] = nil
         addedDates[id] = nil
@@ -401,7 +436,11 @@ public actor LibtorrentEngine: TorrentEngine {
         let result: Int32
         switch source {
         case .magnet(let uri):
-            result = uri.withCString { uriC in
+            // URL schemes are case-insensitive; libtorrent's parser is not.
+            // Keep query spelling intact: tracker paths and names may use case.
+            let normalized = uri.prefix(7).lowercased() == "magnet:"
+                ? "magnet:" + String(uri.dropFirst(7)) : uri
+            result = normalized.withCString { uriC in
                 saveDirectory.path.withCString { pathC in
                     withUnsafeMutablePointer(to: &errorKind) { kindPtr in
                         lt_add_magnet(session, uriC, pathC, hold, &idBuffer, &errorBuffer, kindPtr)
@@ -450,7 +489,7 @@ public actor LibtorrentEngine: TorrentEngine {
     }
 
     private func register(_ id: TorrentID, saveDirectory: URL) {
-        guard !id.raw.isEmpty else { return }
+        guard !id.raw.isEmpty, saveDirectories[id] == nil else { return }
         saveDirectories[id] = saveDirectory
         addedDates[id] = Date()
         if displayNames[id] == nil {
@@ -476,22 +515,46 @@ public actor LibtorrentEngine: TorrentEngine {
         logEngineFailure(result, "remove", id)
     }
 
-    public func setSaveDirectory(_ id: TorrentID, _ directory: URL) {
-        guard let session else { return }
-        // The folder has to exist before libtorrent is pointed at it — the user
-        // may have made a new one in the chooser, and `move_storage` on a
-        // missing path fails silently from our side.
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let result = id.raw.withCString { idC in
-            directory.path.withCString { pathC in
-                lt_set_save_path(session, idC, pathC)
-            }
+    private var storagePending: [TorrentID: CheckedContinuation<Void, Error>] = [:]
+
+    /// A move is complete only when the disk worker confirms it.
+    public func setSaveDirectory(_ id: TorrentID, _ directory: URL) async throws {
+        guard let session else {
+            throw EngineFailure(kind: .engineShutdown, technicalMessage: "Engine stopped")
         }
-        logEngineFailure(result, "setSaveDirectory", id)
-        guard result == 0 else { return }
-        // Snapshots read their directory from this map, not from libtorrent, so
-        // it has to move too or the app keeps revealing the old folder in Finder.
+        guard storagePending[id] == nil else {
+            throw EngineFailure(kind: .savePathUnavailable, technicalMessage: "A folder change is in progress")
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            throw EngineFailure(kind: .savePathUnavailable, technicalMessage: error.localizedDescription)
+        }
+        let result = id.raw.withCString { idC in
+            directory.path.withCString { pathC in lt_set_save_path(session, idC, pathC) }
+        }
+        guard result == 0 else {
+            throw EngineFailure(kind: .savePathUnavailable, technicalMessage: "The engine refused the folder change")
+        }
+        try await withCheckedThrowingContinuation { storagePending[id] = $0 }
+    }
+
+    private func storageMoved(_ id: TorrentID, _ directory: URL) {
+        guard let waiter = storagePending.removeValue(forKey: id) else { return }
         saveDirectories[id] = directory
+        waiter.resume()
+    }
+
+    private func failStorageMove(_ id: TorrentID, _ failure: EngineFailure) {
+        storagePending.removeValue(forKey: id)?.resume(throwing: failure)
+    }
+
+    private func flushStorageWaiters() {
+        let waiters = storagePending
+        storagePending.removeAll()
+        for waiter in waiters.values {
+            waiter.resume(throwing: EngineFailure(kind: .engineShutdown, technicalMessage: "Engine stopped"))
+        }
     }
 
     public func forceRecheck(_ id: TorrentID) {
@@ -622,6 +685,7 @@ public actor LibtorrentEngine: TorrentEngine {
             self.session = nil
         }
         flushResumeWaiters()
+        flushStorageWaiters()
     }
 
     // MARK: - Mapping helpers

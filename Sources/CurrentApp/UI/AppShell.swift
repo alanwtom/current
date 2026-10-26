@@ -24,7 +24,16 @@ import CurrentCore
 ///   `~/Library/Logs/DiagnosticReports/` for new `Current-*.ips` files.
 struct AppShell: View {
     @EnvironmentObject private var app: AppEnvironment
-    @EnvironmentObject private var store: LibraryStore
+
+    var body: some View {
+        AppShellLayout(app: app)
+    }
+}
+
+private struct AppShellLayout: View {
+    @ObservedObject private var app: AppEnvironment
+    private let store: LibraryStore
+    @StateObject private var presentation: ShellPresentation
     @EnvironmentObject private var flow: MagnetFlowCenter
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -39,18 +48,17 @@ struct AppShell: View {
 
     @FocusState private var isSearchFocused: Bool
 
-    private var filteredTorrents: [TorrentSnapshot] {
-        if store.activeSection == .readyToClean {
-            return app.cleanup.plan.candidates.map(\.snapshot)
-        }
-        return store.visibleTorrents
+    init(app: AppEnvironment) {
+        self.app = app
+        self.store = app.library
+        _presentation = StateObject(wrappedValue: ShellPresentation(library: app.library))
     }
 
     /// The inspector needs a selected torrent to describe, and needs the window
     /// to be wide enough to afford it — at 380pt a 320pt panel would leave
     /// nothing for the list it is describing.
     private var showsInspector: Bool {
-        isInspectorVisible && selectedSnapshot != nil && !metrics.isCompact
+        isInspectorVisible && presentation.state.selectedID != nil && !metrics.isCompact
     }
 
     private var showsSidebar: Bool {
@@ -295,7 +303,7 @@ struct AppShell: View {
     /// the window can't grant.
     private func sidebarColumn(width: CGFloat) -> some View {
         SidebarView(
-            section: store.activeSection,
+            section: presentation.state.section,
             onSelect: { next in
                 withAnimation(Motion.spring(Motion.quick, reduceMotion: reduceMotion)) {
                     store.activeSection = next
@@ -315,7 +323,7 @@ struct AppShell: View {
     /// row no width and can't push the pane around while they animate. Each one
     /// covers exactly the gap it lives in.
     private var contentColumn: some View {
-        LibraryList(torrents: filteredTorrents)
+        LiveLibraryContent()
             .insetPane()
             .overlay(alignment: .leading) {
                 if showsSidebar {
@@ -339,23 +347,12 @@ struct AppShell: View {
 
     @ViewBuilder
     private func inspectorColumn(width: CGFloat) -> some View {
-        if let snapshot = selectedSnapshot {
-            InspectorPanel(snapshot: snapshot)
+        if let id = presentation.state.selectedID {
+            LiveInspectorContent(id: id)
                 .frame(width: width)
                 .opacity(showsInspector ? 1 : 0)
                 .clipped()
         }
-    }
-
-    // MARK: - Selection plumbing
-
-    private var selectedSnapshot: TorrentSnapshot? {
-        guard let id = sortedSelection.first else { return nil }
-        return store.snapshot(for: id)
-    }
-
-    private var sortedSelection: [TorrentID] {
-        store.orderedIDs.filter { store.selection.contains($0) }
     }
 
     private var removalTitle: String {
@@ -422,9 +419,30 @@ struct AppShell: View {
         ]
     }
 
-    private var areSelectedPaused: Bool {
-        !store.selection.isEmpty && store.selection.allSatisfy { id in
-            store.snapshot(for: id)?.state.isPaused ?? false
+    private var areSelectedPaused: Bool { presentation.state.areSelectedPaused }
+
+}
+
+/// Engine ticks redraw the live content, without rebuilding the window layout.
+private struct LiveLibraryContent: View {
+    @EnvironmentObject private var store: LibraryStore
+    @EnvironmentObject private var cleanup: CleanupCenter
+
+    var body: some View {
+        let torrents = store.activeSection == .readyToClean
+            ? cleanup.plan.candidates.map(\.snapshot).filter { store.matches($0) }
+            : store.visibleTorrents
+        LibraryList(torrents: torrents)
+    }
+}
+
+private struct LiveInspectorContent: View {
+    @EnvironmentObject private var store: LibraryStore
+    let id: TorrentID
+
+    var body: some View {
+        if let snapshot = store.snapshot(for: id) {
+            InspectorPanel(snapshot: snapshot)
         }
     }
 }
@@ -559,7 +577,7 @@ struct AddMagnetSheet: View {
                         .typeStyle(Typo.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
 
             HStack(spacing: Space.m) {
@@ -578,12 +596,12 @@ struct AddMagnetSheet: View {
         // No background of its own any more: `ModalSurface` draws the card, so
         // this gets the same fill, edge, highlight and shadow as every other
         // floating surface instead of a flat rectangle in an AppKit sheet.
-        .animation(Motion.spring(Motion.quick), value: validationError)
+        .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: validationError)
     }
 
     private var trimmedURI: String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.hasPrefix("magnet:") ? trimmed : nil
+        return trimmed.range(of: "magnet:", options: [.anchored, .caseInsensitive]) != nil ? trimmed : nil
     }
 
     private var looksLikePlainTextWithMagnet: Bool {

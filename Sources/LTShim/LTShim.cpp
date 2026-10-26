@@ -302,14 +302,18 @@ void dispatch_metadata(SessionContext* ctx, torrent_handle const& h) {
     // only for its duration.
     std::string id = hex_id(h);
     std::string name = ti->name();
-    std::string joined_paths;
+    std::vector<std::string> paths;
+    paths.reserve(static_cast<size_t>(count));
     std::vector<uint64_t> sizes;
     sizes.reserve(static_cast<size_t>(count));
     for (file_index_t i{0}; i != fs.end_file(); ++i) {
-        if (!joined_paths.empty()) joined_paths.push_back('\n');
-        joined_paths.append(fs.file_path(i));
+        paths.push_back(fs.file_path(i));
         sizes.push_back(static_cast<uint64_t>(fs.file_size(i)));
     }
+
+    std::vector<char const*> path_pointers;
+    path_pointers.reserve(paths.size());
+    for (auto const& path : paths) path_pointers.push_back(path.c_str());
 
     lt_metadata_info info{};
     info.id = id.c_str();
@@ -318,7 +322,7 @@ void dispatch_metadata(SessionContext* ctx, torrent_handle const& h) {
     info.piece_count = static_cast<int32_t>(ti->num_pieces());
     info.piece_length = static_cast<int32_t>(ti->piece_length());
     info.file_count = count;
-    info.file_paths = joined_paths.c_str();
+    info.file_paths = path_pointers.data();
     info.file_sizes = sizes.data();
     if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_METADATA, &info, 1);
 }
@@ -462,6 +466,8 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
     // Same reasoning as the three switches below, and the gap is closed by
     // `AppEnvironment` pushing its configuration during its own init.
     pack.set_str(settings_pack::listen_interfaces, "");
+    pack.set_str(settings_pack::outgoing_interfaces, "current-no-net");
+    pack.set_bool(settings_pack::enable_dht, false);
 
     // The session starts with every outward-facing feature OFF, and the app
     // turns on whatever the user actually asked for in its first
@@ -561,6 +567,15 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                     }
                 } else if (auto const* err = alert_cast<torrent_error_alert>(a)) {
                     dispatch_error(ctx, err->handle, err->message(), err->error);
+                } else if (auto const* moved = alert_cast<storage_moved_alert>(a)) {
+                    std::string id = hex_id(moved->handle);
+                    lt_storage_info info{id.c_str(), moved->storage_path()};
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_STORAGE_MOVED, &info, 1);
+                } else if (auto const* failed = alert_cast<storage_moved_failed_alert>(a)) {
+                    std::string id = hex_id(failed->handle);
+                    std::string message = failed->message();
+                    lt_error_info info{id.c_str(), LT_ERROR_SAVE_PATH, message.c_str()};
+                    if (ctx->callback) ctx->callback(ctx->user, LT_EVENT_STORAGE_MOVE_FAILED, &info, 1);
                 } else if (auto const* srd = alert_cast<save_resume_data_alert>(a)) {
                     std::string id = hex_id(srd->handle);
                     auto buf = write_resume_data_buf(srd->params);
@@ -652,8 +667,8 @@ lt_session* lt_session_create(lt_event_callback callback, void* context,
                 row.state = map_state(st);
                 row.progress = static_cast<double>(st.progress_ppm) / 1000000.0;
                 row.total_wanted = static_cast<uint64_t>(st.total_wanted);
-                row.total_downloaded = static_cast<uint64_t>(st.total_payload_download);
-                row.total_uploaded = static_cast<uint64_t>(st.total_payload_upload);
+                row.total_downloaded = static_cast<uint64_t>(st.all_time_download);
+                row.total_uploaded = static_cast<uint64_t>(st.all_time_upload);
                 row.download_rate = st.download_payload_rate;
                 row.upload_rate = st.upload_payload_rate;
                 row.connected_seeds = st.num_seeds;
@@ -790,8 +805,8 @@ int lt_add_torrent_data(lt_session* opaque, const uint8_t* data, size_t len,
 /// fetch their metadata from the swarm like a magnet would, rather than being
 /// lost.
 int lt_add_resume_data(lt_session* opaque, const uint8_t* data, size_t len,
-                       const char* save_path, int paused, char out_id[41],
-                       char out_error[256], int* out_error_kind) {
+                       const char* save_path, int paused, char out_id[41], char out_error[256],
+                       int* out_error_kind) {
     auto* ctx = reinterpret_cast<SessionContext*>(opaque);
     if (!ctx || !ctx->ses) return -1;
     try {
@@ -806,8 +821,6 @@ int lt_add_resume_data(lt_session* opaque, const uint8_t* data, size_t len,
         }
         if (save_path && save_path[0] != '\0') atp.save_path = save_path;
         if (paused) {
-            // Whatever the blob says. Not auto-managed either, or libtorrent's
-            // queue would start it again on its own; lt_resume is the way on.
             atp.flags |= torrent_flags::paused;
             atp.flags &= ~torrent_flags::auto_managed;
         }

@@ -108,18 +108,24 @@ final class AppEnvironment: ObservableObject {
     }
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Current", isDirectory: true)
+        // Only the separately identified updater test bundle can choose a
+        // scratch library. A production app ignores this test-only plist key.
+        let testSupport = Bundle.main.bundleIdentifier == "org.current.torrent.update-test"
+            ? Bundle.main.object(forInfoDictionaryKey: "CurrentUpdateTestSupportPath") as? String
+            : nil
+        let appSupport = testSupport.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Current", isDirectory: true)
         Self.createPrivateDirectory(at: appSupport)
 
         let simulate = ProcessInfo.processInfo.arguments.contains("-simulate")
 
         let engine: any TorrentEngine = simulate
             ? SimulationEngine()
-            : LibtorrentEngine()
+            : LibtorrentEngine(statePath: appSupport.appendingPathComponent("dht.state").path)
         self.engine = engine
 
-        let database = AppDatabase(url: appSupport.appendingPathComponent("library.sqlite"))
+        let database = AppDatabase(url: appSupport.appendingPathComponent("library.sqlite"), inMemory: simulate)
         self.database = database
         // SQLite has just created its files at the umask; take them to 0600.
         Self.tightenContents(of: appSupport)
@@ -147,14 +153,14 @@ final class AppEnvironment: ObservableObject {
         self.network = NetworkMonitor()
         self.magnetFlow = MagnetFlowCenter()
         self.toasts = ToastCenter()
-        if database.recoveredFromUnreadableFile {
+        if settings.networkBinding == .needsReview {
             // Said out loud because the defaults it fell back to include the
             // network binding, and "any connection" is the opposite of what
             // someone who confined their transfers wants.
             toasts.show(
                 .warning,
-                title: "Settings were reset",
-                message: "The library file couldn't be read. Check Network settings.",
+                title: "Check Network settings",
+                message: "Settings could not be read. Transfers are blocked until you choose a connection.",
                 coalesceKey: "database.recovered"
             )
         }
@@ -519,13 +525,15 @@ final class AppEnvironment: ObservableObject {
         // names is fetched until someone has said yes on the card — or, if the
         // card is busy with another download, pressed Start on this one.
         let claimsFlow = magnetFlow.beginResolving(nameHint: hint)
+        let request = claimsFlow ? magnetFlow.requestID : nil
+        let destination = settings.downloadsFolder
         do {
-            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder, held: true)
-            if alreadyInLibrary(id, claimsFlow: claimsFlow) { return }
-            library.registerAdded(id, name: hint, magnet: uri, saveDirectory: settings.downloadsFolder)
-            claimOrPark(id, claimsFlow: claimsFlow)
+            let id = try await engine.addMagnet(uri, saveDirectory: destination, held: true)
+            if alreadyInLibrary(id, request: request) { return }
+            library.registerAdded(id, name: hint, magnet: uri, saveDirectory: destination)
+            claimOrPark(id, request: request)
         } catch {
-            if claimsFlow { magnetFlow.dismiss() }
+            if magnetFlow.ownsRequest(request) { magnetFlow.resolveFailed(message: error.localizedDescription) }
             let failure = (error as? EngineFailure) ?? EngineFailure(kind: .unknown, technicalMessage: error.localizedDescription)
             toasts.show(.warning, title: failure.title, message: failure.explanation)
         }
@@ -535,26 +543,23 @@ final class AppEnvironment: ObservableObject {
     /// error. Treated as new, it got the confirm card — about a download that
     /// was already running, where choosing another folder would *move its
     /// files*. So it's caught here, before anything is registered or asked.
-    private func alreadyInLibrary(_ id: TorrentID, claimsFlow: Bool) -> Bool {
+    private func alreadyInLibrary(_ id: TorrentID, request: UUID?) -> Bool {
         guard library.snapshot(for: id) != nil || library.record(for: id) != nil else { return false }
-        if claimsFlow { magnetFlow.dismiss() }
+        if magnetFlow.ownsRequest(request) { magnetFlow.dismiss() }
         toasts.show(.info, title: "Already in your library", message: "This torrent was added earlier.")
         return true
     }
 
     /// Ties a held torrent to the card, or remembers to announce it later.
-    private func claimOrPark(_ id: TorrentID, claimsFlow: Bool) {
+    private func claimOrPark(_ id: TorrentID, request: UUID?) {
         rememberAdded(id)
-        if claimsFlow, !isStillResolving {
+        if request != nil, !magnetFlow.ownsRequest(request) {
             // The card was cancelled while the engine was still adding this.
             // Cancel means no, so it goes rather than waiting in the library.
-            Task {
-                await engine.remove(id, deleteFiles: false)
-                await library.remove([id], deleteFiles: false)
-            }
+            Task { await library.remove([id], deleteFiles: false) }
             return
         }
-        if claimsFlow {
+        if magnetFlow.ownsRequest(request) {
             magnetFlow.awaiting(id)
             // Metadata can beat the add's return — a .torrent file carries it,
             // and its alert races this await. It was cached, just not claimed.
@@ -572,10 +577,11 @@ final class AppEnvironment: ObservableObject {
     /// no question to ask yet: which files and where it goes are decided from
     /// metadata that cannot arrive until the connection is back.
     private func addWhileBlocked(_ uri: String, name: String?) async {
+        let destination = settings.downloadsFolder
         do {
-            let id = try await engine.addMagnet(uri, saveDirectory: settings.downloadsFolder, held: true)
-            if alreadyInLibrary(id, claimsFlow: false) { return }
-            library.registerAdded(id, name: name, magnet: uri, saveDirectory: settings.downloadsFolder)
+            let id = try await engine.addMagnet(uri, saveDirectory: destination, held: true)
+            if alreadyInLibrary(id, request: nil) { return }
+            library.registerAdded(id, name: name, magnet: uri, saveDirectory: destination)
             await engine.pause(id)
             rememberAdded(id)
             toasts.show(
@@ -615,15 +621,17 @@ final class AppEnvironment: ObservableObject {
         // opening a folder of ten .torrent files sane: the first one asks, the
         // rest go to the default folder rather than queueing ten questions.
         let claimsFlow = magnetFlow.beginResolving(nameHint: name)
+        let request = claimsFlow ? magnetFlow.requestID : nil
+        let destination = settings.downloadsFolder
         do {
             // Held only when it's going to be asked about. The rest go straight
             // to the default folder, which is the rule above — and a local file
             // someone opened, not a link a page fired.
-            let id = try await engine.addTorrentFile(data, saveDirectory: settings.downloadsFolder, held: claimsFlow)
-            if alreadyInLibrary(id, claimsFlow: claimsFlow) { return }
-            library.registerAdded(id, name: name, magnet: nil, saveDirectory: settings.downloadsFolder)
+            let id = try await engine.addTorrentFile(data, saveDirectory: destination, held: claimsFlow)
+            if alreadyInLibrary(id, request: request) { return }
+            library.registerAdded(id, name: name, magnet: nil, saveDirectory: destination)
             if claimsFlow {
-                claimOrPark(id, claimsFlow: true)
+                claimOrPark(id, request: request)
             } else {
                 rememberAdded(id)
                 toasts.show(.info, title: "Added", message: name)
@@ -633,10 +641,10 @@ final class AppEnvironment: ObservableObject {
             // put into `.resolving` a moment ago for a torrent that now doesn't
             // exist, and a card left spinning about nothing is the exact bug the
             // magnet timeout already had to be fixed for.
-            if claimsFlow { magnetFlow.dismiss() }
+            if magnetFlow.ownsRequest(request) { magnetFlow.dismiss() }
             toasts.show(.info, title: "Already in your library", message: "This torrent was added earlier.")
         } catch {
-            if claimsFlow { magnetFlow.dismiss() }
+            if magnetFlow.ownsRequest(request) { magnetFlow.dismiss() }
             toasts.show(.warning, title: "Couldn't add torrent", message: error.localizedDescription)
         }
     }
@@ -685,7 +693,9 @@ final class AppEnvironment: ObservableObject {
 
     /// Applies the user's file selection and starts the download.
     func applyMagnetSelection(_ priorities: [FilePriority]) async {
-        guard case .selecting(let id) = magnetFlow.stage else { return }
+        guard case .selecting(let id) = magnetFlow.stage,
+              let request = magnetFlow.beginConfirmation() else { return }
+        defer { magnetFlow.finishConfirmation(request) }
 
         // Where it goes is settled here, not when it was added. At add time the
         // magnet was an unresolved hash — there was nothing to decide against,
@@ -693,7 +703,16 @@ final class AppEnvironment: ObservableObject {
         // screen, and this is the last moment before anything touches the disk.
         let destination = downloadDestination
         if library.records[id]?.saveDirectory != destination {
-            await engine.setSaveDirectory(id, destination)
+            do {
+                try await engine.setSaveDirectory(id, destination)
+            } catch {
+                guard magnetFlow.ownsRequest(request) else { return }
+                let failure = (error as? EngineFailure)
+                    ?? EngineFailure(kind: .savePathUnavailable, technicalMessage: error.localizedDescription)
+                toasts.show(.warning, title: failure.title, message: failure.explanation)
+                return
+            }
+            guard magnetFlow.ownsRequest(request), case .selecting(id) = magnetFlow.stage else { return }
             library.updateSaveDirectory(id, destination)
         }
         if magnetFlow.remembersDestination {
@@ -701,15 +720,17 @@ final class AppEnvironment: ObservableObject {
             settings.asksForDownloadLocation = false
         }
 
-        library.setPriorities(priorities, for: id)
+        library.setPriorities(priorities, for: id, sendsToEngine: false)
         // Awaited before the resume, not left to the store's own fire-and-
         // forget send: resuming is what lets a held torrent request pieces, and
         // the files you just unticked must already be off by then.
         await engine.setFilePriorities(id, priorities)
+        guard magnetFlow.ownsRequest(request), case .selecting(id) = magnetFlow.stage else { return }
         magnetFlow.confirmSelection()
         await engine.resume(id)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 700_000_000)
+            guard magnetFlow.ownsRequest(request) else { return }
             magnetFlow.handoffFinished()
         }
     }
@@ -723,35 +744,12 @@ final class AppEnvironment: ObservableObject {
     }
 
     func cancelMagnetSelection() async {
-        // Cancelling while it's still resolving removes it too. The card used
-        // to go away and leave the magnet running — so it resolved a minute
-        // later and downloaded every file, after the user had said no.
-        let resolvingID: TorrentID? = if case .resolving = magnetFlow.stage { magnetFlow.awaitedID } else { nil }
-        if let id = resolvingID {
-            await engine.remove(id, deleteFiles: false)
-            await library.remove([id], deleteFiles: false)
-        } else if case .selecting(let id) = magnetFlow.stage {
-            // `deleteFiles: false`, and this is a security fix rather than a
-            // tidiness regression.
-            //
-            // It used to pass `true`, on the reasoning that a magnet paused for
-            // file selection has written nothing yet, so there is nothing to
-            // delete. That reasoning is about the *torrent*; the flag is about
-            // the *path*. libtorrent's `session::delete_files` erases every
-            // file in the torrent's file list underneath the save folder,
-            // whether this app put it there or not. Re-add a magnet for
-            // something already sitting in your downloads folder, press Cancel
-            // on the "which files?" card, and it erased the copy you already
-            // had — not to the Trash, gone.
-            //
-            // A Cancel button must not be able to destroy data. Worst case now
-            // is a few stray part-files, which is the failure the app is
-            // supposed to have: it never unlinks on its own, and everything it
-            // does remove goes to the Trash.
-            await engine.remove(id, deleteFiles: false)
-            await library.remove([id], deleteFiles: false)
-        }
-        magnetFlow.dismiss()
+        // Invalidate ownership first. A pending move or priority update can
+        // finish during removal, and must not resume a cancelled download.
+        guard let id = magnetFlow.cancelSelection() else { return }
+        // Held content can already exist on disk from another download.
+        // Cancel removes the engine entry; it never deletes that content.
+        await library.remove([id], deleteFiles: false)
     }
 
     // MARK: - Bulk actions

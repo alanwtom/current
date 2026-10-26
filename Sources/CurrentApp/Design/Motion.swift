@@ -44,6 +44,9 @@ enum Motion {
     /// a revolution in 380 ms reads as panic. This was a hand-typed 0.85 sitting
     /// in `Spinner`, which is exactly how a scale stops being one.
     static let revolution: TimeInterval = 0.85
+    /// Thirty frames are enough for the small looping status indicators.
+    static let loopFrameInterval: TimeInterval = 1.0 / 30
+    static let indeterminatePeriod: TimeInterval = expressive * 4
 
     /// Reduced Motion keeps feedback but drops movement distance.
     static func adaptive(_ duration: TimeInterval, reduceMotion: Bool) -> Animation {

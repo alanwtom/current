@@ -83,6 +83,13 @@ final class SimulationEngineTests: XCTestCase {
 
 final class DropParserTests: XCTestCase {
 
+    func testUppercaseMagnetsUseTheSamePasteAndDropPaths() {
+        let uri = "MAGNET:?xt=urn:btih:abc123&dn=Release"
+        XCTAssertEqual(DropParser.magnets(in: "Link: " + uri), [uri])
+        XCTAssertEqual(DropParser.parse(pasteboard: [uri]), [.magnet(uri)])
+        XCTAssertEqual(DropParser.parse(pasteboard: [], urls: [URL(string: uri)!]), [.magnet(uri)])
+    }
+
     func testExtractsMagnetsFromText() {
         let text = """
         Check these out:

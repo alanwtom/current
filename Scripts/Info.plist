@@ -103,6 +103,9 @@
          costs nothing. -->
     <key>SUVerifyUpdateBeforeExtraction</key>
     <true/>
+    <!-- Authenticate feed metadata as well as the downloaded archive. -->
+    <key>SURequireSignedFeed</key>
+    <true/>
     <!-- Everything this app writes is marked as downloaded from the internet,
          exactly as a browser marks its downloads. So an app, installer or
          script that arrives in a torrent meets Gatekeeper's check the first

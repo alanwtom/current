@@ -207,7 +207,7 @@ struct RadioGroup<Value: Hashable>: View {
                 Circle()
                     .fill(Theme.accent)
                     .frame(width: 7, height: 7)
-                    .scaleEffect(isSelected ? 1 : 0.01)
+                    .scaleEffect(reduceMotion || isSelected ? 1 : 0.01)
                     .opacity(isSelected ? 1 : 0)
             }
             .animation(Motion.gestureSpring(Motion.quick, reduceMotion: reduceMotion), value: isSelected)

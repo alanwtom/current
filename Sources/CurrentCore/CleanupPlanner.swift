@@ -79,57 +79,17 @@ public enum CleanupPlanner {
 
         for snapshot in snapshots {
             let policy = policies[snapshot.id] ?? .defaultPolicy
-            var exclusions: [CleanupExclusion] = []
-
-            switch snapshot.state {
-            case .seeding, .completed:
-                break
-            case .failed(let failure):
-                // Failed torrents are never touched by automation.
-                _ = failure
+            if case .failed = snapshot.state {
                 kept.append(KeptTorrent(snapshot: snapshot, reasons: ["Needs your attention"]))
                 continue
-            default:
-                exclusions.append(.incomplete)
             }
-
-            if !snapshot.hasMetadata {
-                exclusions.append(.incomplete)
-            }
-
-            if snapshot.pinned {
-                exclusions.append(.pinned)
-            }
-
-            if snapshot.state.isActive && (snapshot.downloadRate > 1 || snapshot.uploadRate > 1) {
-                exclusions.append(.stillTransferring)
-            }
-
-            if sharedContent[ContentLocation.contentKey(
+            let key = ContentLocation.contentKey(
                 saveDirectory: snapshot.saveDirectory, files: [], name: snapshot.name
-            )] == true {
-                exclusions.append(.sharedWithOther)
-            }
-
-            let decision = SeedEvaluator.evaluate(snapshot: snapshot, policy: policy, now: now)
-            if !snapshot.state.isComplete {
-                // Incomplete already recorded above; skip goal evaluation noise.
-            } else if !decision.goalMet {
-                exclusions.append(.seedGoalUnmet)
-            } else if case .archive = policy {
-                exclusions.append(.seedGoalUnmet)
-            }
-
-            // A swarm we can't assess is excluded too, and that is on purpose:
-            // this gate decides what the app removes from disk on its own, and
-            // the conservative answer to "is this torrent rare?" when nobody
-            // has told us is *don't touch it*. It is the same behaviour as
-            // before by accident — every paused torrent used to read as rare —
-            // except now it is a decision rather than a measurement artefact.
+            )
             let health = SwarmHealth(swarm: snapshot.swarm)
-            if health == .rare || health == .unknown {
-                exclusions.append(.rareSwarm)
-            }
+            let exclusions = exclusions(
+                snapshot, policy: policy, shared: sharedContent[key] == true, health: health, now: now
+            )
 
             if !exclusions.isEmpty {
                 kept.append(
@@ -150,6 +110,28 @@ public enum CleanupPlanner {
         }
 
         return CleanupPlan(candidates: candidates, kept: kept)
+    }
+
+    private static func exclusions(
+        _ snapshot: TorrentSnapshot, policy: SeedPolicy, shared: Bool, health: SwarmHealth, now: Date
+    ) -> [CleanupExclusion] {
+        var result: [CleanupExclusion] = []
+        if !snapshot.state.isComplete || !snapshot.hasMetadata { result.append(.incomplete) }
+        if snapshot.pinned { result.append(.pinned) }
+        if snapshot.state.isActive && (snapshot.downloadRate > 1 || snapshot.uploadRate > 1) {
+            result.append(.stillTransferring)
+        }
+        if shared { result.append(.sharedWithOther) }
+        if snapshot.state.isComplete && !seedGoalAllowsCleanup(snapshot, policy: policy, now: now) {
+            result.append(.seedGoalUnmet)
+        }
+        if health == .rare || health == .unknown { result.append(.rareSwarm) }
+        return result
+    }
+
+    private static func seedGoalAllowsCleanup(_ snapshot: TorrentSnapshot, policy: SeedPolicy, now: Date) -> Bool {
+        if case .archive = policy { return false }
+        return SeedEvaluator.evaluate(snapshot: snapshot, policy: policy, now: now).goalMet
     }
 
     static func score(snapshot: TorrentSnapshot, health: SwarmHealth, now: Date) -> CleanupCandidate {

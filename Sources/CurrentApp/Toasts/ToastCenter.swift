@@ -96,10 +96,12 @@ final class ToastCenter: ObservableObject {
         guard let index = toasts.firstIndex(where: { $0.id == id }) else { return }
         let presented = toasts[index]
         presented.dismissTask.cancel()
+        hoverPaused.remove(id)
         _ = toasts.remove(at: index)
     }
 
     func pauseHover(_ id: UUID) {
+        guard toasts.contains(where: { $0.id == id }) else { return }
         hoverPaused.insert(id)
     }
 

@@ -10,12 +10,25 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install libtorrent
         run: brew install libtorrent-rasterbar
 
+      - name: Check function complexity
+        run: |
+          brew install swiftlint
+          swiftlint lint --only-rule cyclomatic_complexity --strict Sources
+
       - name: Build (debug)
         run: swift build
+
+      - name: Check release scripts
+        run: |
+          zsh -n Scripts/make-app.sh Scripts/release.sh Scripts/test-update.sh
+          plutil -lint Scripts/Info.plist
+          python3 Scripts/test-release-version.py
 
       - name: Run tests
         run: swift test
@@ -33,8 +46,8 @@ jobs:
       # and hangs, it does not prove the window is healthy. Soak locally too.
       - name: Soak launch (simulate mode)
         run: |
-          BEFORE=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || echo 0)
-          "$(swift build -c release --show-bin-path)/Current" -simulate &
+          BEFORE=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || true)
+          .build/Current.app/Contents/MacOS/Current -simulate &
           APP_PID=$!
           for i in $(seq 1 18); do
             sleep 5
@@ -45,7 +58,7 @@ jobs:
           done
           kill $APP_PID
           sleep 2
-          AFTER=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || echo 0)
+          AFTER=$(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -ci current || true)
           if [ "$AFTER" -ne "$BEFORE" ]; then
             echo "::error::New crash report(s) written during the soak ($BEFORE -> $AFTER)"
             ls -t ~/Library/Logs/DiagnosticReports/ | grep -i current | head -3
