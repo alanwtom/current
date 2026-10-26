@@ -150,7 +150,12 @@ with open(log,'w') as output:
 Path(pidfile).write_text(str(app.pid))
 PY
     print "Launched $test_case at $APPS"
-    print "Read $WORK/run-$test_case.log, then quit this test app through its UI."
+    if [[ "$test_case" == valid ]]; then
+        print "Wait for the download in $WORK/server.log, then quit the test app through its UI."
+    else
+        print "Choose Check for Updates in the test app. Wait for the rejection, then quit."
+        print "The rejection is recorded in $WORK/run-$test_case.log."
+    fi
 }
 
 verify_case() {
