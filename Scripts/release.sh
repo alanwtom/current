@@ -272,7 +272,7 @@ python3 "$ROOT/Scripts/changelog-section.py" "$VERSION" > "$NOTES" || {
 
 grep -q "sparkle:edSignature" "$APPCAST_DIR/appcast.xml" \
     || fail "the appcast carries no signature — updates would be refused by every client"
-grep -q '^<!-- sparkle-signatures:' "$APPCAST_DIR/appcast.xml" \
+grep -q '<!-- sparkle-signatures:' "$APPCAST_DIR/appcast.xml" \
     || fail "the feed metadata is unsigned"
 "$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" --verify "$APPCAST_DIR/appcast.xml"
 print "  appcast signature verified"

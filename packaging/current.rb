@@ -1,6 +1,6 @@
 cask "current" do
-  version "1.3.0"
-  sha256 "e4488a53d816bd80c1e2929d38daeb8f70fac2c9d5eb11b9418cb66b7ab0727d"
+  version "1.3.1"
+  sha256 "8a6d55b0fd4ad2ec6e25282f1ac0ce5673741c687c9760e467ba4c884c0f380c"
 
   # The GitHub release asset rather than the download page, because a cask needs
   # a URL that is pinned to a version and never changes under it. The page's
