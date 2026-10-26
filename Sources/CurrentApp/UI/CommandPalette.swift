@@ -189,9 +189,10 @@ struct CommandPalette: View {
         // Measured from the top of the window rather than from the safe area,
         // so the 110pt above the palette is really 110 — see `ModalSurface`.
         .ignoresSafeArea()
-        .onAppear {
-            query = ""
-            highlightedIndex = 0
+        .defaultFocus($isFocused, true, priority: .userInitiated)
+        .task {
+            // The field's initial state is already empty. Do not reset it here:
+            // a fast keystroke can arrive before the entrance callback.
             isFocused = true
         }
         // Clamped whenever the result set shrinks. Without it, arrowing down a

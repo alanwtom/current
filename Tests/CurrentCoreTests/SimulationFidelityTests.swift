@@ -1,6 +1,7 @@
 import XCTest
 import CurrentCore
 import CurrentSim
+@testable import CurrentApp
 
 /// Guards the property that makes `-simulate` worth running.
 ///
@@ -15,6 +16,48 @@ import CurrentSim
 ///
 /// This is the cheap check that would have caught it.
 final class SimulationFidelityTests: XCTestCase {
+
+    @MainActor
+    func testDemoCannotSaveResumeDataIntoTheRealLibrary() async throws {
+        let folder = try makeScratchDirectory(self, "demo-persistence")
+        let database = AppDatabase(url: folder.appendingPathComponent("library.sqlite"))
+        let engine = SimulationEngine()
+        let store = LibraryStore(engine: engine, database: database, persistsRecords: false)
+        let id = try await engine.addMagnet("magnet:?xt=urn:btih:demo", saveDirectory: folder)
+        store.registerAdded(id, name: "Demo", magnet: nil, saveDirectory: folder)
+        await store.saveResumeData(for: id)
+        await store.saveAllResumeData()
+        XCTAssertTrue(database.allResumeData().isEmpty)
+        XCTAssertTrue(database.loadTorrentRecords().isEmpty)
+    }
+
+    func testMetadataAndSnapshotsAgreeOnSizeAndRepeatAcrossSessions() async throws {
+        var sessions: [TorrentMetadata] = []
+        for _ in 0..<2 {
+            let engine = SimulationEngine(tickInterval: 100, resolveDelay: 0)
+            let stream = await engine.events
+            let id = try await engine.addMagnet(
+                "magnet:?xt=urn:btih:metadata&dn=Release%20Flow%20Check",
+                saveDirectory: FileManager.default.temporaryDirectory,
+                held: true
+            )
+            await engine.step()
+            var metadata: TorrentMetadata?
+            for await event in stream {
+                if case .metadataReceived(_, let value) = event { metadata = value }
+                if case .snapshots(let snapshots) = event,
+                   let snapshot = snapshots.first(where: { $0.id == id }),
+                   let metadata {
+                    XCTAssertEqual(snapshot.totalBytes, metadata.totalSize)
+                    XCTAssertEqual(metadata.files.reduce(0) { $0 + $1.size }, metadata.totalSize)
+                    sessions.append(metadata)
+                    break
+                }
+            }
+        }
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions[0].files, sessions[1].files)
+    }
 
     func testEverySwarmHealthStateIsReachableInTheSimulator() async throws {
         // A resolve delay longer than a tick, so there are ticks where nothing

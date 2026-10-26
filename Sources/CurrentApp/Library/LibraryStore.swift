@@ -128,6 +128,7 @@ final class LibraryStore: ObservableObject {
         self.database = database
         self.persistsRecords = persistsRecords
 
+        guard persistsRecords else { return }
         for (id, name, pinned, policy, addedAt, directory) in database.loadTorrentRecords() {
             records[id] = TorrentRecord(
                 name: name,
@@ -172,11 +173,7 @@ final class LibraryStore: ObservableObject {
         case .all:
             return true
         case .downloading:
-            if case .resolving = snapshot.state { return true }
-            if case .downloading = snapshot.state { return true }
-            if case .checking = snapshot.state { return true }
-            if case .failed = snapshot.state { return true }
-            return false
+            return isDownloadSectionState(snapshot.state)
         case .seeding:
             return snapshot.state == .seeding
         case .completed:
@@ -192,6 +189,13 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    private func isDownloadSectionState(_ state: TorrentState) -> Bool {
+        switch state {
+        case .resolving, .downloading, .checking, .failed: return true
+        default: return false
+        }
+    }
+
     private func recentlyAdded(_ snapshot: TorrentSnapshot) -> Bool {
         -snapshot.addedAt.timeIntervalSinceNow < 300
     }
@@ -199,12 +203,13 @@ final class LibraryStore: ObservableObject {
     /// The most relevant torrent for glanceable surfaces: newest active
     /// download, falling back to any active torrent.
     var featuredSnapshot: TorrentSnapshot? {
-        let candidates = orderedIDs.compactMap { snapshots[$0] }
-        let downloading = candidates.filter { snapshot in
-            if case .downloading = snapshot.state { return true }
-            return false
+        var firstActive: TorrentSnapshot?
+        for id in orderedIDs {
+            guard let snapshot = snapshots[id] else { continue }
+            if snapshot.state == .downloading { return snapshot }
+            if firstActive == nil, snapshot.state.isActive { firstActive = snapshot }
         }
-        return downloading.first ?? candidates.first(where: { $0.state.isActive })
+        return firstActive
     }
 
     var aggregateDownloadRate: Double {
@@ -216,7 +221,7 @@ final class LibraryStore: ObservableObject {
     }
 
     var activeDownloadCount: Int {
-        snapshots.values.filter { $0.state.isActive }.count
+        snapshots.values.reduce(0) { $0 + ($1.state.isActive ? 1 : 0) }
     }
 
     /// Bytes currently occupying the disk according to transfer progress.
@@ -231,7 +236,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func count(for section: SidebarSection) -> Int {
-        snapshots.values.filter { matches($0, in: section) }.count
+        snapshots.values.reduce(0) { $0 + (matches($1, in: section) ? 1 : 0) }
     }
 
     // MARK: - Event ingestion
@@ -402,7 +407,6 @@ final class LibraryStore: ObservableObject {
             metadataCache[id] = nil
             filePriorities[id] = nil
             rateHistory[id] = nil
-            // Added again later, it's a fresh torrent and gets the timeout.
             restoredIDs.remove(id)
             selection.remove(id)
             orderedIDs.removeAll { $0 == id }
@@ -433,10 +437,10 @@ final class LibraryStore: ObservableObject {
         objectWillChange.send()
     }
 
-    func setPriorities(_ priorities: [FilePriority], for id: TorrentID) {
+    func setPriorities(_ priorities: [FilePriority], for id: TorrentID, sendsToEngine: Bool = true) {
         filePriorities[id] = priorities
         objectWillChange.send()
-        Task { await engine.setFilePriorities(id, priorities) }
+        if sendsToEngine { Task { await engine.setFilePriorities(id, priorities) } }
     }
 
     func retry(_ id: TorrentID) async {
@@ -599,13 +603,37 @@ final class LibraryStore: ObservableObject {
     var contentTrash = ContentTrash()
 
     @discardableResult
-    func trashContent(_ id: TorrentID) -> Int {
-        guard let snapshot = snapshots[id] else { return 0 }
+    func trashContent(_ id: TorrentID) -> ContentTrash.Result {
+        guard let snapshot = snapshots[id], !sharesContentFiles(id) else {
+            return .init(movedItems: 0, expectedItems: 0)
+        }
         return contentTrash.trashContent(
             id: id,
             saveDirectory: snapshot.saveDirectory,
             files: metadataCache[id]?.files ?? []
         )
+    }
+
+    /// Names can differ from metadata paths. Compare the files before deleting
+    /// so removing one entry cannot damage another torrent with the same files.
+    private func sharesContentFiles(_ id: TorrentID) -> Bool {
+        let owned = contentFileKeys(id)
+        guard !owned.isEmpty else { return false }
+        return snapshots.keys.contains { other in
+            other != id && !owned.isDisjoint(with: contentFileKeys(other))
+        }
+    }
+
+    private func contentFileKeys(_ id: TorrentID) -> Set<String> {
+        guard let snapshot = snapshots[id],
+              let files = metadataCache[id]?.files,
+              let urls = ContentLocation.ownedFiles(saveDirectory: snapshot.saveDirectory, files: files)
+        else { return [] }
+        return Set(urls.map {
+            $0.deletingLastPathComponent().resolvingSymlinksInPath()
+                .appendingPathComponent($0.lastPathComponent).path
+                .precomposedStringWithCanonicalMapping.lowercased()
+        })
     }
 
     /// Drops selected ids that no longer exist.
@@ -764,6 +792,7 @@ final class LibraryStore: ObservableObject {
     /// round trip, and each request still gives up on its own after three
     /// seconds, so a wedged engine can't stall quitting.
     func saveAllResumeData() async {
+        guard persistsRecords else { return }
         let engine = self.engine
         let saved = await withTaskGroup(of: (TorrentID, Data?).self) { group in
             for id in orderedIDs {
@@ -790,6 +819,7 @@ final class LibraryStore: ObservableObject {
     /// Saves one torrent now — used when it's added, so a crash before the
     /// next periodic save doesn't lose it.
     func saveResumeData(for id: TorrentID) async {
+        guard persistsRecords else { return }
         guard let data = await engine.resumeData(for: id), isInLibrary(id) else { return }
         try? database.storeResumeData(data, for: id)
     }

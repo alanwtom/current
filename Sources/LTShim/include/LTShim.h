@@ -18,6 +18,8 @@ typedef enum {
     LT_EVENT_REMOVED = 4,
     LT_EVENT_RESUME_DATA = 5,
     LT_EVENT_LISTEN = 6,
+    LT_EVENT_STORAGE_MOVED = 7,
+    LT_EVENT_STORAGE_MOVE_FAILED = 8,
 } lt_event_kind;
 
 /* Values for lt_error_info.error_kind, matching EngineFailure.Kind in Swift. */
@@ -84,8 +86,8 @@ typedef struct {
     int32_t piece_count;
     int32_t piece_length;
     int32_t file_count;
-    /* Parallel arrays of length file_count. Paths joined with '\n'. */
-    const char* file_paths;
+    /* Parallel arrays of length file_count; each path is a complete string. */
+    const char* const* file_paths;
     const uint64_t* file_sizes;
 } lt_metadata_info;
 
@@ -94,6 +96,14 @@ typedef struct {
     int error_kind;               /* LT_ERROR_* constant */
     const char* message;          /* technical detail, UTF-8 */
 } lt_error_info;
+
+/* Payload for LT_EVENT_STORAGE_MOVED. */
+typedef struct {
+    const char* id;
+    const char* path;
+} lt_storage_info;
+
+/* LT_EVENT_STORAGE_MOVE_FAILED uses lt_error_info. */
 
 /* Payload for LT_EVENT_RESUME_DATA: the serialised fastresume blob for one
  * torrent, delivered on the worker thread after lt_request_resume_data.
@@ -153,8 +163,8 @@ int lt_add_torrent_data(lt_session* session, const uint8_t* data, size_t len,
  * interchangeable with lt_add_torrent_data: the two formats differ. With
  * paused nonzero it comes back paused whatever the blob says. */
 int lt_add_resume_data(lt_session* session, const uint8_t* data, size_t len,
-                       const char* save_path, int paused, char out_id[41],
-                       char out_error[256], int* out_error_kind);
+                       const char* save_path, int paused, char out_id[41], char out_error[256],
+                       int* out_error_kind);
 
 int lt_pause(lt_session* session, const char* id);
 /* Also releases a torrent that was added held. */

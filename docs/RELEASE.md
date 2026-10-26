@@ -7,6 +7,11 @@ shipping a bug you can never take back.
 
 This is the runbook and the state of it. Tick things off as they land.
 
+Current audit: [25 October 2026](RELEASE-AUDIT-2026-10-25.md).
+Its release gates take priority over historical checked items below.
+The [speed and motion follow-up](PERFORMANCE-AND-MOTION-2026-10-25.md) records
+the later measurements and 354-test verification.
+
 ---
 
 ## Decisions to make before the work starts
@@ -53,6 +58,40 @@ The image is deliberately **not** in git; `site/` deploys from the folder the
 release script stages, not from a commit. See `site/README.md`.
 
 ---
+
+## Release checks added on 2026-10-22
+
+The next release must exceed the live version and build. The live feed currently
+lists **1.3.0 (104)**. The local commit count is lower. Set a larger build number,
+for example `CURRENT_BUILD_VERSION=105 Scripts/release.sh`, from a clean commit
+with a new version tag. The script checks the live feed and fails if either
+number would prevent an update. It also checks that the signing key matches the
+public key in the app. Do not treat a local build as a published release.
+
+Feed metadata now requires a signature (`SURequireSignedFeed`), in addition to
+the archive signature checked before extraction. `generate_appcast` signs the
+feed from this bundle setting. The release script verifies that signature before
+staging the site. Publish the generated feed without editing its bytes. See
+[Sparkle's signed feed guide](https://sparkle-project.org/documentation/).
+
+Run `Scripts/test-update.sh` in a separate macOS account with an empty Current
+library. It refuses to run while Current is open, when transfer records exist,
+or when an earlier app backup remains. It restores the original app on exit.
+This test needs signing credentials and is not part of offline checks.
+
+### Check results on 2026-10-23
+
+- Shell syntax and the bundle plist pass validation. Six offline tests cover
+  the release version gate. CI runs these checks.
+- The live feed still lists 1.3.0 (104). The gate rejects local build 97 and
+  accepts 1.3.1 (105).
+- Sparkle 2.9.6 signs a local feed copy. Its verifier accepts the signed copy
+  and rejects a copy with a changed title. No public feed was changed.
+- The live feed has an archive signature but no feed signature. The next
+  release must publish the generated signed feed with the app. New local
+  builds that require signed feeds cannot use the current unsigned feed.
+- The install/update test, notarisation, and a clean second Mac remain release
+  checks. Script validation does not prove these paths work.
 
 ## Phase 1 — Make it installable
 

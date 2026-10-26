@@ -9,6 +9,33 @@ notes, so this file is the single place release notes are written.
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-25
+
+### Fixed
+
+- Cancelled downloads cannot start after a pending folder change or file selection finishes.
+- Repeated Download clicks apply one selection and start one download.
+- Folder changes wait for the disk operation to succeed before starting a download.
+- Trash checks keep shared files, linked folders, and unrelated content safe. Failed cleanup keeps the torrent in the library.
+- Uppercase magnet links work in add, paste, drop, and URL delivery.
+- File selection supports arrow keys, Space to include or skip, and Return to confirm. Empty selections cannot start.
+- Fast typing reaches the command palette and add field without waiting for animation.
+- Checkboxes, sliders, and toast controls work from the keyboard. Focus keeps a toast open.
+- Reduce Motion stops status loops and removes control travel.
+
+### Changed
+
+- Large file-priority edits use one tree pass and one update.
+- Transfer updates no longer rebuild the window layout. Status paint runs at a bounded rate.
+- Simulation uses separate state and does not claim the system's magnet handler.
+- Updated Sparkle to 2.10.1.
+
+### Security
+
+- Unreadable settings block transfers until you choose a connection. This block survives a relaunch.
+- Update feed metadata must carry a valid signature, in addition to the downloaded archive.
+
+
 ## [1.3.0] — 2026-09-25
 
 ### Added
@@ -134,7 +161,8 @@ First public release.
 - Keyboard paths for every action, and a command palette.
 - Signed with a Developer ID and notarised by Apple.
 
-[Unreleased]: https://github.com/alanwtom/current/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/alanwtom/current/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/alanwtom/current/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/alanwtom/current/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/alanwtom/current/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/alanwtom/current/compare/v1.1.0...v1.1.1

@@ -230,7 +230,8 @@ final class SettingsStore: ObservableObject {
     init(database: AppDatabase) {
         self.database = database
 
-        let defaults = database.allSettings()
+        let storedSettings = try? database.readSettings()
+        let defaults = storedSettings ?? [:]
         func value(_ key: String) -> String? { defaults[key] }
 
         let documents = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
@@ -288,9 +289,12 @@ final class SettingsStore: ObservableObject {
         self.isLocalDiscoveryEnabled = value(Keys.lsdEnabled).map({ $0 == "1" }) ?? true
         self.isPortMappingEnabled = value(Keys.portMappingEnabled).map({ $0 == "1" }) ?? true
         self.encryption = value(Keys.encryption).flatMap(EncryptionPolicy.init(rawValue:)) ?? .preferred
-        // Absent or unrecognised means "any connection", which is what the app
-        // did before this setting existed. Nobody gets confined by an upgrade.
-        self.networkBinding = NetworkBinding(storedValue: value(Keys.binding) ?? "")
+        if storedSettings == nil || database.recoveredFromUnreadableFile {
+            self.networkBinding = .needsReview
+            try? database.set(NetworkBinding.needsReview.storedValue, forKey: Keys.binding)
+        } else {
+            self.networkBinding = NetworkBinding(storedValue: value(Keys.binding) ?? "")
+        }
     }
 
     var usedStorageBytes: Int64 = 0

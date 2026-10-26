@@ -40,6 +40,37 @@ final class MagnetFlowCenter: ObservableObject {
     @Published var remembersDestination = false
 
     private var selectingID: TorrentID?
+    private(set) var requestID: UUID?
+    private var confirmingRequest: UUID?
+
+    /// Claims one confirmation while its disk and engine work is pending.
+    func beginConfirmation() -> UUID? {
+        guard case .selecting = stage, let requestID, confirmingRequest == nil else { return nil }
+        confirmingRequest = requestID
+        return requestID
+    }
+
+    func finishConfirmation(_ request: UUID) {
+        if confirmingRequest == request { confirmingRequest = nil }
+    }
+
+    /// Invalidates the question before the first engine await.
+    func cancelSelection() -> TorrentID? {
+        let id: TorrentID?
+        switch stage {
+        case .resolving: id = awaitedID
+        case .selecting(let selected): id = selected
+        default: id = nil
+        }
+        dismiss()
+        return id
+    }
+
+
+    func ownsRequest(_ request: UUID?) -> Bool {
+        request != nil && request == requestID
+    }
+
 
     /// The one torrent this flow is about, once the engine has said which it is.
     ///
@@ -62,6 +93,8 @@ final class MagnetFlowCenter: ObservableObject {
     @discardableResult
     func beginResolving(nameHint: String?) -> Bool {
         guard stage == .idle else { return false }
+        requestID = UUID()
+        confirmingRequest = nil
         chosenDestination = nil
         remembersDestination = false
         awaitedID = nil
@@ -101,9 +134,7 @@ final class MagnetFlowCenter: ObservableObject {
 
     func handoffFinished() {
         guard case .starting = stage else { return }
-        stage = .idle
-        awaitedID = nil
-        selectingID = nil
+        dismiss()
     }
 
     func downloadCompleted(name: String) {
@@ -115,6 +146,9 @@ final class MagnetFlowCenter: ObservableObject {
         case .idle, .starting, .completed: break
         case .resolving, .selecting: return
         }
+        requestID = UUID()
+        let request = requestID
+        confirmingRequest = nil
         awaitedID = nil
         selectingID = nil
         stage = .completed(name: name)
@@ -122,17 +156,23 @@ final class MagnetFlowCenter: ObservableObject {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_200_000_000)
             await MainActor.run { [weak self] in
-                guard let self, case .completed = self.stage else { return }
+                guard let self, self.ownsRequest(request), case .completed = self.stage else { return }
                 self.dismiss()
             }
         }
     }
 
     func dismiss() {
+        confirmingRequest = nil
+        requestID = nil
         stage = .idle
         awaitedID = nil
         selectingID = nil
         chosenDestination = nil
         remembersDestination = false
+    }
+
+    func resolveFailed(message: String) {
+        dismiss()
     }
 }

@@ -76,6 +76,7 @@ final class RealNetworkTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         // The session opens no listen sockets until it is configured — see
         // `lt_session_create`, which fails closed so that a VPN-confined user
@@ -142,8 +143,10 @@ final class RealNetworkTests: XCTestCase {
             contentsOf: URL(string: "https://releases.ubuntu.com/noble/")!,
             encoding: .utf8
         )
-        guard let name = listing.range(of: #"ubuntu-[0-9.]+-live-server-amd64\.iso\.torrent"#,
-                                       options: .regularExpression).map({ String(listing[$0]) })
+        let pattern = try NSRegularExpression(pattern: #"ubuntu-[0-9.]+-live-server-amd64\.iso\.torrent"#)
+        let matches = pattern.matches(in: listing, range: NSRange(listing.startIndex..., in: listing))
+        let names = matches.compactMap { Range($0.range, in: listing).map { String(listing[$0]) } }
+        guard let name = names.max(by: { $0.compare($1, options: .numeric) == .orderedAscending })
         else { throw XCTSkip("no Ubuntu torrent listed today") }
 
         let torrent = try Data(contentsOf: URL(string: "https://releases.ubuntu.com/noble/" + name)!)
@@ -155,22 +158,31 @@ final class RealNetworkTests: XCTestCase {
         let directory = try scratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let engine = LibtorrentEngine(statePath: "")
-        let events = await engine.events
-        // The session opens no listen sockets until it is configured — see
-        // `lt_session_create`, which fails closed so that a VPN-confined user
-        // never gets a moment of announcing from their real address. The app
-        // pushes its configuration during init; a test has to do the same or it
-        // has no networking at all.
-        await engine.apply(EngineConfiguration())
-        let id = try await engine.addTorrentFile(torrent, saveDirectory: directory)
+        // Parse the publisher's torrent with networking blocked to obtain its
+        // hash. A fresh magnet then names exactly one HTTPS tracker. DHT and
+        // local discovery are off, so a peer cannot come from another source.
+        let parser = LibtorrentEngine(statePath: "")
+        await parser.apply(EngineConfiguration(binding: .unavailable(reason: "Read test metadata")))
+        let parsedID = try await parser.addTorrentFile(torrent, saveDirectory: directory, held: true)
+        await parser.shutdown()
 
-        // Peers, not bytes: the announce is what is being tested, and a peer
-        // count above zero means the tracker answered us over TLS.
+        let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
+        let events = await engine.events
+        await engine.apply(EngineConfiguration(isDHTEnabled: false, isLocalDiscoveryEnabled: false))
+        let magnet = "magnet:?xt=urn:btih:\(parsedID.raw)&tr=https%3A%2F%2Ftorrent.ubuntu.com%2Fannounce"
+        let id = try await engine.addMagnet(magnet, saveDirectory: directory, held: true)
+
+        // Metadata, peers, not payload: held mode cannot request file pieces.
+        // With one discovery route, a result proves that HTTPS route worked.
         let deadline = Date().addingTimeInterval(120)
         var sawPeers = false
 
         for await event in events {
+            if case .metadataReceived(let received, _) = event, received == id {
+                sawPeers = true
+                break
+            }
             if case .snapshots(let snapshots) = event,
                let snapshot = snapshots.first(where: { $0.id == id }) {
                 let peers = snapshot.swarm.connectedPeers
@@ -273,6 +285,7 @@ final class RealNetworkTests: XCTestCase {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events, binding: .unrestricted,
@@ -299,6 +312,7 @@ final class RealNetworkTests: XCTestCase {
         try XCTSkipUnless(usable.count > 1, "only one usable interface on this Mac")
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events, binding: .unrestricted,
@@ -322,6 +336,7 @@ final class RealNetworkTests: XCTestCase {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,
@@ -340,6 +355,7 @@ final class RealNetworkTests: XCTestCase {
         try XCTSkipUnless(isEnabled, "set CURRENT_REAL_NETWORK=1 to run")
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,
@@ -373,6 +389,7 @@ final class RealNetworkTests: XCTestCase {
         }
 
         let engine = LibtorrentEngine(statePath: "")
+        addTeardownBlock { await engine.shutdown() }
         let events = await engine.events
         let result = await listenAddresses(
             of: engine, events: events,

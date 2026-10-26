@@ -53,10 +53,10 @@ final class AppDatabase: Sendable {
     /// address with nothing on screen to say so.
     let recoveredFromUnreadableFile: Bool
 
-    init(url: URL) {
+    init(url: URL, inMemory: Bool = false) {
         // sqlite3_open creates the file when missing; never truncate an
         // existing library — it holds settings, records and resume data.
-        switch Self.open(url) {
+        switch Self.open(url, inMemory: inMemory) {
         case .ready(let db):
             handle = db
             recoveredFromUnreadableFile = false
@@ -77,6 +77,8 @@ final class AppDatabase: Sendable {
             }
             if case .ready(let db) = Self.open(url) { handle = db }
             recoveredFromUnreadableFile = true
+            // Keep the block across relaunches until a user chooses a connection.
+            try? set("review", forKey: "network.binding")
             NSLog("Current: library database was unreadable; started a fresh one")
         }
     }
@@ -96,9 +98,9 @@ final class AppDatabase: Sendable {
         return primary == SQLITE_NOTADB || primary == SQLITE_CORRUPT
     }
 
-    private static func open(_ url: URL) -> Opened {
+    private static func open(_ url: URL, inMemory: Bool = false) -> Opened {
         var db: OpaquePointer?
-        guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
+        guard sqlite3_open(inMemory ? ":memory:" : url.path, &db) == SQLITE_OK, let db else {
             sqlite3_close(db)
             return .unusable(nil)
         }
@@ -157,9 +159,29 @@ final class AppDatabase: Sendable {
     }
 
     func allSettings() -> [String: String] {
-        query("SELECT key, value FROM settings") { row in
-            (Self.text(row, 0), Self.text(row, 1))
-        }.reduce(into: [:]) { $0[$1.0] = $1.1 }
+        (try? readSettings()) ?? [:]
+    }
+
+    /// A read failure must not look like a new installation.
+    func readSettings() throws -> [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handle else { throw DatabaseError.prepare("Database unavailable") }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "SELECT key, value FROM settings", -1, &statement, nil) == SQLITE_OK else {
+            throw DatabaseError.prepare(String(cString: sqlite3_errmsg(handle)))
+        }
+        defer { sqlite3_finalize(statement) }
+        var result: [String: String] = [:]
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            result[Self.text(statement, 0)] = Self.text(statement, 1)
+            step = sqlite3_step(statement)
+        }
+        guard step == SQLITE_DONE else {
+            throw DatabaseError.step(String(cString: sqlite3_errmsg(handle)))
+        }
+        return result
     }
 
     // MARK: - Torrent records

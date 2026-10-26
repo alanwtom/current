@@ -61,11 +61,10 @@ struct CurrentField<Trailing: View>: View {
         // Clicking anywhere in the well focuses the field, not just the
         // text itself — the padding is part of the target.
         .onTapGesture { isFocused = true }
-        .onAppear {
-            // Immediately, not after a delay: `onAppear` fires as the surface's
-            // entrance begins, so keystrokes land during the animation rather
-            // than after it.
-            if autofocus { isFocused = true }
+        .defaultFocus($isFocused, autofocus, priority: .userInitiated)
+        .task {
+            guard autofocus else { return }
+            isFocused = true
         }
     }
 }

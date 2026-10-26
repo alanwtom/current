@@ -137,6 +137,34 @@ final class StorageBudgetTests: XCTestCase {
         XCTAssertEqual(harness.library.orderedIDs.count, 1)
     }
 
+    func testPinnedAfterPlanningCannotBeCleaned() async throws {
+        let harness = try makeHarness(torrentBytes: 100)
+        try requireCleanableFixture(harness)
+        let candidates = harness.cleanup.plan.candidates
+        harness.library.setPinned(true, for: [TorrentID("done")])
+
+        let summary = await harness.cleanup.performCleanup(candidates)
+
+        XCTAssertEqual(summary.torrentsCleaned, 0)
+        XCTAssertTrue(harness.trashed.urls.isEmpty)
+        XCTAssertEqual(harness.library.orderedIDs.count, 1)
+    }
+
+    func testFailedTrashKeepsTorrentAndReportsNoReclaimedSpace() async throws {
+        let harness = try makeHarness(torrentBytes: 100)
+        try requireCleanableFixture(harness)
+        harness.library.contentTrash.moveToTrash = { _ in
+            throw CocoaError(.fileWriteNoPermission)
+        }
+
+        let summary = await harness.cleanup.performCleanup(harness.cleanup.plan.candidates)
+
+        XCTAssertEqual(summary.torrentsCleaned, 0)
+        XCTAssertEqual(summary.bytesReclaimed, 0)
+        XCTAssertEqual(harness.library.orderedIDs.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: harness.content.path))
+    }
+
     /// Two torrents in the default folder are not "sharing files". Treating
     /// them as if they were excluded every torrent in the library.
     func testTorrentsInTheSameFolderAreStillCleanable() throws {
@@ -149,6 +177,19 @@ final class StorageBudgetTests: XCTestCase {
         harness.library.setPolicy(.temporary, for: [neighbour.id])
         harness.cleanup.refreshPlan()
         XCTAssertEqual(Set(harness.cleanup.plan.candidates.map(\.id)), [TorrentID("done"), neighbour.id])
+    }
+
+    func testStaleCandidateCannotRemoveNewlyPinnedTorrent() async throws {
+        let harness = try makeHarness(torrentBytes: 10_000_000_000)
+        try requireCleanableFixture(harness)
+        let candidates = harness.cleanup.plan.candidates
+        harness.library.setPinned(true, for: [TorrentID("done")])
+
+        let result = await harness.cleanup.performCleanup(candidates)
+
+        XCTAssertEqual(result.torrentsCleaned, 0)
+        XCTAssertTrue(harness.trashed.urls.isEmpty)
+        XCTAssertEqual(harness.library.orderedIDs.count, 1)
     }
 
     // MARK: - When it must decline

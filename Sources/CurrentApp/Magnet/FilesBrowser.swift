@@ -27,6 +27,7 @@ struct FileTreeEditor: View {
     /// library every time you selected a row.
     var autofocusFilter = false
     var onPrioritiesChanged: (() -> Void)?
+    var onConfirm: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -34,6 +35,7 @@ struct FileTreeEditor: View {
     @State private var selectedIDs = Set<String>()
     @State private var expandedFolders = Set<String>()
     @State private var didAutoExpand = false
+    @State private var keyboardNavigating = false
 
     private var filteredNodes: [FileNode] {
         FileTreeBuilder.filtered(nodes, query: searchText)
@@ -68,19 +70,22 @@ struct FileTreeEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let visibleRows = rows
+        return VStack(spacing: 0) {
             CurrentField(
                 "Filter files",
                 text: $searchText,
                 symbol: "magnifyingglass",
-                autofocus: autofocusFilter
+                autofocus: autofocusFilter,
+                onSubmit: onConfirm
             )
             .padding(Space.l)
+            .accessibilityHint(autofocusFilter ? "Use arrow keys to select files, then Space to include or skip." : "")
             Hairline()
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
+                    ForEach(visibleRows) { row in
                         NodeRow(
                             node: row.node,
                             depth: row.depth,
@@ -97,9 +102,9 @@ struct FileTreeEditor: View {
                 .padding(.horizontal, Space.m)
             }
             .scrollIndicators(.automatic)
-            .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: rows.map(\.id))
+            .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: visibleRows.map(\.id))
             .overlay {
-                if rows.isEmpty && !searchText.isEmpty {
+                if visibleRows.isEmpty && !searchText.isEmpty {
                     Text("No files match “\(searchText)”")
                         .typeStyle(Typo.caption)
                         .foregroundStyle(Theme.textTertiary)
@@ -118,6 +123,11 @@ struct FileTreeEditor: View {
             }
         }
         .animation(Motion.spring(Motion.quick, reduceMotion: reduceMotion), value: selectedIDs.count > 1)
+        .background(FileTreeKeyHandler(
+            enabled: autofocusFilter,
+            onKey: handleFileKey,
+            onTyping: { keyboardNavigating = false }
+        ).frame(width: 0, height: 0))
         .onAppear(perform: autoExpand)
         // Also when the tree arrives, not only when the view does. In the
         // inspector the nodes are built in a sibling view's `onAppear`, so on
@@ -152,10 +162,9 @@ struct FileTreeEditor: View {
                 .foregroundStyle(Theme.textSecondary)
             Menu("Set priority") {
                 priorityMenuContents { priority in
-                    for id in selectedIDs {
-                        applyPriority(to: id, priority)
-                    }
+                    nodes = Self.settingPriority(nodes, ids: selectedIDs, priority: priority)
                     selectedIDs.removeAll()
+                    onPrioritiesChanged?()
                 }
             }
             .menuStyle(.button)
@@ -176,6 +185,44 @@ struct FileTreeEditor: View {
         Button("Normal") { action(.normal) }
         Button("High") { action(.high) }
         Button("First") { action(.first) }
+    }
+
+    /// Navigation stays in the picker even when macOS skips buttons with Tab.
+    private func handleFileKey(_ code: UInt16, backwards: Bool) -> Bool {
+        switch code {
+        case 125: moveFileSelection(by: 1)
+        case 126: moveFileSelection(by: -1)
+        case 48: moveFileSelection(by: backwards ? -1 : 1)
+        case 49: return toggleKeyboardFile()
+        case 123, 124: return expandKeyboardFolder(code == 124)
+        default: return false
+        }
+        return true
+    }
+
+    private func moveFileSelection(by delta: Int) {
+        let visible = rows
+        guard !visible.isEmpty else { return }
+        let current = visible.firstIndex { selectedIDs.contains($0.id) }
+        let next = current.map { min(max($0 + delta, 0), visible.count - 1) }
+            ?? (delta > 0 ? 0 : visible.count - 1)
+        selectedIDs = [visible[next].id]
+        keyboardNavigating = true
+    }
+
+    private func toggleKeyboardFile() -> Bool {
+        guard keyboardNavigating, let row = rows.first(where: { selectedIDs.contains($0.id) }) else { return false }
+        let state = FileTreeBuilder.selectionState(of: row.node)
+        toggle(node: row.node, value: state != .all)
+        return true
+    }
+
+    private func expandKeyboardFolder(_ expand: Bool) -> Bool {
+        guard keyboardNavigating,
+              let row = rows.first(where: { selectedIDs.contains($0.id) }), row.node.isFolder
+        else { return false }
+        if expand { expandedFolders.insert(row.id) } else { expandedFolders.remove(row.id) }
+        return true
     }
 
     // MARK: Interaction
@@ -249,8 +296,35 @@ struct FileTreeEditor: View {
         _ nodes: [FileNode], id: String, priority: FilePriority
     ) -> [FileNode] {
         var result = nodes
-        mutate(&result, id: id, priority: priority)
+        _ = mutate(&result, id: id, priority: priority)
         return result
+    }
+
+    /// A bulk edit walks the tree once and publishes one complete selection.
+    static func settingPriority(
+        _ nodes: [FileNode], ids: Set<String>, priority: FilePriority
+    ) -> [FileNode] {
+        guard !ids.isEmpty else { return nodes }
+        var result = nodes
+        _ = mutateSelected(&result, ids: ids, priority: priority)
+        return result
+    }
+
+    private static func mutateSelected(
+        _ nodes: inout [FileNode], ids: Set<String>, priority: FilePriority
+    ) -> Bool {
+        var changed = false
+        for index in nodes.indices {
+            if ids.contains(nodes[index].id) {
+                assign(&nodes[index], priority: priority)
+                changed = true
+            } else if !nodes[index].children.isEmpty,
+                      mutateSelected(&nodes[index].children, ids: ids, priority: priority) {
+                nodes[index].priority = aggregate(of: nodes[index].children)
+                changed = true
+            }
+        }
+        return changed
     }
 
     private static func mutate(_ nodes: inout [FileNode], id: String, priority: FilePriority) -> Bool {
@@ -281,6 +355,58 @@ struct FileTreeEditor: View {
         let values = children.map(\.priority.rawValue)
         if values.allSatisfy({ $0 == 0 }) { return .skip }
         return FilePriority(rawValue: values.max() ?? 4)
+    }
+}
+
+/// The filter keeps typing focus while arrows and Space operate on its rows.
+private struct FileTreeKeyHandler: NSViewRepresentable {
+    let enabled: Bool
+    var onKey: (UInt16, Bool) -> Bool
+    var onTyping: () -> Void
+
+    func makeNSView(context: Context) -> KeyView {
+        let view = KeyView()
+        view.onKey = onKey
+        view.onTyping = onTyping
+        view.enabled = enabled
+        return view
+    }
+
+    func updateNSView(_ view: KeyView, context: Context) {
+        view.onKey = onKey
+        view.onTyping = onTyping
+        view.enabled = enabled
+    }
+
+    static func dismantleNSView(_ view: KeyView, coordinator: ()) { view.stop() }
+
+    final class KeyView: NSView {
+        var enabled = false
+        var onKey: (UInt16, Bool) -> Bool = { _, _ in false }
+        var onTyping: () -> Void = {}
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return stop() }
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, self.enabled, self.window === event.window else { return event }
+                return self.route(event)
+            }
+        }
+
+        private func route(_ event: NSEvent) -> NSEvent? {
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
+            if onKey(event.keyCode, event.modifierFlags.contains(.shift)) { return nil }
+            if event.characters?.isEmpty == false { onTyping() }
+            return event
+        }
+
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
     }
 }
 
@@ -474,7 +600,7 @@ struct MagnetSelectionSheet: View {
         VStack(spacing: 0) {
             header
             Hairline()
-            FileTreeEditor(nodes: $nodes, showsFooterSummary: false, autofocusFilter: true)
+            FileTreeEditor(nodes: $nodes, showsFooterSummary: false, autofocusFilter: true, onConfirm: confirmSelection)
             Hairline()
             footerBar
         }
@@ -501,6 +627,15 @@ struct MagnetSelectionSheet: View {
 
     private var selectedBytes: Int64 { FileTreeBuilder.selectedBytes(nodes) }
 
+    private func confirmSelection() {
+        guard selectedBytes > 0 else { return }
+        let priorities = FileTreeBuilder.flattenPriorities(nodes)
+        Task {
+            await app.applyMagnetSelection(priorities)
+            close()
+        }
+    }
+
     private var footerBar: some View {
         HStack(spacing: Space.m) {
             Text("\(ByteFormatting.bytes(selectedBytes)) selected")
@@ -514,13 +649,7 @@ struct MagnetSelectionSheet: View {
                 Task { await app.cancelMagnetSelection() }
             }
             .currentButton(.ghost)
-            Button {
-                let priorities = FileTreeBuilder.flattenPriorities(nodes)
-                Task {
-                    await app.applyMagnetSelection(priorities)
-                    close()
-                }
-            } label: {
+            Button(action: confirmSelection) {
                 Text("Download").tabularNumerics()
             }
             .currentButton(.primary)

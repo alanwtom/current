@@ -205,8 +205,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // magnet links had that choice quietly taken back each time they
         // opened this one.
         let claimedKey = "claimedMagnetLinks"
-        guard !UserDefaults.standard.bool(forKey: claimedKey),
-              let bundleID = Bundle.main.bundleIdentifier
+        guard !ProcessInfo.processInfo.arguments.contains("-simulate"),
+              !UserDefaults.standard.bool(forKey: claimedKey),
+              let bundleID = Bundle.main.bundleIdentifier,
+              bundleID != "org.current.torrent.update-test"
         else { return }
         LSSetDefaultHandlerForURLScheme("magnet" as CFString, bundleID as CFString)
         UserDefaults.standard.set(true, forKey: claimedKey)

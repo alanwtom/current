@@ -33,6 +33,17 @@ final class AppDatabaseTests: XCTestCase {
     }
 
     /// Regression: opening an existing database must never truncate it.
+    func testSimulationDatabaseDoesNotReadOrWriteTheRealFile() throws {
+        let folder = try makeScratchDirectory(self, "memory-db")
+        let url = folder.appendingPathComponent("library.sqlite")
+        let real = AppDatabase(url: url)
+        try real.set("vpn", forKey: "network.binding")
+        let simulated = AppDatabase(url: url, inMemory: true)
+        XCTAssertTrue(try simulated.readSettings().isEmpty)
+        try simulated.set("", forKey: "network.binding")
+        XCTAssertEqual(try real.readSettings()["network.binding"], "vpn")
+    }
+
     func testReopeningPreservesData() throws {
         let url = makeURL()
         defer { try? FileManager.default.removeItem(at: url) }

@@ -389,6 +389,9 @@ struct NetworkPane: View {
                 "Follows the tunnel, including after it reconnects under a different name."
             ),
         ]
+        if settings.networkBinding == .needsReview {
+            options.insert((.needsReview, "Transfers blocked", "Settings could not be read. Choose a connection to continue."), at: 0)
+        }
         for interface in network.selectableInterfaces where interface.kind != .tunnel {
             options.append((
                 .named(interface.name),

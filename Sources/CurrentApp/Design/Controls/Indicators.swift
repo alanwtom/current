@@ -71,8 +71,6 @@ struct ProgressTrack: View {
         }
     }
 
-    @State private var pulsing = false
-
     var body: some View {
         GeometryReader { proxy in
             let clamped = max(0, min(1, fraction))
@@ -81,8 +79,7 @@ struct ProgressTrack: View {
                     .fill(track)
 
                 if indeterminate {
-                    Capsule(style: .continuous)
-                        .fill(tint.opacity(pulsing ? 0.45 : 0.14))
+                    IndeterminateTrack(tint: tint, reduceMotion: reduceMotion)
                 } else {
                     Capsule(style: .continuous)
                         .fill(tint)
@@ -91,7 +88,9 @@ struct ProgressTrack: View {
                                 FlowLight(flow: flow)
                             }
                         }
-                        .overlay { LightPass(trigger: passTrigger) }
+                        .overlay {
+                            if !reduceMotion { LightPass(trigger: passTrigger) }
+                        }
                         .clipShape(Capsule(style: .continuous))
                         // Never narrower than its own corner radius, or a
                         // just-started download shows a sliver with clipped ends.
@@ -103,25 +102,21 @@ struct ProgressTrack: View {
         // Colour changes are their own beat: a download turning into a seed
         // shouldn't look like the bar jumped.
         .animation(Motion.adaptive(Motion.standard, reduceMotion: reduceMotion), value: tint)
-        // **On the value, not just on appear.** This used to start the pulse in
-        // `onAppear` alone, which is the one moment a bar is guaranteed *not*
-        // to be indeterminate for a torrent restored from disk: it comes back
-        // paused, and starts resolving a moment later, by which time the view
-        // already exists and `onAppear` has been and gone. The bar then sat
-        // frozen at 14% opacity forever — indistinguishable from a download
-        // that had barely started and then stalled.
-        .onAppear { startPulse() }
-        .onChange(of: indeterminate) { _, _ in startPulse() }
     }
+}
 
-    private func startPulse() {
-        guard indeterminate, !reduceMotion else { return }
-        // Reset first, so a bar that goes indeterminate for a second time gets
-        // a fresh animation rather than relying on the previous one still
-        // running. Both assignments land in one update, so nothing flickers.
-        pulsing = false
-        withAnimation(.easeInOut(duration: Motion.expressive * 2).repeatForever(autoreverses: true)) {
-            pulsing = true
+/// Clock-driven paint does not leave a repeating animation in a lazy row's
+/// transaction. Changing Reduce Motion stops the clock at once.
+private struct IndeterminateTrack: View {
+    let tint: Color
+    let reduceMotion: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: Motion.loopFrameInterval, paused: reduceMotion)) { timeline in
+            let phase = timeline.date.timeIntervalSinceReferenceDate / Motion.indeterminatePeriod
+            let opacity = reduceMotion ? 0.3 : 0.295 + 0.155 * cos(phase * 2 * .pi)
+            Capsule(style: .continuous)
+                .fill(tint.opacity(opacity))
         }
     }
 }
@@ -175,7 +170,7 @@ private struct FlowLight: View {
     var body: some View {
         let light = Color(Theme.flowLight.resolve(in: environment))
         let current = anchor
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: Motion.loopFrameInterval)) { timeline in
             Canvas(rendersAsynchronously: true) { context, size in
                 let cycles = current.phase(at: timeline.date.timeIntervalSinceReferenceDate)
                 let cycle = cycles - cycles.rounded(.down)
@@ -358,22 +353,18 @@ struct Spinner: View {
     var tint: Color = Theme.textSecondary
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var angle: Double = 0
-
     var body: some View {
-        Circle()
-            .trim(from: 0, to: 0.72)
-            .stroke(tint, style: StrokeStyle(lineWidth: max(1.4, size / 9), lineCap: .round))
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(angle))
-            .opacity(reduceMotion ? 0.6 : 1)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: Motion.revolution).repeatForever(autoreverses: false)) {
-                    angle = 360
-                }
-            }
-            .accessibilityLabel("Working")
+        TimelineView(.animation(minimumInterval: Motion.loopFrameInterval, paused: reduceMotion)) { timeline in
+            let turns = timeline.date.timeIntervalSinceReferenceDate / Motion.revolution
+            let angle = reduceMotion ? 0 : (turns - floor(turns)) * 360
+            Circle()
+                .trim(from: 0, to: 0.72)
+                .stroke(tint, style: StrokeStyle(lineWidth: max(1.4, size / 9), lineCap: .round))
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(angle))
+                .opacity(reduceMotion ? 0.6 : 1)
+        }
+        .accessibilityLabel("Working")
     }
 }
 

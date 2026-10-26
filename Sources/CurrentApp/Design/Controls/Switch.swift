@@ -109,6 +109,10 @@ struct CurrentSwitch: ToggleStyle {
             .onChange(of: Knob(on: isOn, pressed: configuration.isPressed)) { old, new in
                 move(from: old, to: new)
             }
+            .onChange(of: reduceMotion) { _, reduced in
+                guard reduced else { return }
+                settle(isOn)
+            }
         }
 
         private var track: some View {
@@ -151,14 +155,22 @@ struct CurrentSwitch: ToggleStyle {
             return on ? (travel, travel + CurrentSwitch.knob) : (0, CurrentSwitch.knob)
         }
 
+        private func settle(_ on: Bool) {
+            latest = nil
+            let rest = Self.rest(on)
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                lo = rest.lo
+                hi = rest.hi
+            }
+        }
+
         private func move(from old: Knob, to new: Knob) {
             latest = new
             let rest = Self.rest(new.on)
             if reduceMotion {
-                withAnimation(Motion.adaptive(Motion.quick, reduceMotion: true)) {
-                    lo = rest.lo
-                    hi = rest.hi
-                }
+                settle(new.on)
                 return
             }
 
@@ -222,18 +234,19 @@ struct CurrentCheckbox: ToggleStyle {
         private var filled: Bool { configuration.isOn || isMixed }
 
         var body: some View {
-            HStack(spacing: Space.m) {
-                box
-                configuration.label
-                    .typeStyle(Typo.label)
-                    .foregroundStyle(Theme.text)
-            }
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard isEnabled else { return }
+            Button {
                 configuration.isOn.toggle()
+            } label: {
+                HStack(spacing: Space.m) {
+                    box
+                    configuration.label
+                        .typeStyle(Typo.label)
+                        .foregroundStyle(Theme.text)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .opacity(isEnabled ? 1 : 0.45)
             .onHover { isHovering = $0 }
             .accessibilityRepresentation {
                 Toggle(isOn: configuration.$isOn) { configuration.label }

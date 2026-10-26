@@ -137,7 +137,7 @@ public actor SimulationEngine: TorrentEngine {
             record.held = held ? true : nil
             records[id] = record
 
-        case .torrentFile(let data):
+        case .torrentFile:
             let name = "Local torrent \(counter)"
             var record = Record(
                 id: id,
@@ -265,6 +265,32 @@ public actor SimulationEngine: TorrentEngine {
         return try? JSONEncoder().encode(RestoredRecord(record: record))
     }
 
+    private func resolve(_ updated: inout Record, id: TorrentID, elapsed dt: TimeInterval) {
+        if let remaining = updated.resolveDelayRemaining {
+            let next = remaining - dt
+            if next <= 0 {
+                updated.resolveDelayRemaining = nil
+                // Held stops here, the way the real engine pauses a
+                // held magnet the moment its metadata arrives.
+                updated.state = updated.held == true ? .paused(.user) : .downloading
+                updated.seeds = max(1, updated.seeds)
+                updated.peers = max(8, updated.peers)
+                // The announce that resolved the torrent is also the
+                // one that tells us how big the swarm is. Before this,
+                // nobody has said — which is the state the real engine
+                // reports as -1 and the app shows as "unknown".
+                if updated.swarmSeeds == nil {
+                    let size = Self.swarmSize(index: Self.index(of: id))
+                    updated.swarmSeeds = size
+                    updated.swarmPeers = size * 2 + 3
+                }
+                continuation.yield(.metadataReceived(id, updated.metadata!))
+            } else {
+                updated.resolveDelayRemaining = next
+            }
+        }
+    }
+
     /// Advances the simulation deterministically; used by tests.
     public func step() async {
         let now = clock()
@@ -279,29 +305,7 @@ public actor SimulationEngine: TorrentEngine {
             }
 
             if case .resolving = updated.state {
-                if let remaining = updated.resolveDelayRemaining {
-                    let next = remaining - dt
-                    if next <= 0 {
-                        updated.resolveDelayRemaining = nil
-                        // Held stops here, the way the real engine pauses a
-                        // held magnet the moment its metadata arrives.
-                        updated.state = updated.held == true ? .paused(.user) : .downloading
-                        updated.seeds = max(1, updated.seeds)
-                        updated.peers = max(8, updated.peers)
-                        // The announce that resolved the torrent is also the
-                        // one that tells us how big the swarm is. Before this,
-                        // nobody has said — which is the state the real engine
-                        // reports as -1 and the app shows as "unknown".
-                        if updated.swarmSeeds == nil {
-                            let size = Self.swarmSize(index: Self.index(of: id))
-                            updated.swarmSeeds = size
-                            updated.swarmPeers = size * 2 + 3
-                        }
-                        continuation.yield(.metadataReceived(id, updated.metadata!))
-                    } else {
-                        updated.resolveDelayRemaining = next
-                    }
-                }
+                resolve(&updated, id: id, elapsed: dt)
                 records[id] = updated
                 continue
             }
@@ -353,13 +357,14 @@ public actor SimulationEngine: TorrentEngine {
                 updated.downloadRate = 0
             } else {
                 updated.downloadRate = 0
-                if updated.state != .seeding { updated.uploadRate = 0 }
+                updated.uploadRate = 0
             }
 
             // Gentle swarm churn so health states are visible in the UI.
-            if updated.state.isActive, Int.random(in: 0..<10) == 0 {
-                updated.seeds = max(1, min(140, updated.seeds + Int.random(in: -3...3)))
-                updated.peers = max(0, min(200, updated.peers + Int.random(in: -5...5)))
+            let churn = Self.seed(for: id) + steps
+            if updated.state.isActive, churn.isMultiple(of: 10) {
+                updated.seeds = max(1, min(140, updated.seeds + churn % 7 - 3))
+                updated.peers = max(0, min(200, updated.peers + churn % 11 - 5))
             }
 
             records[id] = updated
@@ -495,7 +500,7 @@ public actor SimulationEngine: TorrentEngine {
     }
 
     static func size(forName name: String) -> Int64 {
-        let hash = abs(name.hashValue)
+        let hash = seed(for: TorrentID(name))
         let scale: [Int64] = [
             700 * 1024 * 1024,
             4 * 1024 * 1024 * 1024,
@@ -512,20 +517,28 @@ public actor SimulationEngine: TorrentEngine {
             [["ubuntu-26.04-desktop-arm64.iso"]],
             [["disc1", "content.pkg"], ["disc2", "content.pkg"], ["manual.pdf"]],
         ]
-        let layout = layouts[abs(stem.hashValue) % layouts.count]
-        var files: [FileInfo] = []
-        var seed: UInt64 = UInt64(bitPattern: Int64(stem.hashValue))
-        for path in layout {
+        let stableSeed = Self.seed(for: TorrentID(stem))
+        let layout = layouts[stableSeed % layouts.count]
+        var seed = UInt64(stableSeed)
+        let weights = layout.map { _ in
             seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            let size = Int64(truncatingIfNeeded: (seed >> 8) % 6_000_000_000) + 50_000_000
-            files.append(FileInfo(pathComponents: path, size: size))
+            return Int64((seed >> 8) % 100) + 1
         }
-        let total = files.reduce(0) { $0 + $1.size }
+        let totalWeight = weights.reduce(0, +)
+        var assigned: Int64 = 0
+        let files = layout.enumerated().map { index, path in
+            let size = index == layout.count - 1
+                ? record.totalSize - assigned
+                : record.totalSize * weights[index] / totalWeight
+            assigned += size
+            return FileInfo(pathComponents: path, size: size)
+        }
+        let total = record.totalSize
         return TorrentMetadata(
             id: record.id,
             displayName: record.name,
             totalSize: total,
-            pieceCount: Int(total / 262_144) + 1,
+            pieceCount: Int((total + 262_143) / 262_144),
             pieceLength: 262_144,
             files: files
         )

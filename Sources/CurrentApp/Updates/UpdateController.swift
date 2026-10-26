@@ -108,6 +108,11 @@ private final class QuietUpdateDriver: NSObject, SPUUserDriver {
         super.init()
     }
 
+    private func recordTestEvent(_ message: String) {
+        guard Bundle.main.bundleIdentifier == "org.current.torrent.update-test" else { return }
+        NSLog("Current updater test: \(message)")
+    }
+
     // MARK: - The permission question
     //
     // Never reached in practice: the app asks in its own card before ever
@@ -160,6 +165,7 @@ private final class QuietUpdateDriver: NSObject, SPUUserDriver {
     }
 
     func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
+        recordTestEvent("updater-error: \(error)")
         // Only ever surfaced for a check the user started. A background check
         // that fails — no network, feed unreachable — is not news, and an app
         // that interrupts you to report a failed errand you never sent it on is
@@ -186,6 +192,7 @@ private final class QuietUpdateDriver: NSObject, SPUUserDriver {
     // MARK: - The one moment that interrupts
 
     func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        recordTestEvent("update-ready")
         // The whole visible surface of the updater: one toast with one button.
         // `coalesceKey` because a second check finding the same update must not
         // stack a second toast on the first.

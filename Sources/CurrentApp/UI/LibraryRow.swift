@@ -152,7 +152,7 @@ struct LibraryRow: View {
             Image(systemName: glyphSymbol)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(glyphTint)
-                .contentTransition(.symbolEffect(.replace.offUp))
+                .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace.offUp))
                 .id(finishing ? finishes + 1 : finishes)
                 .transition(finishTransition)
         }
@@ -298,11 +298,7 @@ struct LibraryRow: View {
                 .typeStyle(Typo.caption)
                 .tabularNumerics()
                 .numericTransition()
-                .foregroundStyle(
-                    SwarmHealth(swarm: snapshot.swarm) == .rare
-                        ? Theme.warning
-                        : Theme.textTertiary
-                )
+                .foregroundStyle(Theme.textTertiary)
 
         case .paused(let origin) where origin == .seedGoalReached:
             HStack(spacing: Space.xs) {

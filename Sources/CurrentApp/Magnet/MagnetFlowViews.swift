@@ -209,11 +209,8 @@ struct MagnetFlowOverlayView: View {
             // the card away.
             case .selecting(let id), .starting(let id):
                 if case .starting = flow.stage, reduceMotion || landingTarget == nil {
-                    // The row isn't on screen to show where it went — or
-                    // Reduce Motion means the card won't fly there — so the
-                    // card that says so comes back. Without the second case the
-                    // selection card stayed up, still clickable, for the length
-                    // of a flight that never happened.
+                    // The row isn't on screen to show where it went, so the
+                    // card that says so comes back.
                     card { StartingIndicator() }
                 } else if let metadata = store.metadataCache[id] {
                     card {

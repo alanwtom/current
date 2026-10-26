@@ -44,6 +44,29 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertNil(store.storageLimitBytes)
     }
 
+    func testUnreadableSettingsBlockTransfersAcrossRelaunch() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("library.sqlite")
+        try Data(repeating: 0xAB, count: 8192).write(to: url)
+        let database = AppDatabase(url: url)
+        let store = SettingsStore(database: database)
+        XCTAssertEqual(store.networkBinding, .needsReview)
+        XCTAssertEqual(SettingsStore(database: AppDatabase(url: url)).networkBinding, .needsReview)
+        store.networkBinding = .activeVPN
+        store.flushPendingWrites()
+        XCTAssertEqual(SettingsStore(database: AppDatabase(url: url)).networkBinding, .activeVPN)
+    }
+
+    func testFailedDatabaseOpenDoesNotAllowUnrestrictedTransfers() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("library.sqlite")
+        let database = AppDatabase(url: missing)
+        XCTAssertThrowsError(try database.readSettings())
+        XCTAssertEqual(SettingsStore(database: database).networkBinding, .needsReview)
+    }
+
     // MARK: - Sanitising
 
     func testSanitizerAcceptsAPlausibleBudget() {
